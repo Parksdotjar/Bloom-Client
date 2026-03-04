@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { checkForLauncherUpdate, downloadAndInstallLauncherUpdate, type ExternalUpdate } from '../services/updater';
 
-type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset';
+type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone';
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'rainbow';
 type BackgroundMode = 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula';
 type DensityMode = 'compact' | 'cozy' | 'spacious';
@@ -84,7 +84,11 @@ const THEMES: { id: LauncherTheme; label: string; description: string }[] = [
   { id: 'true-dark', label: 'True Dark', description: 'OLED-friendly blackout.' },
   { id: 'ocean', label: 'Ocean', description: 'Blue-cyan neon vibe.' },
   { id: 'forest', label: 'Forest', description: 'Emerald tactical look.' },
-  { id: 'sunset', label: 'Sunset', description: 'Warm orange-magenta glow.' }
+  { id: 'sunset', label: 'Sunset', description: 'Warm orange-magenta glow.' },
+  { id: 'paper', label: 'Paper', description: 'Editorial UI with crisp ink contrast.' },
+  { id: 'crt', label: 'CRT', description: 'Retro phosphor with scanline glass.' },
+  { id: 'synthwave', label: 'Synthwave', description: 'Neon night with arcade highlights.' },
+  { id: 'sandstone', label: 'Sandstone', description: 'Soft clay surfaces with warm depth.' }
 ];
 
 const ICON_PACKS: { id: IconPackMode; label: string; description: string }[] = [
@@ -268,7 +272,7 @@ export function Settings() {
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [themeMode, setThemeMode] = useState<LauncherTheme>(() => {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    return stored === 'light' || stored === 'light-gray' || stored === 'dark' || stored === 'gray' || stored === 'true-dark' || stored === 'ocean' || stored === 'forest' || stored === 'sunset'
+    return stored === 'light' || stored === 'light-gray' || stored === 'dark' || stored === 'gray' || stored === 'true-dark' || stored === 'ocean' || stored === 'forest' || stored === 'sunset' || stored === 'paper' || stored === 'crt' || stored === 'synthwave' || stored === 'sandstone'
       ? stored
       : 'dark';
   });

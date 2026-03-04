@@ -27,7 +27,7 @@ import {
   resolveMotionEase
 } from '../constants/motion';
 
-type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset';
+type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone';
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'rainbow';
 type BackgroundMode = 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula';
 type DensityMode = 'compact' | 'cozy' | 'spacious';
@@ -181,7 +181,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const [themeMode, setThemeMode] = useState<LauncherTheme>(() => {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    return stored === 'light' || stored === 'light-gray' || stored === 'dark' || stored === 'gray' || stored === 'true-dark' || stored === 'ocean' || stored === 'forest' || stored === 'sunset'
+    return stored === 'light' || stored === 'light-gray' || stored === 'dark' || stored === 'gray' || stored === 'true-dark' || stored === 'ocean' || stored === 'forest' || stored === 'sunset' || stored === 'paper' || stored === 'crt' || stored === 'synthwave' || stored === 'sandstone'
       ? stored
       : 'dark';
   });
@@ -370,7 +370,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', themeMode);
-    if (themeMode === 'light' || themeMode === 'light-gray') document.documentElement.classList.remove('dark');
+    if (themeMode === 'light' || themeMode === 'light-gray' || themeMode === 'paper' || themeMode === 'sandstone') document.documentElement.classList.remove('dark');
     else document.documentElement.classList.add('dark');
     localStorage.setItem(THEME_STORAGE_KEY, themeMode);
   }, [themeMode]);
@@ -452,7 +452,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     const onThemeChange = (event: Event) => {
       const custom = event as CustomEvent<{ theme?: LauncherTheme }>;
       const requestedTheme = custom.detail?.theme;
-      if (requestedTheme === 'light' || requestedTheme === 'light-gray' || requestedTheme === 'dark' || requestedTheme === 'gray' || requestedTheme === 'true-dark' || requestedTheme === 'ocean' || requestedTheme === 'forest' || requestedTheme === 'sunset') {
+      if (requestedTheme === 'light' || requestedTheme === 'light-gray' || requestedTheme === 'dark' || requestedTheme === 'gray' || requestedTheme === 'true-dark' || requestedTheme === 'ocean' || requestedTheme === 'forest' || requestedTheme === 'sunset' || requestedTheme === 'paper' || requestedTheme === 'crt' || requestedTheme === 'synthwave' || requestedTheme === 'sandstone') {
         setThemeMode(requestedTheme);
       }
     };
