@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { checkForLauncherUpdate, downloadAndInstallLauncherUpdate, type ExternalUpdate } from '../services/updater';
 
-type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone';
+type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'rainbow';
 type BackgroundMode = 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula';
 type DensityMode = 'compact' | 'cozy' | 'spacious';
@@ -88,7 +88,15 @@ const THEMES: { id: LauncherTheme; label: string; description: string }[] = [
   { id: 'paper', label: 'Paper', description: 'Editorial UI with crisp ink contrast.' },
   { id: 'crt', label: 'CRT', description: 'Retro phosphor with scanline glass.' },
   { id: 'synthwave', label: 'Synthwave', description: 'Neon night with arcade highlights.' },
-  { id: 'sandstone', label: 'Sandstone', description: 'Soft clay surfaces with warm depth.' }
+  { id: 'sandstone', label: 'Sandstone', description: 'Soft clay surfaces with warm depth.' },
+  { id: 'minecraft', label: 'Minecraft', description: 'Pixel-grass UI with blocky terrain energy.' },
+  { id: 'cartoon', label: 'Cartoon', description: 'Bold outlines and punchy comic contrast.' },
+  { id: 'strength-smp', label: 'Strength SMP', description: 'Rugged PvP steel-and-crimson look.' },
+  { id: 'blueprint', label: 'Blueprint', description: 'Technical grid style with cyan drafting lines.' },
+  { id: 'holo-grid', label: 'Holo Grid', description: 'Sci-fi cyan HUD with scanning lattice.' },
+  { id: 'lavaforge', label: 'Lavaforge', description: 'Molten metal UI with ember depth.' },
+  { id: 'candy-pop', label: 'Candy Pop', description: 'Sticker-bright playful interface style.' },
+  { id: 'mono-ink', label: 'Mono Ink', description: 'Monochrome print look with halftone texture.' }
 ];
 
 const ICON_PACKS: { id: IconPackMode; label: string; description: string }[] = [
@@ -272,7 +280,7 @@ export function Settings() {
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [themeMode, setThemeMode] = useState<LauncherTheme>(() => {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    return stored === 'light' || stored === 'light-gray' || stored === 'dark' || stored === 'gray' || stored === 'true-dark' || stored === 'ocean' || stored === 'forest' || stored === 'sunset' || stored === 'paper' || stored === 'crt' || stored === 'synthwave' || stored === 'sandstone'
+    return stored === 'light' || stored === 'light-gray' || stored === 'dark' || stored === 'gray' || stored === 'true-dark' || stored === 'ocean' || stored === 'forest' || stored === 'sunset' || stored === 'paper' || stored === 'crt' || stored === 'synthwave' || stored === 'sandstone' || stored === 'minecraft' || stored === 'cartoon' || stored === 'strength-smp' || stored === 'blueprint' || stored === 'holo-grid' || stored === 'lavaforge' || stored === 'candy-pop' || stored === 'mono-ink'
       ? stored
       : 'dark';
   });
@@ -364,7 +372,6 @@ export function Settings() {
     if (Number.isFinite(stored)) return clampMotionTuning({ easingY2: stored }).easingY2;
     return MOTION_TUNING_DEFAULTS.easingY2;
   });
-
   const applyTheme = (next: LauncherTheme) => {
     setThemeMode(next);
     localStorage.setItem(THEME_STORAGE_KEY, next);

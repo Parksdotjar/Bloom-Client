@@ -22,7 +22,7 @@ import {
   resolveMotionEase
 } from '../constants/motion';
 
-type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone';
+type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
 type SidebarMode = 'rail' | 'classic' | 'expanded';
 type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
 
