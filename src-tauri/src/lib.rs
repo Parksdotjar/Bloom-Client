@@ -5,6 +5,7 @@ mod mojang;
 mod downloader;
 mod launcher;
 mod fabric;
+mod external_updater;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -51,7 +52,9 @@ pub fn run() {
             mojang::mc_versions_list,
             downloader::instance_install,
             launcher::instance_launch,
-            fabric::fabric_versions_list
+            fabric::fabric_versions_list,
+            external_updater::external_update_check,
+            external_updater::external_update_install
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

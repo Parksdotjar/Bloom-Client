@@ -1,10 +1,9 @@
-import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater';
+import { invoke } from '@tauri-apps/api/core';
 
-export type UpdaterProgress = {
-  downloadedBytes: number;
-  totalBytes?: number;
-  percent?: number;
-  stage: 'idle' | 'downloading' | 'installing' | 'finished';
+export type ExternalUpdate = {
+  version: string;
+  installerUrl: string;
+  assetName: string;
 };
 
 function isTauriRuntime() {
@@ -13,42 +12,22 @@ function isTauriRuntime() {
 
 export async function checkForLauncherUpdate() {
   if (!isTauriRuntime()) {
-    return { update: null as Update | null, error: 'Updater is available only in desktop app builds.' };
+    return { update: null as ExternalUpdate | null, error: 'Updater is available only in desktop app builds.' };
   }
   try {
-    const update = await check();
+    const update = await invoke<ExternalUpdate | null>('external_update_check');
     return { update, error: null as string | null };
   } catch (error) {
-    return { update: null as Update | null, error: error instanceof Error ? error.message : String(error) };
+    return { update: null as ExternalUpdate | null, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
-export async function downloadAndInstallLauncherUpdate(
-  update: Update,
-  onProgress?: (progress: UpdaterProgress) => void
-) {
-  let downloadedBytes = 0;
-  let totalBytes: number | undefined;
-  onProgress?.({ stage: 'downloading', downloadedBytes, totalBytes });
-  await update.download((event: DownloadEvent) => {
-    if (event.event === 'Started') {
-      totalBytes = event.data.contentLength;
-      downloadedBytes = 0;
-      onProgress?.({ stage: 'downloading', downloadedBytes, totalBytes });
-      return;
-    }
-    if (event.event === 'Progress') {
-      downloadedBytes += event.data.chunkLength;
-      onProgress?.({
-        stage: 'downloading',
-        downloadedBytes,
-        totalBytes,
-        percent: totalBytes && totalBytes > 0 ? Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)) : undefined
-      });
-      return;
-    }
-    onProgress?.({ stage: 'installing', downloadedBytes, totalBytes, percent: 100 });
+export async function downloadAndInstallLauncherUpdate(update: ExternalUpdate) {
+  if (!isTauriRuntime()) {
+    throw new Error('Updater is available only in desktop app builds.');
+  }
+  await invoke<void>('external_update_install', {
+    installerUrl: update.installerUrl,
+    version: update.version
   });
-  await update.install();
-  onProgress?.({ stage: 'finished', downloadedBytes, totalBytes, percent: 100 });
 }

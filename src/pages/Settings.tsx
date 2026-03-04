@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
-import type { Update } from '@tauri-apps/plugin-updater';
-import { checkForLauncherUpdate, downloadAndInstallLauncherUpdate } from '../services/updater';
+import { checkForLauncherUpdate, downloadAndInstallLauncherUpdate, type ExternalUpdate } from '../services/updater';
 
 type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset';
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'rainbow';
@@ -262,7 +261,7 @@ export function Settings() {
     const stored = localStorage.getItem(STARTUP_SCENE_SOUND_PROFILE_KEY);
     return stored === 'off' || stored === 'shimmer' || stored === 'impact' ? stored : 'shimmer';
   });
-  const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
+  const [availableUpdate, setAvailableUpdate] = useState<ExternalUpdate | null>(null);
   const [updaterStatus, setUpdaterStatus] = useState<string>('No update check run yet.');
   const [updaterProgress, setUpdaterProgress] = useState<number | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -472,16 +471,11 @@ export function Settings() {
   const runUpdateInstall = async () => {
     if (!availableUpdate) return;
     setInstallingUpdate(true);
-    setUpdaterProgress(0);
-    setUpdaterStatus(`Downloading v${availableUpdate.version}...`);
+    setUpdaterProgress(null);
+    setUpdaterStatus(`Downloading v${availableUpdate.version} installer...`);
     try {
-      await downloadAndInstallLauncherUpdate(availableUpdate, (progress) => {
-        if (typeof progress.percent === 'number') setUpdaterProgress(progress.percent);
-        if (progress.stage === 'installing') setUpdaterStatus('Installing update...');
-      });
-      setUpdaterProgress(100);
-      setUpdaterStatus('Update installed. Restart the app to finish.');
-      setAvailableUpdate(null);
+      await downloadAndInstallLauncherUpdate(availableUpdate);
+      setUpdaterStatus('Installer launched. Closing app to apply update...');
     } catch (error) {
       setUpdaterStatus(`Update install failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -1047,7 +1041,7 @@ export function Settings() {
                 {installingUpdate ? 'Installing...' : availableUpdate ? `Install v${availableUpdate.version}` : 'No Update'}
               </button>
             </div>
-            <p className="text-[10px] g-muted">Configure `plugins.updater.endpoints` and `plugins.updater.pubkey` in `src-tauri/tauri.conf.json` before shipping.</p>
+            <p className="text-[10px] g-muted">Publishes are pulled from the latest GitHub Release installer asset (`*-setup.exe` or `.msi`).</p>
           </div>
 
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
