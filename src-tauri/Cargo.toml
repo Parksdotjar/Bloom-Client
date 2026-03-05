@@ -1,6 +1,6 @@
 [package]
 name = "bloom-client"
-version = "0.2.10"
+version = "0.2.11"
 description = "Bloom Client"
 authors = ["you"]
 edition = "2021"

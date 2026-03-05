@@ -336,6 +336,26 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
 
     // Extract Windows native libraries (LWJGL/OpenAL/etc.) from native classifier jars.
     let mut native_jars: Vec<(std::path::PathBuf, Option<String>)> = Vec::new();
+    fn classifier_matches_host(classifier: &str) -> bool {
+        let c = classifier.to_ascii_lowercase();
+        let is_64 = cfg!(target_pointer_width = "64");
+        if !c.starts_with("natives-windows") {
+            return false;
+        }
+        if is_64 {
+            // Reject explicit 32-bit and ARM64 natives on x64 hosts.
+            if c.contains("x86") && !c.contains("x86_64") {
+                return false;
+            }
+            if c.ends_with("-32") || c.contains("arm64") {
+                return false;
+            }
+            return true;
+        }
+        // 32-bit host: allow generic/32-bit x86 classifiers only.
+        !c.contains("x86_64") && !c.ends_with("-64") && !c.contains("arm64")
+    }
+
     if let Some(libs) = v_data["libraries"].as_array() {
         for lib in libs {
             if !is_allowed_on_windows(lib) {
@@ -349,7 +369,7 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                 let parts: Vec<&str> = name.split(':').collect();
                 if parts.len() >= 4 {
                     let classifier = parts[3];
-                    let is_windows_native = classifier.starts_with("natives-windows");
+                    let is_windows_native = classifier_matches_host(classifier);
                     if is_windows_native {
                         if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
                             let path = artifact
@@ -378,19 +398,21 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                     .map(|k| k.replace("${arch}", arch_token));
 
                 let native_key = if let Some(key) = preferred_key {
-                    if classifiers.get(&key).is_some() {
+                    if classifiers.get(&key).is_some() && classifier_matches_host(&key) {
                         Some(key)
                     } else {
                         None
                     }
-                } else if classifiers.get("natives-windows").is_some() {
+                } else if classifiers.get("natives-windows").is_some() && classifier_matches_host("natives-windows") {
                     Some("natives-windows".to_string())
-                } else if classifiers.get("natives-windows-64").is_some() {
+                } else if classifiers.get("natives-windows-64").is_some() && classifier_matches_host("natives-windows-64") {
                     Some("natives-windows-64".to_string())
-                } else if classifiers.get("natives-windows-x86_64").is_some() {
+                } else if classifiers.get("natives-windows-x86_64").is_some() && classifier_matches_host("natives-windows-x86_64") {
                     Some("natives-windows-x86_64".to_string())
-                } else if classifiers.get("natives-windows-32").is_some() {
+                } else if classifiers.get("natives-windows-32").is_some() && classifier_matches_host("natives-windows-32") {
                     Some("natives-windows-32".to_string())
+                } else if classifiers.get("natives-windows-x86").is_some() && classifier_matches_host("natives-windows-x86") {
+                    Some("natives-windows-x86".to_string())
                 } else {
                     None
                 };
