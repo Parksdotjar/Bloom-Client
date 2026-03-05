@@ -33,8 +33,10 @@ pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(),
     use crate::paths::{paths_get, AppPaths};
     use std::collections::HashMap;
     use std::fs;
+    use std::io::{self, Write};
     use std::process::{Command, Stdio};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use zip::ZipArchive;
 
     let paths: AppPaths = paths_get(app.clone())?;
 
@@ -165,6 +167,30 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     let v_json_str = fs::read_to_string(&version_json_path).map_err(|e| e.to_string())?;
     let v_data: serde_json::Value = serde_json::from_str(&v_json_str).map_err(|e| e.to_string())?;
 
+    fn is_allowed_on_windows(lib: &serde_json::Value) -> bool {
+        let mut allow = true;
+        if let Some(rules) = lib["rules"].as_array() {
+            let mut rules_allow = false;
+            let mut rules_disallow = false;
+            for rule in rules {
+                let action = rule["action"].as_str().unwrap_or("");
+                let os_name = rule
+                    .get("os")
+                    .and_then(|o| o.get("name"))
+                    .and_then(|n| n.as_str());
+                if action == "allow" {
+                    if os_name.is_none() || os_name == Some("windows") {
+                        rules_allow = true;
+                    }
+                } else if action == "disallow" && os_name == Some("windows") {
+                    rules_disallow = true;
+                }
+            }
+            allow = rules_allow && !rules_disallow;
+        }
+        allow
+    }
+
     // 3. Build Classpath
     // Deduplicate Maven libraries by "group:artifact" so we never include
     // conflicting versions (for example ASM 9.6 and 9.9 at the same time).
@@ -216,26 +242,7 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     let libraries_dir = paths.runtimes.join("libraries");
     if let Some(libs) = v_data["libraries"].as_array() {
         for lib in libs {
-            // Apply simple OS rules (Windows only for now)
-            let mut allow = true;
-            if let Some(rules) = lib["rules"].as_array() {
-                let mut rules_allow = false;
-                let mut rules_disallow = false;
-                for rule in rules {
-                    let action = rule["action"].as_str().unwrap_or("");
-                    let os_name = rule.get("os").and_then(|o| o.get("name")).and_then(|n| n.as_str());
-                    if action == "allow" {
-                        if os_name.is_none() || os_name == Some("windows") {
-                            rules_allow = true;
-                        }
-                    } else if action == "disallow" {
-                        if os_name == Some("windows") {
-                            rules_disallow = true;
-                        }
-                    }
-                }
-                allow = rules_allow && !rules_disallow;
-            }
+            let allow = is_allowed_on_windows(lib);
 
             if allow {
                 if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
@@ -329,9 +336,71 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     // 4. Setup natives
     let natives_dir = paths.instances.join(&config.instance_id).join("natives");
     fs::create_dir_all(&natives_dir).map_err(|e| e.to_string())?;
-    
-    // (In a full implementation, we'd extract native JARs here. Skipping for brevity as many modern 
-    // installations fetch natives via simple classpath DLLs anyway).
+
+    // Extract Windows native libraries (LWJGL/OpenAL/etc.) from native classifier jars.
+    let mut native_jars: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(libs) = v_data["libraries"].as_array() {
+        for lib in libs {
+            if !is_allowed_on_windows(lib) {
+                continue;
+            }
+            if let Some(classifiers) = lib.get("downloads").and_then(|d| d.get("classifiers")) {
+                let native_key = if classifiers.get("natives-windows").is_some() {
+                    Some("natives-windows")
+                } else if classifiers.get("natives-windows-64").is_some() {
+                    Some("natives-windows-64")
+                } else if classifiers.get("natives-windows-x86_64").is_some() {
+                    Some("natives-windows-x86_64")
+                } else {
+                    None
+                };
+
+                if let Some(key) = native_key {
+                    if let Some(path) = classifiers
+                        .get(key)
+                        .and_then(|c| c.get("path"))
+                        .and_then(|p| p.as_str())
+                    {
+                        native_jars.push(libraries_dir.join(path));
+                    }
+                }
+            }
+        }
+    }
+
+    for native_jar in native_jars {
+        if !native_jar.exists() {
+            continue;
+        }
+        let file = fs::File::open(&native_jar)
+            .map_err(|e| format!("Failed to open native jar {}: {}", native_jar.display(), e))?;
+        let mut archive =
+            ZipArchive::new(file).map_err(|e| format!("Invalid native jar {}: {}", native_jar.display(), e))?;
+
+        for i in 0..archive.len() {
+            let mut entry = archive
+                .by_index(i)
+                .map_err(|e| format!("Failed reading native jar entry {}: {}", native_jar.display(), e))?;
+            let name = entry.name().replace('\\', "/");
+            if entry.is_dir() || name.starts_with("META-INF/") {
+                continue;
+            }
+            if !name.to_ascii_lowercase().ends_with(".dll") {
+                continue;
+            }
+
+            let file_name = match std::path::Path::new(&name).file_name().and_then(|n| n.to_str()) {
+                Some(n) => n,
+                None => continue,
+            };
+            let out_path = natives_dir.join(file_name);
+            let mut out_file = fs::File::create(&out_path)
+                .map_err(|e| format!("Failed writing native file {}: {}", out_path.display(), e))?;
+            io::copy(&mut entry, &mut out_file)
+                .map_err(|e| format!("Failed extracting native file {}: {}", out_path.display(), e))?;
+            out_file.flush().map_err(|e| e.to_string())?;
+        }
+    }
 
     let asset_index_id = v_data["assetIndex"]["id"].as_str().unwrap_or("1.21");
 
@@ -340,6 +409,7 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     // JVM Args
     args.push(format!("-Xmx{}M", config.max_memory_mb));
     args.push(format!("-Djava.library.path={}", natives_dir.to_string_lossy()));
+    args.push(format!("-Dorg.lwjgl.librarypath={}", natives_dir.to_string_lossy()));
     args.push(format!("-Djna.tmpdir={}", natives_dir.to_string_lossy()));
     args.push("-Dminecraft.launcher.brand=bloom".to_string());
     args.push("-Dminecraft.launcher.version=1.0".to_string());
