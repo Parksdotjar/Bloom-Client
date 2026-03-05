@@ -168,27 +168,24 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     let v_data: serde_json::Value = serde_json::from_str(&v_json_str).map_err(|e| e.to_string())?;
 
     fn is_allowed_on_windows(lib: &serde_json::Value) -> bool {
-        let mut allow = true;
         if let Some(rules) = lib["rules"].as_array() {
-            let mut rules_allow = false;
-            let mut rules_disallow = false;
+            // Mojang rule behavior: when rules exist, default disallow;
+            // matching rules apply in order.
+            let mut allowed = false;
             for rule in rules {
                 let action = rule["action"].as_str().unwrap_or("");
                 let os_name = rule
                     .get("os")
                     .and_then(|o| o.get("name"))
-                    .and_then(|n| n.as_str());
-                if action == "allow" {
-                    if os_name.is_none() || os_name == Some("windows") {
-                        rules_allow = true;
-                    }
-                } else if action == "disallow" && os_name == Some("windows") {
-                    rules_disallow = true;
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("windows");
+                if os_name.eq_ignore_ascii_case("windows") {
+                    allowed = action == "allow";
                 }
             }
-            allow = rules_allow && !rules_disallow;
+            return allowed;
         }
-        allow
+        true
     }
 
     // 3. Build Classpath
@@ -343,6 +340,34 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
         for lib in libs {
             if !is_allowed_on_windows(lib) {
                 continue;
+            }
+            // Mojang metadata can represent natives in two ways:
+            // 1) downloads.classifiers + natives.windows selector
+            // 2) separate library entries with classifier in name
+            //    e.g. org.lwjgl:lwjgl:3.3.3:natives-windows and downloads.artifact
+            if let Some(name) = lib.get("name").and_then(|n| n.as_str()) {
+                let parts: Vec<&str> = name.split(':').collect();
+                if parts.len() >= 4 {
+                    let classifier = parts[3];
+                    let is_windows_native = classifier.starts_with("natives-windows");
+                    if is_windows_native {
+                        if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
+                            let path = artifact
+                                .get("path")
+                                .and_then(|p| p.as_str())
+                                .map(|p| libraries_dir.join(p));
+                            let url = artifact
+                                .get("url")
+                                .and_then(|u| u.as_str())
+                                .map(|u| u.to_string());
+                            if let Some(path) = path {
+                                native_jars.push((path, url));
+                            }
+                        }
+                        // For this schema we already captured the native jar above.
+                        continue;
+                    }
+                }
             }
             if let Some(classifiers) = lib.get("downloads").and_then(|d| d.get("classifiers")) {
                 let arch_token = if cfg!(target_pointer_width = "64") { "64" } else { "32" };
@@ -505,42 +530,56 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
         .logs
         .join(format!("launch-{}-{}.log", config.instance_id, ts));
 
-    let out_log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&launch_log)
-        .map_err(|e| format!("Failed to open launch log file {}: {}", launch_log.display(), e))?;
-    let err_log = out_log
-        .try_clone()
-        .map_err(|e| format!("Failed to clone launch log handle: {}", e))?;
-
     println!("Launching with Java: {}", launch_java);
     // println!("Args: {:?}", args);
 
     // 6. Spawn process
-    let mut child = Command::new(&launch_java)
-        .args(&args)
-        .stdout(Stdio::from(out_log))
-        .stderr(Stdio::from(err_log))
-        .current_dir(paths.instances.join(&config.instance_id))
-        .spawn()
-        .or_else(|first_err| {
-            // Fallback: if javaw failed, retry with java for compatibility.
-            if launch_java.eq_ignore_ascii_case("javaw") && config.java_path.trim().eq_ignore_ascii_case("java") {
-                Command::new("java")
-                    .args(&args)
-                    .current_dir(paths.instances.join(&config.instance_id))
-                    .spawn()
-                    .map_err(|fallback_err| {
-                        format!(
-                            "Failed to start process with javaw ({}), and fallback java failed ({}).",
-                            first_err, fallback_err
-                        )
-                    })
-            } else {
-                Err(format!("Failed to start process: {}", first_err))
+    let working_dir = paths.instances.join(&config.instance_id);
+    let mut launch_candidates = vec![launch_java.clone()];
+    if cfg!(target_os = "windows") {
+        if !launch_candidates.iter().any(|c| c.eq_ignore_ascii_case("javaw")) {
+            launch_candidates.push("javaw".to_string());
+        }
+        if !launch_candidates.iter().any(|c| c.eq_ignore_ascii_case("java")) {
+            launch_candidates.push("java".to_string());
+        }
+    }
+
+    let mut last_err: Option<String> = None;
+    let mut spawned_child: Option<std::process::Child> = None;
+    for candidate in launch_candidates {
+        let stdout_handle = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&launch_log)
+            .map_err(|e| format!("Failed to open launch log file {}: {}", launch_log.display(), e))?;
+        let stderr_handle = stdout_handle
+            .try_clone()
+            .map_err(|e| format!("Failed to clone launch log handle: {}", e))?;
+
+        match Command::new(&candidate)
+            .args(&args)
+            .stdout(Stdio::from(stdout_handle))
+            .stderr(Stdio::from(stderr_handle))
+            .current_dir(&working_dir)
+            .spawn()
+        {
+            Ok(child) => {
+                spawned_child = Some(child);
+                break;
             }
-        })?;
+            Err(err) => {
+                last_err = Some(format!("{} => {}", candidate, err));
+            }
+        }
+    }
+
+    let mut child = spawned_child.ok_or_else(|| {
+        format!(
+            "Failed to start process with all Java launch candidates. Last error: {}",
+            last_err.unwrap_or_else(|| "unknown".to_string())
+        )
+    })?;
 
     // Detect immediate launch failures so the UI can report a useful error.
     for _ in 0..25 {

@@ -47,6 +47,7 @@ pub fn run() {
             auth::auth_login_start,
             auth::auth_open_browser,
             auth::auth_login_poll,
+            auth::auth_refresh_session,
             auth::auth_upload_skin,
             auth::auth_pull_skin_by_username,
             mojang::mc_versions_list,

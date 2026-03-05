@@ -217,31 +217,32 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
     let libraries_dir = paths.runtimes.join("libraries");
     fs::create_dir_all(&libraries_dir).await.map_err(|e| e.to_string())?;
 
-    let mut valid_libs: Vec<DownloadEntry> = Vec::new();
-    for lib in v_data.libraries {
-        if let Some(rules) = &lib.rules {
-            let mut allow = false;
-            let mut disallow = false;
-            for rule in rules {
-                if rule.action == "allow" {
-                    if let Some(os) = &rule.os {
-                        if os.name == "windows" {
-                            allow = true;
-                        }
-                    } else {
-                        allow = true; // no OS specified means allow for all
-                    }
-                } else if rule.action == "disallow" {
-                    if let Some(os) = &rule.os {
-                        if os.name == "windows" {
-                            disallow = true;
-                        }
+    let library_allowed_on_windows = |rules: &Option<Vec<LibraryRule>>| -> bool {
+        match rules {
+            None => true,
+            Some(rule_set) => {
+                // Mojang rule behavior: when rules exist, default is disallow,
+                // then matching rules toggle allow/disallow in order.
+                let mut allowed = false;
+                for rule in rule_set {
+                    let matches_os = rule
+                        .os
+                        .as_ref()
+                        .map(|os| os.name.eq_ignore_ascii_case("windows"))
+                        .unwrap_or(true);
+                    if matches_os {
+                        allowed = rule.action == "allow";
                     }
                 }
+                allowed
             }
-            if !allow || disallow {
-                continue;
-            }
+        }
+    };
+
+    let mut valid_libs: Vec<DownloadEntry> = Vec::new();
+    for lib in v_data.libraries {
+        if !library_allowed_on_windows(&lib.rules) {
+            continue;
         }
 
         if let Some(downloads) = lib.downloads {

@@ -62,14 +62,33 @@ export function useDownloader() {
                 }
             }));
 
+            let authForLaunch = authState;
+            const refreshToken = authState?.msRefreshToken || authState?.ms_refresh_token;
+            if (refreshToken) {
+                try {
+                    const refreshed = await invoke<any>('auth_refresh_session', { refreshToken });
+                    authForLaunch = refreshed;
+                    localStorage.setItem('bloom_auth_state', JSON.stringify(refreshed));
+                } catch (refreshErr) {
+                    console.warn('Auth refresh failed, using existing token for launch:', refreshErr);
+                }
+            }
+
+            const mcToken =
+                authForLaunch?.mcAccessToken ||
+                authForLaunch?.mc_access_token ||
+                authState?.mcAccessToken ||
+                authState?.mc_access_token ||
+                'dummy_token_for_now';
+
             await invoke('instance_launch', {
                 config: {
                     instance_id: instanceId,
                     java_path: instance.java?.pathOverride?.trim() || (instance.java?.runtime === 'java17' ? 'java17' : 'java'),
                     max_memory_mb: instance.memoryMb || 4096,
-                    username: authState?.profile?.name || 'Player',
-                    uuid: authState?.profile?.id || '00000000-0000-0000-0000-000000000000',
-                    access_token: authState?.mc_access_token || 'dummy_token_for_now'
+                    username: authForLaunch?.profile?.name || authState?.profile?.name || 'Player',
+                    uuid: authForLaunch?.profile?.id || authState?.profile?.id || '00000000-0000-0000-0000-000000000000',
+                    access_token: mcToken
                 }
             });
 
@@ -93,7 +112,7 @@ export function useDownloader() {
             }, 15000);
         } catch (e: any) {
             console.error("Downloader error:", e);
-            const message = e?.toString?.() ?? String(e);
+            const message = e?.message ?? e?.toString?.() ?? String(e);
             const needsEssentialFix = message.toLowerCase().includes('compatibility check failed')
                 && message.toLowerCase().includes('essential');
             // Update state to show error

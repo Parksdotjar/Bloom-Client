@@ -168,6 +168,55 @@ pub async fn auth_login_poll(device_code: String) -> Result<Option<AuthState>, S
     Err("Unknown poll error".into())
 }
 
+#[tauri::command]
+pub async fn auth_refresh_session(refresh_token: String) -> Result<AuthState, String> {
+    let token = refresh_token.trim();
+    if token.is_empty() {
+        return Err("Missing Microsoft refresh token.".to_string());
+    }
+
+    let client = auth_http_client()?;
+    let res = client
+        .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+        .form(&[
+            ("client_id", CLIENT_ID),
+            ("grant_type", "refresh_token"),
+            ("refresh_token", token),
+            ("scope", SCOPE),
+        ])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status = res.status();
+    let data: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        let err = data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("refresh_failed");
+        return Err(format!("Microsoft token refresh failed ({}): {}", status, err));
+    }
+
+    let access_token = data["access_token"]
+        .as_str()
+        .ok_or("No Microsoft access token in refresh response.")?
+        .to_string();
+    let next_refresh = data["refresh_token"]
+        .as_str()
+        .unwrap_or(token)
+        .to_string();
+
+    let (mc_token, profile) = perform_mc_exchange(&client, &access_token).await?;
+
+    Ok(AuthState {
+        ms_access_token: access_token,
+        ms_refresh_token: next_refresh,
+        mc_access_token: mc_token,
+        profile,
+    })
+}
+
 async fn perform_mc_exchange(client: &Client, access_token: &str) -> Result<(String, MinecraftProfile), String> {
     // 1. XBL Exchange
     let xbl_req = serde_json::json!({
