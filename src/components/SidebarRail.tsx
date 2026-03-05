@@ -81,7 +81,7 @@ export function SidebarRail(props: SidebarProps) {
   const [sidebarTabGap, setSidebarTabGap] = useState<number>(() => {
     const stored = Number(localStorage.getItem(SIDEBAR_TAB_GAP_KEY));
     if (Number.isFinite(stored)) return Math.max(0, Math.min(30, Math.round(stored)));
-    return 8;
+    return 12;
   });
   const [hoverY, setHoverY] = useState<number | null>(null);
   const [hoverX, setHoverX] = useState<number | null>(null);
@@ -343,7 +343,7 @@ export function SidebarRail(props: SidebarProps) {
         )}
       </div>
 
-      <nav className={clsx('w-full px-2 flex', isHorizontal ? 'ml-2 flex-1 flex-row items-center overflow-x-auto' : 'mt-4 flex-1 flex-col')}>
+      <nav className={clsx('w-full px-2 flex', isHorizontal ? 'ml-2 flex-1 flex-row items-center overflow-x-auto gap-2' : 'mt-4 flex-1 flex-col gap-3')}>
         {navItems.map((item, index) => (
           <NavLink
             key={item.label}
