@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { TauriApi, type Instance } from '../services/tauri';
+import { setDiscordPresence } from '../services/presence';
 
 export interface DownloadProgressEvent {
     id: string;
@@ -49,6 +50,7 @@ export function useDownloader() {
                     speed: '0 B/s'
                 }
             }));
+            void setDiscordPresence('Installing instance', instance.name);
 
             await invoke('instance_install', { instanceId });
 
@@ -61,6 +63,7 @@ export function useDownloader() {
                     speed: ''
                 }
             }));
+            void setDiscordPresence('Launching Minecraft', `${instance.name} (${instance.loader.toUpperCase()} ${instance.mcVersion})`);
 
             let authForLaunch = authState;
             const refreshToken = authState?.msRefreshToken || authState?.ms_refresh_token;
@@ -101,6 +104,7 @@ export function useDownloader() {
                     speed: ''
                 }
             }));
+            void setDiscordPresence('Playing Minecraft', `${instance.name} (${instance.mcVersion})`);
 
             // Keep status visible longer so it does not look like it instantly disappeared.
             setTimeout(() => {

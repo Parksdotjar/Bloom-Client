@@ -6,6 +6,7 @@ mod downloader;
 mod launcher;
 mod fabric;
 mod external_updater;
+mod discord_presence;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -55,7 +56,9 @@ pub fn run() {
             launcher::instance_launch,
             fabric::fabric_versions_list,
             external_updater::external_update_check,
-            external_updater::external_update_install
+            external_updater::external_update_install,
+            discord_presence::discord_presence_set,
+            discord_presence::discord_presence_clear
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

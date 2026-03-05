@@ -10,6 +10,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useInstances } from '../hooks/useInstances';
 import { useDownloader } from '../hooks/useDownloader';
 import { APP_VERSION } from '../constants/version';
+import { setDiscordPresence } from '../services/presence';
 import splashGif from '../assets/splash.gif';
 import {
   MOTION_ANIM_DURATION_KEY,
@@ -788,6 +789,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
     };
     void checkMax();
   }, []);
+
+  useEffect(() => {
+    const pageName =
+      location.pathname === '/' ? 'Home' :
+      location.pathname === '/instances' ? 'Instances' :
+      location.pathname === '/mods' ? 'Mods Market' :
+      location.pathname === '/modpacks' ? 'Modpacks' :
+      location.pathname === '/resourcepacks' ? 'Resourcepacks' :
+      location.pathname === '/skins' ? 'Skin Studio' :
+      location.pathname === '/downloads' ? 'Downloads' :
+      location.pathname === '/settings' ? 'Settings' :
+      'Launcher';
+    void setDiscordPresence(`Browsing ${pageName}`, `Bloom Client ${APP_VERSION}`);
+  }, [location.pathname]);
 
   useEffect(() => {
     if (!presetsKey) {
