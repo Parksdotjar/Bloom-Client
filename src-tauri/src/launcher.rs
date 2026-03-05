@@ -31,6 +31,7 @@ fn detect_java_major(java_path: &str) -> Option<u32> {
 #[tauri::command]
 pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(), String> {
     use crate::paths::{paths_get, AppPaths};
+    use std::collections::HashMap;
     use std::fs;
     use std::process::{Command, Stdio};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -165,6 +166,46 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     let v_data: serde_json::Value = serde_json::from_str(&v_json_str).map_err(|e| e.to_string())?;
 
     // 3. Build Classpath
+    // Deduplicate Maven libraries by "group:artifact" so we never include
+    // conflicting versions (for example ASM 9.6 and 9.9 at the same time).
+    fn extract_maven_key_from_path(path: &str) -> Option<String> {
+        let normalized = path.replace('\\', "/");
+        let parts: Vec<&str> = normalized.split('/').collect();
+        if parts.len() < 4 {
+            return None;
+        }
+        let artifact = parts[parts.len() - 3];
+        let group_parts = &parts[..parts.len() - 3];
+        if group_parts.is_empty() || artifact.is_empty() {
+            return None;
+        }
+        Some(format!("{}:{}", group_parts.join("."), artifact))
+    }
+
+    // Returns true when `candidate` should replace `current`.
+    fn is_newer_version(candidate: &str, current: &str) -> bool {
+        let to_parts = |value: &str| -> Vec<i32> {
+            value
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .filter(|part| !part.is_empty())
+                .map(|part| part.parse::<i32>().unwrap_or(0))
+                .collect()
+        };
+        let cand = to_parts(candidate);
+        let curr = to_parts(current);
+        let max_len = cand.len().max(curr.len());
+        for idx in 0..max_len {
+            let a = *cand.get(idx).unwrap_or(&0);
+            let b = *curr.get(idx).unwrap_or(&0);
+            if a != b {
+                return a > b;
+            }
+        }
+        false
+    }
+
+    // key => (priority, version, absolute_path)
+    let mut cp_libs: HashMap<String, (u8, String, String)> = HashMap::new();
     let mut cp_entries = Vec::new();
 
     // Client JAR
@@ -200,7 +241,31 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                 if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
                     if let Some(path) = artifact.get("path").and_then(|p| p.as_str()) {
                         let lib_path = libraries_dir.join(path);
-                        cp_entries.push(lib_path.to_string_lossy().to_string());
+                        if let Some(key) = extract_maven_key_from_path(path) {
+                            let normalized = path.replace('\\', "/");
+                            let path_parts: Vec<&str> = normalized.split('/').collect();
+                            let version = path_parts
+                                .get(path_parts.len().saturating_sub(2))
+                                .copied()
+                                .unwrap_or_default()
+                                .to_string();
+                            let candidate_path = lib_path.to_string_lossy().to_string();
+                            match cp_libs.get(&key) {
+                                None => {
+                                    cp_libs.insert(key, (1, version, candidate_path));
+                                }
+                                Some((current_priority, current_version, _)) => {
+                                    if *current_priority < 1
+                                        || (*current_priority == 1
+                                            && is_newer_version(&version, current_version))
+                                    {
+                                        cp_libs.insert(key, (1, version, candidate_path));
+                                    }
+                                }
+                            }
+                        } else {
+                            cp_entries.push(lib_path.to_string_lossy().to_string());
+                        }
                     }
                 }
             }
@@ -229,13 +294,35 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                         let artifact = parts[1];
                         let version = parts[2];
                         let filename = format!("{}-{}.jar", artifact, version);
-                        let path = libraries_dir.join(domain).join(artifact).join(version).join(filename);
-                        cp_entries.push(path.to_string_lossy().to_string());
+                        let path = libraries_dir
+                            .join(domain)
+                            .join(artifact)
+                            .join(version)
+                            .join(filename);
+                        let key = format!("{}:{}", parts[0], artifact);
+                        let candidate_path = path.to_string_lossy().to_string();
+                        match cp_libs.get(&key) {
+                            None => {
+                                cp_libs.insert(key, (2, version.to_string(), candidate_path));
+                            }
+                            Some((current_priority, current_version, _)) => {
+                                if *current_priority < 2
+                                    || (*current_priority == 2
+                                        && is_newer_version(version, current_version))
+                                {
+                                    cp_libs.insert(key, (2, version.to_string(), candidate_path));
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
     }
+
+    let mut merged_libs: Vec<String> = cp_libs.into_values().map(|(_, _, path)| path).collect();
+    merged_libs.sort();
+    cp_entries.extend(merged_libs);
 
     let classpath = cp_entries.join(";"); // Windows separator
 
