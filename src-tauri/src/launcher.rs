@@ -32,7 +32,8 @@ fn detect_java_major(java_path: &str) -> Option<u32> {
 pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(), String> {
     use crate::paths::{paths_get, AppPaths};
     use std::fs;
-    use std::process::Command;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     let paths: AppPaths = paths_get(app.clone())?;
 
@@ -281,15 +282,72 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     args.push("--versionType".to_string());
     args.push("release".to_string());
 
-    println!("Launching with Java: {}", config.java_path);
+    // Prefer javaw on Windows when using default java launcher to avoid flashing a console.
+    let launch_java = if cfg!(target_os = "windows") && config.java_path.trim().eq_ignore_ascii_case("java") {
+        "javaw".to_string()
+    } else {
+        config.java_path.clone()
+    };
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let launch_log = paths
+        .logs
+        .join(format!("launch-{}-{}.log", config.instance_id, ts));
+
+    let out_log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&launch_log)
+        .map_err(|e| format!("Failed to open launch log file {}: {}", launch_log.display(), e))?;
+    let err_log = out_log
+        .try_clone()
+        .map_err(|e| format!("Failed to clone launch log handle: {}", e))?;
+
+    println!("Launching with Java: {}", launch_java);
     // println!("Args: {:?}", args);
 
     // 6. Spawn process
-    let child = Command::new(&config.java_path)
+    let mut child = Command::new(&launch_java)
         .args(&args)
+        .stdout(Stdio::from(out_log))
+        .stderr(Stdio::from(err_log))
         .current_dir(paths.instances.join(&config.instance_id))
         .spawn()
-        .map_err(|e| format!("Failed to start process: {}", e))?;
+        .or_else(|first_err| {
+            // Fallback: if javaw failed, retry with java for compatibility.
+            if launch_java.eq_ignore_ascii_case("javaw") && config.java_path.trim().eq_ignore_ascii_case("java") {
+                Command::new("java")
+                    .args(&args)
+                    .current_dir(paths.instances.join(&config.instance_id))
+                    .spawn()
+                    .map_err(|fallback_err| {
+                        format!(
+                            "Failed to start process with javaw ({}), and fallback java failed ({}).",
+                            first_err, fallback_err
+                        )
+                    })
+            } else {
+                Err(format!("Failed to start process: {}", first_err))
+            }
+        })?;
+
+    // Detect immediate launch failures so the UI can report a useful error.
+    for _ in 0..25 {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Err(format!(
+                    "Minecraft exited immediately (status: {}). Check launch log: {}",
+                    status,
+                    launch_log.display()
+                ));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(120)),
+            Err(e) => return Err(format!("Failed while monitoring launched process: {}", e)),
+        }
+    }
 
     println!("Minecraft launched successfully! PID: {}", child.id());
 

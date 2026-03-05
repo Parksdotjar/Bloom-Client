@@ -25,7 +25,7 @@ export function Instances() {
         <div className="flex items-end justify-between gap-4 flex-wrap">
           <div>
             <p className="text-[10px] font-extrabold tracking-[0.2em] uppercase g-accent-text">Instances</p>
-            <h1 className="text-5xl font-extrabold text-white mt-1">Your Library</h1>
+            <h1 className="text-5xl font-extrabold mt-1">Your Library</h1>
             <p className="text-sm g-muted mt-1">Select an instance to open full edit mode.</p>
           </div>
           <div className="flex items-center gap-2">
@@ -38,10 +38,10 @@ export function Instances() {
   );
 
   const libraryWidget = loading ? (
-    <section className="g-panel p-8 text-center text-sm font-extrabold tracking-[0.16em] uppercase text-white/50">Loading instances...</section>
+    <section className="g-panel p-8 text-center text-sm font-extrabold tracking-[0.16em] uppercase g-muted">Loading instances...</section>
   ) : instances.length === 0 ? (
     <section className="g-panel p-10 text-center">
-          <p className="text-2xl font-extrabold text-white">No instances yet</p>
+          <p className="text-2xl font-extrabold">No instances yet</p>
           <p className="text-sm g-muted mt-1">Create one to start.</p>
         </section>
   ) : (
@@ -56,9 +56,9 @@ export function Instances() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-3">
                       <div className="w-12 h-12 rounded-xl border border-white/15 bg-white/[0.05] overflow-hidden flex items-center justify-center">
-                        {inst.iconDataUrl ? <img src={inst.iconDataUrl} className="w-full h-full object-cover" /> : <span className="text-lg font-extrabold text-white">{inst.name.slice(0, 1).toUpperCase()}</span>}
+                        {inst.iconDataUrl ? <img src={inst.iconDataUrl} className="w-full h-full object-cover" /> : <span className="text-lg font-extrabold">{inst.name.slice(0, 1).toUpperCase()}</span>}
                       </div>
-                      <h3 className="text-3xl font-extrabold text-white truncate">{inst.name}</h3>
+                      <h3 className="text-3xl font-extrabold truncate">{inst.name}</h3>
                     </div>
                     <p className="mt-2 text-xs g-muted inline-flex items-center gap-2"><Clock3 size={12} /> {inst.loader.toUpperCase()} {inst.mcVersion} • {new Date(inst.updatedAt).toLocaleString()}</p>
                   </div>
@@ -104,8 +104,8 @@ export function Instances() {
   const featuredModsWidget = (
     <section className="g-panel p-5 h-full">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-extrabold text-white">Featured SMP Creator Mods</h2>
-        <span className="text-[10px] uppercase tracking-[0.12em] font-extrabold text-white/45">Community picks</span>
+        <h2 className="text-xl font-extrabold">Featured SMP Creator Mods</h2>
+        <span className="text-[10px] uppercase tracking-[0.12em] font-extrabold g-muted">Community picks</span>
       </div>
       <p className="text-xs g-muted mt-1">Common performance/QOL mods used in SMP creator packs.</p>
       <div className="mt-4 space-y-2">
@@ -118,7 +118,7 @@ export function Instances() {
           { name: 'Simple Voice Chat', type: 'Proximity voice' }
         ].map((mod) => (
           <div key={mod.name} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-            <p className="text-sm font-extrabold text-white">{mod.name}</p>
+            <p className="text-sm font-extrabold">{mod.name}</p>
             <p className="text-xs g-muted">{mod.type}</p>
           </div>
         ))}

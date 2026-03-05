@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEventHandler, type DragEventHandler } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, FolderOpen, RefreshCcw, Save, ShieldPlus, Trash2, UploadCloud } from 'lucide-react';
+import { ArrowLeft, Download, FolderOpen, ImageIcon, RefreshCcw, Save, Search, ShieldPlus, Trash2, UploadCloud } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useInstances } from '../hooks/useInstances';
-import { TauriApi, type InstanceModFile, type ModInstallResult } from '../services/tauri';
+import { TauriApi, type InstanceModFile, type ModInstallResult, type MarketplaceMod, type MarketplacePack } from '../services/tauri';
 
-type EditorTab = 'content' | 'settings';
+type EditorTab = 'mods' | 'resourcepacks' | 'settings';
+type SourceFilter = 'all' | 'modrinth' | 'curseforge';
 
 function humanSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -19,7 +20,11 @@ export function InstanceEditor() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const instanceId = searchParams.get('id');
-  const initialTab = searchParams.get('tab') === 'settings' ? 'settings' : 'content';
+  const initialTab: EditorTab = searchParams.get('tab') === 'settings'
+    ? 'settings'
+    : searchParams.get('tab') === 'resourcepacks'
+      ? 'resourcepacks'
+      : 'mods';
 
   const { instances, updateInstance, loading } = useInstances();
 
@@ -47,6 +52,16 @@ export function InstanceEditor() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [lastInstallResult, setLastInstallResult] = useState<ModInstallResult | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [modsQuery, setModsQuery] = useState('');
+  const [modsSource, setModsSource] = useState<SourceFilter>('all');
+  const [modsSearching, setModsSearching] = useState(false);
+  const [modsResults, setModsResults] = useState<MarketplaceMod[]>([]);
+  const [modsInstallingId, setModsInstallingId] = useState<string | null>(null);
+  const [resourcepacksQuery, setResourcepacksQuery] = useState('');
+  const [resourcepacksSource, setResourcepacksSource] = useState<SourceFilter>('all');
+  const [resourcepacksSearching, setResourcepacksSearching] = useState(false);
+  const [resourcepacksResults, setResourcepacksResults] = useState<MarketplacePack[]>([]);
+  const [resourcepacksInstallingId, setResourcepacksInstallingId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const iconInputRef = useRef<HTMLInputElement | null>(null);
@@ -293,6 +308,69 @@ export function InstanceEditor() {
     }
   };
 
+  const searchModsMarket = async () => {
+    if (!instance || !modsQuery.trim()) return;
+    setModsSearching(true);
+    try {
+      const rows = await TauriApi.marketplaceSearchMods(modsQuery.trim(), modsSource, instance.loader, instance.mcVersion);
+      setModsResults(rows);
+      if (rows.length === 0) setStatusMessage('No mods matched this search.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Mods search failed: ${message}`);
+    } finally {
+      setModsSearching(false);
+    }
+  };
+
+  const installMarketplaceMod = async (mod: MarketplaceMod) => {
+    if (!instance) return;
+    const rowId = `${mod.source}:${mod.id}`;
+    setModsInstallingId(rowId);
+    setStatusMessage(`Installing ${mod.title}...`);
+    try {
+      const file = await TauriApi.marketplaceInstallMod(instance.id, mod.source, mod.id);
+      await reloadMods();
+      setStatusMessage(`Installed ${file} into ${instance.name}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Install failed: ${message}`);
+    } finally {
+      setModsInstallingId(null);
+    }
+  };
+
+  const searchResourcePacksMarket = async () => {
+    if (!instance || !resourcepacksQuery.trim()) return;
+    setResourcepacksSearching(true);
+    try {
+      const rows = await TauriApi.marketplaceSearchResourcepacks(resourcepacksQuery.trim(), resourcepacksSource, instance.mcVersion);
+      setResourcepacksResults(rows);
+      if (rows.length === 0) setStatusMessage('No resource packs matched this search.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Resource pack search failed: ${message}`);
+    } finally {
+      setResourcepacksSearching(false);
+    }
+  };
+
+  const installMarketplaceResourcePack = async (pack: MarketplacePack) => {
+    if (!instance) return;
+    const rowId = `${pack.source}:${pack.id}`;
+    setResourcepacksInstallingId(rowId);
+    setStatusMessage(`Installing ${pack.title}...`);
+    try {
+      const file = await TauriApi.marketplaceInstallResourcepack(instance.id, pack.source, pack.id, instance.mcVersion);
+      setStatusMessage(`Installed ${file} into ${instance.name}/resourcepacks.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Install failed: ${message}`);
+    } finally {
+      setResourcepacksInstallingId(null);
+    }
+  };
+
   if (loading) {
     return <div className="min-h-full p-8 flex items-center justify-center"><p className="text-sm font-black tracking-[0.16em] uppercase text-slate-500 dark:text-white/55">Loading instance...</p></div>;
   }
@@ -324,15 +402,16 @@ export function InstanceEditor() {
             <button onClick={goBack} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-4 py-2.5 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-2">
               <ArrowLeft size={14} /> Back
             </button>
-            <button onClick={saveSettings} disabled={saving} className="rounded-xl border border-pink-500/55 bg-pink-500/15 px-5 py-3 text-xs font-black tracking-[0.14em] uppercase text-pink-700 dark:text-pink-200 hover:bg-pink-500/25 disabled:opacity-45 inline-flex items-center gap-2">
+            <button onClick={saveSettings} disabled={saving} className="g-btn-accent px-5 py-3 text-xs font-black tracking-[0.14em] uppercase disabled:opacity-45 inline-flex items-center gap-2">
               <Save size={14} /> {saving ? 'Saving...' : 'Save'}
             </button>
           </div>
         </div>
 
         <div className="mt-4 inline-flex rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 p-1">
-          <button onClick={() => setActiveTab('content')} className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", activeTab === 'content' ? 'bg-emerald-500/20 border border-emerald-500/45 text-emerald-700 dark:text-emerald-300' : 'text-slate-600 dark:text-white/60'].join(' ')}>Content</button>
-          <button onClick={() => setActiveTab('settings')} className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", activeTab === 'settings' ? 'bg-pink-500/20 border border-pink-500/45 text-pink-700 dark:text-pink-300' : 'text-slate-600 dark:text-white/60'].join(' ')}>Settings</button>
+          <button onClick={() => setActiveTab('mods')} className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", activeTab === 'mods' ? 'bg-emerald-500/20 border border-emerald-500/45 text-emerald-700 dark:text-emerald-300' : 'text-slate-600 dark:text-white/60'].join(' ')}>Mods</button>
+          <button onClick={() => setActiveTab('resourcepacks')} className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", activeTab === 'resourcepacks' ? 'bg-cyan-500/20 border border-cyan-500/45 text-cyan-700 dark:text-cyan-300' : 'text-slate-600 dark:text-white/60'].join(' ')}>Resource Packs</button>
+          <button onClick={() => setActiveTab('settings')} className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", activeTab === 'settings' ? 'g-btn-accent' : 'text-slate-600 dark:text-white/60'].join(' ')}>Settings</button>
         </div>
       </section>
 
@@ -371,7 +450,7 @@ export function InstanceEditor() {
               <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Accent Tag</label>
               <div className="flex items-center gap-2">
                 <input type="color" value={colorTag} onChange={(event) => setColorTag(event.target.value)} className="h-10 w-12 rounded-lg border border-slate-300 dark:border-white/15 bg-white dark:bg-black/20 p-1" />
-                <input value={colorTag} onChange={(event) => setColorTag(event.target.value)} className="flex-1 rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 py-2 text-sm font-semibold text-slate-900 dark:text-white focus:outline-none focus:border-pink-400/60" />
+                <input value={colorTag} onChange={(event) => setColorTag(event.target.value)} className="flex-1 rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 py-2 text-sm font-semibold text-slate-900 dark:text-white focus:outline-none" />
               </div>
             </div>
 
@@ -384,7 +463,7 @@ export function InstanceEditor() {
                     onClick={() => setIconFrame(frame)}
                     className={[
                       'rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase',
-                      iconFrame === frame ? 'border-pink-500/55 bg-pink-500/15 text-pink-700 dark:text-pink-200' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'
+                      iconFrame === frame ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'
                     ].join(' ')}
                   >
                     {frame}
@@ -396,18 +475,18 @@ export function InstanceEditor() {
 
           <div>
             <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Name</label>
-            <input value={name} onChange={(event) => setName(event.target.value)} className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white focus:outline-none focus:border-pink-400/60" />
+            <input value={name} onChange={(event) => setName(event.target.value)} className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white focus:outline-none" />
           </div>
 
           <div>
             <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Memory (MB)</label>
-            <input type="range" min={1024} max={16384} step={1024} value={memoryMb} onChange={(event) => setMemoryMb(Number(event.target.value))} className="w-full accent-pink-500" />
+            <input type="range" min={1024} max={16384} step={1024} value={memoryMb} onChange={(event) => setMemoryMb(Number(event.target.value))} className="w-full g-range" />
             <p className="text-xs font-semibold text-slate-600 dark:text-white/60 mt-1">{memoryMb} MB</p>
           </div>
 
           <div>
             <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">JVM Args</label>
-            <input value={jvmArgs} onChange={(event) => setJvmArgs(event.target.value)} placeholder="-XX:+UseG1GC" className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-white/35 focus:outline-none focus:border-pink-400/60" />
+            <input value={jvmArgs} onChange={(event) => setJvmArgs(event.target.value)} placeholder="-XX:+UseG1GC" className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-white/35 focus:outline-none" />
           </div>
 
           <div className="rounded-xl border border-slate-300/80 dark:border-white/12 p-3 bg-white/70 dark:bg-white/[0.02] space-y-3">
@@ -431,7 +510,7 @@ export function InstanceEditor() {
                 onClick={() => setJavaRuntime('system')}
                 className={[
                   'rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase',
-                  javaRuntime === 'system' ? 'border-pink-500/55 bg-pink-500/15 text-pink-700 dark:text-pink-200' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'
+                  javaRuntime === 'system' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'
                 ].join(' ')}
               >
                 System Java
@@ -443,7 +522,7 @@ export function InstanceEditor() {
                 }}
                 className={[
                   'rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase',
-                  javaRuntime === 'java17' ? 'border-pink-500/55 bg-pink-500/15 text-pink-700 dark:text-pink-200' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'
+                  javaRuntime === 'java17' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'
                 ].join(' ')}
               >
                 Java 17 Preset
@@ -452,7 +531,7 @@ export function InstanceEditor() {
                 onClick={() => setJavaRuntime('custom')}
                 className={[
                   'rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase',
-                  javaRuntime === 'custom' ? 'border-pink-500/55 bg-pink-500/15 text-pink-700 dark:text-pink-200' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'
+                  javaRuntime === 'custom' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'
                 ].join(' ')}
               >
                 Custom Path
@@ -463,9 +542,67 @@ export function InstanceEditor() {
               onChange={(event) => setJavaPathOverride(event.target.value)}
               disabled={javaRuntime === 'system'}
               placeholder={javaRuntime === 'custom' ? 'C:\\Program Files\\Java\\jdk-17\\bin\\javaw.exe' : 'java'}
-              className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-white/35 focus:outline-none focus:border-pink-400/60 disabled:opacity-50"
+              className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-white/35 focus:outline-none disabled:opacity-50"
             />
             <p className="text-xs font-semibold text-slate-500 dark:text-white/55">This is saved per instance and used by Launch.</p>
+          </div>
+        </section>
+      ) : activeTab === 'resourcepacks' ? (
+        <section className="g-panel p-6 space-y-4">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <h2 className="text-lg font-black text-slate-900 dark:text-white">Resource Packs Market</h2>
+            <p className="text-xs font-semibold text-slate-500 dark:text-white/55">Target: {instance.name} ({instance.mcVersion})</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_120px] gap-2">
+            <div className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 h-11 flex items-center gap-2">
+              <Search size={14} className="text-slate-500 dark:text-white/60" />
+              <input
+                value={resourcepacksQuery}
+                onChange={(event) => setResourcepacksQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void searchResourcePacksMarket();
+                }}
+                placeholder="Search resource packs..."
+                className="w-full bg-transparent text-sm font-semibold outline-none text-slate-900 dark:text-white"
+              />
+            </div>
+            <select value={resourcepacksSource} onChange={(event) => setResourcepacksSource(event.target.value as SourceFilter)} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 h-11 text-sm font-bold text-slate-900 dark:text-white">
+              <option value="all">All Sources</option>
+              <option value="modrinth">Modrinth</option>
+              <option value="curseforge">CurseForge</option>
+            </select>
+            <button onClick={() => { void searchResourcePacksMarket(); }} disabled={resourcepacksSearching} className="rounded-xl border border-cyan-500/50 bg-cyan-500/15 h-11 text-xs font-black tracking-[0.14em] uppercase text-cyan-700 dark:text-cyan-200 disabled:opacity-45">
+              {resourcepacksSearching ? 'Searching...' : 'Search'}
+            </button>
+          </div>
+
+          <div className="rounded-2xl border border-slate-300/80 dark:border-white/12 overflow-hidden">
+            {resourcepacksResults.length === 0 ? (
+              <div className="p-6 text-center text-sm font-semibold text-slate-500 dark:text-white/55">Search to load resource packs.</div>
+            ) : (
+              resourcepacksResults.map((pack) => {
+                const rowId = `${pack.source}:${pack.id}`;
+                return (
+                  <div key={rowId} className="px-3 py-2.5 border-b border-slate-200 dark:border-white/10 last:border-b-0 bg-white/80 dark:bg-white/[0.02] flex items-center gap-2">
+                    <div className="w-10 h-10 rounded-lg border border-slate-300 dark:border-white/15 bg-slate-200 dark:bg-white/10 overflow-hidden flex items-center justify-center">
+                      {pack.iconUrl ? <img src={pack.iconUrl} alt={pack.title} className="w-full h-full object-cover" /> : <ImageIcon size={14} className="text-slate-500 dark:text-white/55" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-black text-slate-900 dark:text-white truncate">{pack.title}</p>
+                      <p className="text-xs font-semibold text-slate-500 dark:text-white/55 truncate">{pack.description}</p>
+                    </div>
+                    <button
+                      onClick={() => { void installMarketplaceResourcePack(pack); }}
+                      disabled={resourcepacksInstallingId === rowId}
+                      className="rounded-xl border border-cyan-500/50 bg-cyan-500/15 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase text-cyan-700 dark:text-cyan-200 inline-flex items-center gap-1.5 disabled:opacity-45"
+                    >
+                      <Download size={12} /> {resourcepacksInstallingId === rowId ? 'Installing...' : 'Install'}
+                    </button>
+                  </div>
+                );
+              })
+            )}
           </div>
         </section>
       ) : (
@@ -478,11 +615,59 @@ export function InstanceEditor() {
             </div>
           </div>
 
-          <div onDrop={handleDrop} onDragOver={handleDragOver} onDragLeave={handleDragLeave} className={['rounded-2xl border-2 border-dashed p-4 text-center transition-colors', isDragging ? 'border-pink-500/60 bg-pink-500/10' : 'border-slate-300/80 dark:border-white/20 bg-slate-100/40 dark:bg-white/[0.03]'].join(' ')}>
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_120px] gap-2">
+            <div className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 h-11 flex items-center gap-2">
+              <Search size={14} className="text-slate-500 dark:text-white/60" />
+              <input
+                value={modsQuery}
+                onChange={(event) => setModsQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void searchModsMarket();
+                }}
+                placeholder="Search marketplace mods..."
+                className="w-full bg-transparent text-sm font-semibold outline-none text-slate-900 dark:text-white"
+              />
+            </div>
+            <select value={modsSource} onChange={(event) => setModsSource(event.target.value as SourceFilter)} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 h-11 text-sm font-bold text-slate-900 dark:text-white">
+              <option value="all">All Sources</option>
+              <option value="modrinth">Modrinth</option>
+              <option value="curseforge">CurseForge</option>
+            </select>
+            <button onClick={() => { void searchModsMarket(); }} disabled={modsSearching} className="rounded-xl border border-emerald-500/50 bg-emerald-500/15 h-11 text-xs font-black tracking-[0.14em] uppercase text-emerald-700 dark:text-emerald-200 disabled:opacity-45">
+              {modsSearching ? 'Searching...' : 'Search'}
+            </button>
+          </div>
+
+          <div className="rounded-2xl border border-slate-300/80 dark:border-white/12 overflow-hidden">
+            {modsResults.length === 0 ? (
+              <div className="p-4 text-center text-sm font-semibold text-slate-500 dark:text-white/55">Search to load marketplace mods for this instance.</div>
+            ) : (
+              modsResults.map((mod) => {
+                const rowId = `${mod.source}:${mod.id}`;
+                return (
+                  <div key={rowId} className="px-3 py-2.5 border-b border-slate-200 dark:border-white/10 last:border-b-0 bg-white/80 dark:bg-white/[0.02] flex items-center gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-black text-slate-900 dark:text-white truncate">{mod.title}</p>
+                      <p className="text-xs font-semibold text-slate-500 dark:text-white/55 truncate">{mod.description}</p>
+                    </div>
+                    <button
+                      onClick={() => { void installMarketplaceMod(mod); }}
+                      disabled={modsInstallingId === rowId}
+                      className="rounded-xl border border-emerald-500/50 bg-emerald-500/15 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase text-emerald-700 dark:text-emerald-200 inline-flex items-center gap-1.5 disabled:opacity-45"
+                    >
+                      <Download size={12} /> {modsInstallingId === rowId ? 'Installing...' : 'Install'}
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          <div onDrop={handleDrop} onDragOver={handleDragOver} onDragLeave={handleDragLeave} className={['rounded-2xl border-2 border-dashed p-4 text-center transition-colors', isDragging ? 'border-[var(--g-accent)] bg-[var(--g-accent-soft)]' : 'border-slate-300/80 dark:border-white/20 bg-slate-100/40 dark:bg-white/[0.03]'].join(' ')}>
             <p className="text-sm font-black text-slate-700 dark:text-white/75 inline-flex items-center gap-2"><UploadCloud size={15} /> Drop .jar files here</p>
             <input ref={fileInputRef} type="file" multiple accept=".jar" className="hidden" onChange={handleFileInput} />
             <div className="mt-3 flex justify-center gap-2">
-              <button onClick={() => { void pickAndInstallMods(); }} disabled={installingMods} className="rounded-xl border border-pink-500/50 bg-pink-500/15 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase text-pink-700 dark:text-pink-200">{installingMods ? 'Installing...' : 'Choose Files'}</button>
+              <button onClick={() => { void pickAndInstallMods(); }} disabled={installingMods} className="g-btn-accent px-3 py-2 text-xs font-black tracking-[0.14em] uppercase">{installingMods ? 'Installing...' : 'Choose Files'}</button>
               <button onClick={() => fileInputRef.current?.click()} disabled={installingMods} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase">{installingMods ? 'Installing...' : 'Browser Fallback'}</button>
               <button onClick={() => { void TauriApi.openModsFolder(instance.id); }} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5"><FolderOpen size={13} /> Folder</button>
             </div>
@@ -500,9 +685,13 @@ export function InstanceEditor() {
                     <p className="text-sm font-black text-slate-900 dark:text-white truncate">{mod.displayName}</p>
                     <p className="text-xs font-semibold text-slate-500 dark:text-white/55">{humanSize(mod.sizeBytes)}</p>
                   </div>
-                  <button onClick={() => void toggleMod(mod)} className={['h-7 w-12 rounded-full border relative', mod.enabled ? 'border-emerald-500/50 bg-emerald-500/25' : 'border-slate-300 dark:border-white/20 bg-slate-200 dark:bg-white/10'].join(' ')}>
-                    <span className={['absolute top-0.5 h-5.5 w-5.5 rounded-full transition-all', mod.enabled ? 'left-6 bg-emerald-500' : 'left-0.5 bg-slate-400'].join(' ')} />
-                  </button>
+                  <button
+                    onClick={() => void toggleMod(mod)}
+                    data-on={mod.enabled}
+                    className="g-switch"
+                    aria-label={`Toggle ${mod.displayName}`}
+                    aria-pressed={mod.enabled}
+                  />
                   <button onClick={() => void removeMod(mod)} className="h-8 w-8 rounded-lg border border-red-300/70 dark:border-red-500/35 text-red-600 dark:text-red-300 inline-flex items-center justify-center"><Trash2 size={13} /></button>
                 </div>
               ))

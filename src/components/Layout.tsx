@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Bell, Maximize2, Minus, Move, Search, Send, User, X } from 'lucide-react';
+import { Bell, Camera, Gift, Layers, Maximize2, Minus, Move, Palette, Search, Send, Sparkles, User, Waves, X } from 'lucide-react';
+import { clsx } from 'clsx';
 import { animate, engine, remove, set } from 'animejs';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { SidebarRail } from './SidebarRail';
@@ -33,7 +34,9 @@ type BackgroundMode = 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula';
 type DensityMode = 'compact' | 'cozy' | 'spacious';
 type FontPackMode = 'manrope' | 'space-grotesk' | 'sora';
 type SidebarMode = 'rail' | 'classic' | 'expanded';
+type SidebarPosition = 'left' | 'right' | 'top' | 'bottom';
 type CardStyleMode = 'glass' | 'solid' | 'outline';
+type ButtonThemeMode = 'default' | 'simple' | 'cartoon' | 'glass' | 'neon' | 'pixel' | 'brutalist' | 'pill' | 'terminal' | 'arcade';
 type MotionMode = 'off' | 'subtle' | 'standard' | 'cinematic';
 type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
 type SoundPackMode = 'off' | 'soft' | 'arcade' | 'retro';
@@ -68,8 +71,12 @@ const FONT_STORAGE_KEY = 'bloom_font_pack';
 const FONT_CHANGE_EVENT = 'bloom-font-change';
 const SIDEBAR_STORAGE_KEY = 'bloom_sidebar_mode';
 const SIDEBAR_CHANGE_EVENT = 'bloom-sidebar-change';
+const SIDEBAR_POSITION_STORAGE_KEY = 'bloom_sidebar_position';
+const SIDEBAR_POSITION_CHANGE_EVENT = 'bloom-sidebar-position-change';
 const CARD_STYLE_STORAGE_KEY = 'bloom_card_style';
 const CARD_STYLE_CHANGE_EVENT = 'bloom-card-style-change';
+const BUTTON_THEME_STORAGE_KEY = 'bloom_button_theme';
+const BUTTON_THEME_CHANGE_EVENT = 'bloom-button-theme-change';
 const MOTION_STORAGE_KEY = 'bloom_motion_mode';
 const MOTION_CHANGE_EVENT = 'bloom-motion-change';
 const MOTION_FPS_STORAGE_KEY = 'bloom_motion_fps';
@@ -98,6 +105,7 @@ const STARTUP_SCENE_SOUND_PROFILE_KEY = 'bloom_startup_scene_sound_profile';
 const STARTUP_SCENE_CHANGE_EVENT = 'bloom-startup-scene-change';
 const STARTUP_SCENE_AUTOPLAY_SESSION_KEY = 'bloom_startup_scene_autoplay_done';
 const MODS_REFRESH_EVENT = 'bloom-refresh-mods';
+const ONBOARDING_DONE_PREFIX = 'bloom_onboarding_done_';
 
 const ACCENT_MAP: Record<AccentMode, { accent: string; soft: string; gradient: string }> = {
   purple: { accent: '#9a65ff', soft: 'rgba(154, 101, 255, 0.26)', gradient: 'linear-gradient(90deg, #8f58ff 0%, #ba96ff 100%)' },
@@ -126,6 +134,21 @@ const MOTION_MAP: Record<MotionMode, { fps: number; durationScale: string }> = {
   standard: { fps: 14, durationScale: '1' },
   cinematic: { fps: 18, durationScale: '1.25' }
 };
+
+const ONBOARDING_THEME_OPTIONS: { id: LauncherTheme; label: string; hint: string }[] = [
+  { id: 'gray', label: 'Gray', hint: 'Desaturated graphite palette' },
+  { id: 'true-dark', label: 'True Dark', hint: 'OLED-friendly blackout' },
+  { id: 'ocean', label: 'Ocean', hint: 'Blue-cyan neon vibe' }
+];
+
+const ONBOARDING_ACCENT_OPTIONS: { id: AccentMode; label: string; swatch: string }[] = [
+  { id: 'purple', label: 'Purple', swatch: 'linear-gradient(90deg,#8f58ff,#ba96ff)' },
+  { id: 'cyan', label: 'Cyan', swatch: 'linear-gradient(90deg,#3bc8ff,#90e9ff)' },
+  { id: 'emerald', label: 'Emerald', swatch: 'linear-gradient(90deg,#28cf7d,#89f4bd)' },
+  { id: 'amber', label: 'Amber', swatch: 'linear-gradient(90deg,#ffad2f,#ffd57f)' },
+  { id: 'rose', label: 'Rose', swatch: 'linear-gradient(90deg,#ff5c89,#ff9cb7)' },
+  { id: 'rainbow', label: 'Rainbow', swatch: 'linear-gradient(90deg,#ff5f6d,#ffc371,#47e0ff,#60ff9f,#b57bff)' }
+];
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -181,6 +204,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const [themeMode, setThemeMode] = useState<LauncherTheme>(() => {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === 'light' || stored === 'light-gray') return 'true-dark';
     return stored === 'light' || stored === 'light-gray' || stored === 'dark' || stored === 'gray' || stored === 'true-dark' || stored === 'ocean' || stored === 'forest' || stored === 'sunset' || stored === 'paper' || stored === 'crt' || stored === 'synthwave' || stored === 'sandstone' || stored === 'minecraft' || stored === 'cartoon' || stored === 'strength-smp' || stored === 'blueprint' || stored === 'holo-grid' || stored === 'lavaforge' || stored === 'candy-pop' || stored === 'mono-ink'
       ? stored
       : 'dark';
@@ -214,9 +238,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
     const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
     return stored === 'rail' || stored === 'classic' || stored === 'expanded' ? stored : 'classic';
   });
+  const [sidebarPosition, setSidebarPosition] = useState<SidebarPosition>(() => {
+    const stored = localStorage.getItem(SIDEBAR_POSITION_STORAGE_KEY);
+    return stored === 'left' || stored === 'right' || stored === 'top' || stored === 'bottom' ? stored : 'left';
+  });
   const [cardStyleMode, setCardStyleMode] = useState<CardStyleMode>(() => {
     const stored = localStorage.getItem(CARD_STYLE_STORAGE_KEY);
     return stored === 'glass' || stored === 'solid' || stored === 'outline' ? stored : 'glass';
+  });
+  const [buttonTheme, setButtonTheme] = useState<ButtonThemeMode>(() => {
+    const stored = localStorage.getItem(BUTTON_THEME_STORAGE_KEY);
+    return stored === 'default' || stored === 'simple' || stored === 'cartoon' || stored === 'glass' || stored === 'neon' || stored === 'pixel' || stored === 'brutalist' || stored === 'pill' || stored === 'terminal' || stored === 'arcade'
+      ? stored
+      : 'default';
   });
   const [motionMode, setMotionMode] = useState<MotionMode>(() => {
     const stored = localStorage.getItem(MOTION_STORAGE_KEY);
@@ -287,6 +321,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [skinStatus, setSkinStatus] = useState<string | null>(null);
   const [uploadingSkin, setUploadingSkin] = useState(false);
   const [quickLaunchInstanceId, setQuickLaunchInstanceId] = useState<string>(() => localStorage.getItem(ACCOUNT_LAUNCH_INSTANCE_KEY) || '');
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState<0 | 1 | 2 | 3>(0);
+  const [onboardingExitActive, setOnboardingExitActive] = useState(false);
+  const [appBlackoutPhase, setAppBlackoutPhase] = useState<'idle' | 'fade-in' | 'hold' | 'fade-out'>('idle');
+  const [appRevealActive, setAppRevealActive] = useState(false);
 
   const searchRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -294,10 +333,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const accountRef = useRef<HTMLDivElement | null>(null);
   const accountUploadRef = useRef<HTMLInputElement | null>(null);
   const profileUploadRef = useRef<HTMLInputElement | null>(null);
+  const onboardingProfileUploadRef = useRef<HTMLInputElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const lastHoverSoundAtRef = useRef<number>(0);
+  const appRevealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const appBlackoutTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const {
     authState,
@@ -349,6 +391,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     ? profileAvatarUrl || authState.profile.skinUrl || `https://crafatar.com/avatars/${authState.profile.id}?size=72&default=MHF_Steve`
     : null;
   const quickLaunchInstance = instances.find((inst) => inst.id === quickLaunchInstanceId) || instances[0] || null;
+  const onboardingDoneKey = authState ? `${ONBOARDING_DONE_PREFIX}${authState.profile.id}` : null;
 
   useEffect(() => {
     if (instances.length === 0) {
@@ -367,6 +410,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
     localStorage.setItem(ACCOUNT_LAUNCH_INSTANCE_KEY, quickLaunchInstanceId);
   }, [instances, quickLaunchInstanceId]);
+
+  useEffect(() => {
+    if (!authState || !onboardingDoneKey) {
+      setOnboardingOpen(false);
+      setAppBlackoutPhase('idle');
+      return;
+    }
+    const completed = localStorage.getItem(onboardingDoneKey) === 'true';
+    if (!completed) {
+      setOnboardingOpen(true);
+      setOnboardingExitActive(false);
+      setAppBlackoutPhase('idle');
+      setAppRevealActive(false);
+      setOnboardingStep(0);
+    }
+  }, [authState?.profile.id, onboardingDoneKey]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', themeMode);
@@ -433,9 +492,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, [sidebarMode]);
 
   useEffect(() => {
+    localStorage.setItem(SIDEBAR_POSITION_STORAGE_KEY, sidebarPosition);
+  }, [sidebarPosition]);
+
+  useEffect(() => {
     document.documentElement.setAttribute('data-card-style', cardStyleMode);
     localStorage.setItem(CARD_STYLE_STORAGE_KEY, cardStyleMode);
   }, [cardStyleMode]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-button-theme', buttonTheme);
+    localStorage.setItem(BUTTON_THEME_STORAGE_KEY, buttonTheme);
+  }, [buttonTheme]);
 
   useEffect(() => {
     engine.defaults.frameRate = motionFps;
@@ -611,6 +679,30 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    const onButtonThemeChange = (event: Event) => {
+      const custom = event as CustomEvent<{ buttonTheme?: ButtonThemeMode }>;
+      const requested = custom.detail?.buttonTheme;
+      if (requested === 'default' || requested === 'simple' || requested === 'cartoon' || requested === 'glass' || requested === 'neon' || requested === 'pixel' || requested === 'brutalist' || requested === 'pill' || requested === 'terminal' || requested === 'arcade') {
+        setButtonTheme(requested);
+      }
+    };
+    window.addEventListener(BUTTON_THEME_CHANGE_EVENT, onButtonThemeChange as EventListener);
+    return () => window.removeEventListener(BUTTON_THEME_CHANGE_EVENT, onButtonThemeChange as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const onSidebarPositionChange = (event: Event) => {
+      const custom = event as CustomEvent<{ position?: SidebarPosition }>;
+      const requestedPosition = custom.detail?.position;
+      if (requestedPosition === 'left' || requestedPosition === 'right' || requestedPosition === 'top' || requestedPosition === 'bottom') {
+        setSidebarPosition(requestedPosition);
+      }
+    };
+    window.addEventListener(SIDEBAR_POSITION_CHANGE_EVENT, onSidebarPositionChange as EventListener);
+    return () => window.removeEventListener(SIDEBAR_POSITION_CHANGE_EVENT, onSidebarPositionChange as EventListener);
+  }, []);
+
+  useEffect(() => {
     const onCardStyleChange = (event: Event) => {
       const custom = event as CustomEvent<{ cardStyle?: CardStyleMode }>;
       const requestedCardStyle = custom.detail?.cardStyle;
@@ -729,6 +821,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (appRevealTimerRef.current) {
+        clearTimeout(appRevealTimerRef.current);
+        appRevealTimerRef.current = null;
+      }
+      appBlackoutTimersRef.current.forEach((timer) => clearTimeout(timer));
+      appBlackoutTimersRef.current = [];
+    };
+  }, []);
+
+  useEffect(() => {
     if (!avatarContextMenu) return;
     const close = () => setAvatarContextMenu(null);
     const onKeyDown = (event: KeyboardEvent) => {
@@ -756,6 +859,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
     const onKeyDown = (event: KeyboardEvent) => {
       const activeShortcut = normalizeShortcut(eventToShortcut(event));
+      const isSecretOnboardingCombo = Boolean(
+        authState
+        && event.ctrlKey
+        && event.shiftKey
+        && !event.altKey
+        && !event.metaKey
+        && event.code === 'Digit1'
+      );
       const searchShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_SEARCH_KEY) || 'Ctrl+K');
       const createShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_CREATE_INSTANCE_KEY) || 'Ctrl+N');
       const settingsShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_SETTINGS_KEY) || 'Ctrl+,');
@@ -786,6 +897,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
         event.stopPropagation();
         return;
       }
+
+      if (isSecretOnboardingCombo) {
+        event.preventDefault();
+        setOnboardingOpen(true);
+        setOnboardingExitActive(false);
+        setAppBlackoutPhase('idle');
+        setAppRevealActive(false);
+        setOnboardingStep(0);
+        return;
+      }
+
       if (isTypingTarget(event.target)) return;
 
       if (activeShortcut && activeShortcut === searchShortcut) {
@@ -822,7 +944,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       window.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('keydown', onKeyDown, true);
     };
-  }, [navigate, startupSceneSoundProfile]);
+  }, [navigate, startupSceneSoundProfile, authState]);
 
   useEffect(() => {
     if (!mainRef.current) return;
@@ -1088,32 +1210,81 @@ export function Layout({ children }: { children: React.ReactNode }) {
     navigate('/mods');
   };
 
+  const completeOnboarding = () => {
+    if (onboardingDoneKey) {
+      localStorage.setItem(onboardingDoneKey, 'true');
+    }
+    appBlackoutTimersRef.current.forEach((timer) => clearTimeout(timer));
+    appBlackoutTimersRef.current = [];
+    setOnboardingExitActive(true);
+    setAppBlackoutPhase('fade-in');
+
+    const fadeToBlackDone = setTimeout(() => {
+      setOnboardingOpen(false);
+      setOnboardingExitActive(false);
+      setAppBlackoutPhase('hold');
+    }, 900);
+
+    const startReveal = setTimeout(() => {
+      setAppBlackoutPhase('fade-out');
+      setAppRevealActive(true);
+    }, 2900);
+
+    const finishReveal = setTimeout(() => {
+      setAppBlackoutPhase('idle');
+      if (appRevealTimerRef.current) clearTimeout(appRevealTimerRef.current);
+      appRevealTimerRef.current = setTimeout(() => {
+        setAppRevealActive(false);
+        appRevealTimerRef.current = null;
+      }, 40);
+    }, 6400);
+
+    appBlackoutTimersRef.current = [fadeToBlackDone, startReveal, finishReveal];
+  };
+
   const openAvatarContextMenu = (event: React.MouseEvent) => {
     event.preventDefault();
     setAvatarContextMenu({ x: event.clientX, y: event.clientY });
   };
   const iconStrokeWidth = iconPack === 'bold' ? 2.6 : iconPack === 'pixel' ? 2.2 : iconPack === 'rounded' ? 1.9 : 2;
   const density = DENSITY_MAP[densityMode] || DENSITY_MAP.cozy;
+  const isHorizontalSidebar = sidebarPosition === 'top' || sidebarPosition === 'bottom';
+  const isRightSidebar = sidebarPosition === 'right';
+  const sidebarRail = (
+    <SidebarRail
+      className="js-giga-reveal shrink-0"
+      themeMode={themeMode}
+      sidebarMode={sidebarMode}
+      sidebarPosition={sidebarPosition}
+      toggleTheme={() => {}}
+      onQuickLaunch={runQuickLaunchLastInstance}
+      onOpenLogs={runOpenLogs}
+      onRefreshMods={runRefreshMods}
+    />
+  );
 
   return (
-    <div ref={rootRef} className="g-window-shell w-full h-full flex overflow-hidden text-[var(--g-text)]">
+    <div ref={rootRef} className={clsx('g-window-shell w-full h-full overflow-hidden text-[var(--g-text)]', isHorizontalSidebar ? 'flex flex-col' : 'flex', appRevealActive && 'app-reveal-active')}>
+      {appBlackoutPhase !== 'idle' && (
+        <div
+          className={clsx(
+            'absolute inset-0 z-[338] pointer-events-none onboarding-blackout-transition',
+            appBlackoutPhase === 'fade-in' && 'is-fade-in',
+            appBlackoutPhase === 'hold' && 'is-hold',
+            appBlackoutPhase === 'fade-out' && 'is-fade-out'
+          )}
+        />
+      )}
       {backgroundMode === 'particles' && <Particles />}
       {backgroundMode === 'plus' && <div className="pointer-events-none absolute inset-0 g-bg-plus" />}
       {backgroundMode === 'aurora' && <div className="pointer-events-none absolute inset-0 g-bg-aurora" />}
       {backgroundMode === 'scanlines' && <div className="pointer-events-none absolute inset-0 g-bg-scanlines" />}
       {backgroundMode === 'nebula' && <div className="pointer-events-none absolute inset-0 g-bg-nebula" />}
 
-      <SidebarRail
-        className="js-giga-reveal"
-        themeMode={themeMode}
-        sidebarMode={sidebarMode}
-        toggleTheme={() => {}}
-        onQuickLaunch={runQuickLaunchLastInstance}
-        onOpenLogs={runOpenLogs}
-        onRefreshMods={runRefreshMods}
-      />
+      {sidebarPosition === 'left' && sidebarRail}
+      {sidebarPosition === 'top' && sidebarRail}
 
-      <div className="flex-1 min-w-0 h-full flex flex-col relative">
+      <div className={clsx('flex-1 min-w-0 flex flex-col relative', isHorizontalSidebar ? 'min-h-0' : 'h-full')}>
         <header
           data-tauri-drag-region
           className="js-giga-reveal app-region-drag border-b backdrop-blur-xl px-5 flex items-center gap-3 relative z-[120] overflow-visible"
@@ -1327,6 +1498,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </main>
       </div>
 
+      {isRightSidebar && sidebarRail}
+      {sidebarPosition === 'bottom' && sidebarRail}
+
       {startupSceneVisible && (
         <div
           key={startupSceneRunId}
@@ -1338,6 +1512,115 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
       {startupBlackHoldVisible && (
         <div className="startup-black-hold app-region-no-drag" />
+      )}
+
+      {onboardingOpen && authState && (
+        <div className={clsx('absolute inset-0 z-[340] flex items-center justify-center p-4 app-region-no-drag onboarding-space-solid', onboardingExitActive && 'onboarding-exit-active')}>
+          <div className="pointer-events-none absolute inset-0 onboarding-stars-far" />
+          <div className="pointer-events-none absolute inset-0 onboarding-stars-near" />
+          <div className="pointer-events-none absolute inset-0 onboarding-stars-glow" />
+
+          <div className="relative w-full max-w-6xl onboarding-shell">
+            <div className="mx-auto max-w-[680px]">
+              {onboardingStep === 0 && (
+                <div className="mt-10 flex items-center justify-center gap-3">
+                  <p className="text-5xl md:text-6xl font-extrabold text-white">Hi,</p>
+                  <div className="text-5xl md:text-6xl font-extrabold text-white border-b border-white/60 px-2 pb-2 leading-none">
+                    {authState.profile.name}
+                  </div>
+                  <button
+                    onClick={() => setOnboardingStep(1)}
+                    className="h-14 px-6 rounded-xl border border-white/20 bg-white text-black text-2xl font-extrabold inline-flex items-center gap-2"
+                  >
+                    Enter
+                  </button>
+                </div>
+              )}
+
+              {onboardingStep === 1 && (
+                <>
+                  <input ref={onboardingProfileUploadRef} type="file" accept="image/*" className="hidden" onChange={onProfileInputChange} />
+                  <div className="mt-10 mx-auto max-w-[480px] rounded-2xl border border-white/15 bg-[#0a0f19]/88 p-8 flex flex-col items-center gap-6">
+                    <p className="text-xl md:text-2xl font-bold text-white">Upload Profile Picture</p>
+                    <div className="w-32 h-32 rounded-full border border-white/25 bg-[#0b101a]/92 overflow-hidden flex items-center justify-center">
+                      <img
+                        src={displayAvatar || `https://crafatar.com/avatars/${authState.profile.id}?size=112&default=MHF_Steve`}
+                        alt="Profile preview"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-3">
+                      <button onClick={() => onboardingProfileUploadRef.current?.click()} className="h-12 px-6 rounded-xl border border-white/22 bg-[#0b101a]/92 hover:bg-[#11182a] transition-colors inline-flex items-center gap-2 text-white font-bold">
+                        <Camera size={18} /> Upload
+                      </button>
+                      <button onClick={() => setOnboardingStep(2)} className="h-12 px-6 rounded-xl border border-white/20 bg-white text-black transition-colors inline-flex items-center gap-2 font-extrabold">
+                        <Sparkles size={18} /> Enter
+                      </button>
+                    </div>
+                    <button onClick={clearProfileAvatar} className="text-xs uppercase tracking-[0.16em] font-extrabold text-white/55 hover:text-white/80 transition-colors">
+                      Reset picture
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {onboardingStep === 2 && (
+                <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {ONBOARDING_THEME_OPTIONS.map((theme) => (
+                    <button
+                      key={theme.id}
+                      onClick={() => {
+                        setThemeMode(theme.id);
+                        setOnboardingStep(3);
+                      }}
+                      className={clsx(
+                        'h-40 rounded-2xl border bg-[#0b101a]/92 hover:bg-[#11182a] transition-colors flex flex-col items-center justify-center gap-2 text-white',
+                        themeMode === theme.id ? 'border-[var(--g-accent)] shadow-[0_0_0_1px_var(--g-accent-soft)]' : 'border-white/12'
+                      )}
+                    >
+                      {theme.id === 'gray' ? <Layers size={22} /> : theme.id === 'ocean' ? <Waves size={22} /> : <Gift size={22} />}
+                      <span className="text-xl font-bold">{theme.label}</span>
+                      <span className="text-xs text-white/55">{theme.hint}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {onboardingStep === 3 && (
+                <div className="mt-8 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {ONBOARDING_ACCENT_OPTIONS.map((accent) => (
+                    <button
+                      key={accent.id}
+                      onClick={() => {
+                        setAccentMode(accent.id);
+                        completeOnboarding();
+                      }}
+                      className={clsx(
+                        'h-40 rounded-2xl border bg-[#0b101a]/92 hover:bg-[#11182a] transition-colors flex flex-col items-center justify-center gap-3 text-white',
+                        accentMode === accent.id ? 'border-[var(--g-accent)] shadow-[0_0_0_1px_var(--g-accent-soft)]' : 'border-white/12'
+                      )}
+                    >
+                      <Palette size={22} />
+                      <div className="h-6 w-24 rounded-md border border-white/15" style={{ background: accent.swatch }} />
+                      <span className="text-lg font-bold">{accent.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="mt-6 flex justify-center items-center gap-2">
+                {[0, 1, 2, 3].map((step) => (
+                  <button
+                    key={step}
+                    onClick={() => setOnboardingStep(step as 0 | 1 | 2 | 3)}
+                    className={clsx('h-2.5 rounded-full transition-all', onboardingStep === step ? 'w-8 bg-white/90' : 'w-2.5 bg-white/45')}
+                    aria-label={`Go to step ${step + 1}`}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {error && (
@@ -1425,3 +1708,4 @@ export function Layout({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+

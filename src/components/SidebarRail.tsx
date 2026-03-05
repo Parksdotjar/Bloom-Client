@@ -24,6 +24,7 @@ import {
 
 type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
 type SidebarMode = 'rail' | 'classic' | 'expanded';
+type SidebarPosition = 'left' | 'right' | 'top' | 'bottom';
 type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
 
 const EXTRA_CHANGE_EVENT = 'bloom-extra-change';
@@ -38,6 +39,7 @@ interface SidebarProps {
   className?: string;
   themeMode: LauncherTheme;
   sidebarMode: SidebarMode;
+  sidebarPosition: SidebarPosition;
   toggleTheme: () => void;
   onQuickLaunch?: () => void;
   onOpenLogs?: () => void;
@@ -45,7 +47,7 @@ interface SidebarProps {
 }
 
 export function SidebarRail(props: SidebarProps) {
-  const { className, themeMode, sidebarMode, onQuickLaunch, onOpenLogs, onRefreshMods } = props;
+  const { className, themeMode, sidebarMode, sidebarPosition, onQuickLaunch, onOpenLogs, onRefreshMods } = props;
   const navigate = useNavigate();
   const location = useLocation();
   const railRef = useRef<HTMLDivElement | null>(null);
@@ -82,6 +84,7 @@ export function SidebarRail(props: SidebarProps) {
     return 8;
   });
   const [hoverY, setHoverY] = useState<number | null>(null);
+  const [hoverX, setHoverX] = useState<number | null>(null);
   const [dockHoverReady, setDockHoverReady] = useState(false);
   const [sidebarContextMenu, setSidebarContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [iconPack, setIconPack] = useState<IconPackMode>(() => {
@@ -89,7 +92,11 @@ export function SidebarRail(props: SidebarProps) {
     return stored === 'default' || stored === 'bold' || stored === 'rounded' || stored === 'pixel' ? stored : 'default';
   });
   const showLabels = sidebarMode !== 'rail';
+  const isHorizontal = sidebarPosition === 'top' || sidebarPosition === 'bottom';
+  const isRight = sidebarPosition === 'right';
+  const isBottom = sidebarPosition === 'bottom';
   const sidebarWidth = sidebarMode === 'expanded' ? 126 : sidebarMode === 'rail' ? 76 : 92;
+  const sidebarHeight = sidebarMode === 'expanded' ? 98 : sidebarMode === 'rail' ? 78 : 88;
   const iconStrokeWidth = iconPack === 'bold' ? 2.6 : iconPack === 'pixel' ? 2.2 : iconPack === 'rounded' ? 1.9 : 2;
 
   const navItems = [
@@ -186,6 +193,7 @@ export function SidebarRail(props: SidebarProps) {
     if (nodes.length === 0) return;
     setDockHoverReady(false);
     setHoverY(null);
+    setHoverX(null);
     remove(nodes);
     set(nodes, { opacity: 0, translateX: motionTuning.offsetX, translateY: motionTuning.offsetY });
 
@@ -219,16 +227,20 @@ export function SidebarRail(props: SidebarProps) {
     const baseHalfGap = sidebarTabGap / 2;
     const transformTransition = `transform ${sidebarDockGrowSpeed}ms cubic-bezier(0.22, 1, 0.36, 1)`;
     const gapTransitionMs = Math.max(60, Math.round(sidebarDockGrowSpeed * 0.55));
-    const gapTransition = `margin-top ${gapTransitionMs}ms cubic-bezier(0.22, 1, 0.36, 1), margin-bottom ${gapTransitionMs}ms cubic-bezier(0.22, 1, 0.36, 1)`;
-    const isHoverTracking = sidebarDockHoverEnabled && dockHoverReady && hoverY !== null;
+    const gapTransition = isHorizontal
+      ? `margin-left ${gapTransitionMs}ms cubic-bezier(0.22, 1, 0.36, 1), margin-right ${gapTransitionMs}ms cubic-bezier(0.22, 1, 0.36, 1)`
+      : `margin-top ${gapTransitionMs}ms cubic-bezier(0.22, 1, 0.36, 1), margin-bottom ${gapTransitionMs}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+    const isHoverTracking = sidebarDockHoverEnabled && dockHoverReady && (isHorizontal ? hoverX !== null : hoverY !== null);
     const transition = isHoverTracking ? 'none' : `${transformTransition}, ${gapTransition}`;
-    if (!sidebarDockHoverEnabled || !dockHoverReady || hoverY === null) {
+    if (!sidebarDockHoverEnabled || !dockHoverReady || (isHorizontal ? hoverX === null : hoverY === null)) {
       return {
         transition,
-        willChange: 'transform, margin-top, margin-bottom',
+        willChange: isHorizontal ? 'transform, margin-left, margin-right' : 'transform, margin-top, margin-bottom',
         transform: 'scale(1)',
-        marginTop: `${baseHalfGap}px`,
-        marginBottom: `${baseHalfGap}px`
+        marginTop: isHorizontal ? undefined : `${baseHalfGap}px`,
+        marginBottom: isHorizontal ? undefined : `${baseHalfGap}px`,
+        marginLeft: isHorizontal ? `${baseHalfGap}px` : undefined,
+        marginRight: isHorizontal ? `${baseHalfGap}px` : undefined
       };
     }
 
@@ -236,32 +248,36 @@ export function SidebarRail(props: SidebarProps) {
     if (!element) {
       return {
         transition,
-        willChange: 'transform, margin-top, margin-bottom',
+        willChange: isHorizontal ? 'transform, margin-left, margin-right' : 'transform, margin-top, margin-bottom',
         transform: 'scale(1)',
-        marginTop: `${baseHalfGap}px`,
-        marginBottom: `${baseHalfGap}px`
+        marginTop: isHorizontal ? undefined : `${baseHalfGap}px`,
+        marginBottom: isHorizontal ? undefined : `${baseHalfGap}px`,
+        marginLeft: isHorizontal ? `${baseHalfGap}px` : undefined,
+        marginRight: isHorizontal ? `${baseHalfGap}px` : undefined
       };
     }
 
     const rect = element.getBoundingClientRect();
-    const centerY = rect.top + rect.height / 2;
-    const distance = Math.abs(hoverY - centerY);
+    const center = isHorizontal ? rect.left + rect.width / 2 : rect.top + rect.height / 2;
+    const cursor = isHorizontal ? hoverX! : hoverY!;
+    const distance = Math.abs(cursor - center);
     const radius = 230;
     const influence = Math.max(0, 1 - distance / radius);
     const maxScaleBoost = (sidebarDockGrowSize / 100) * 0.85;
     const scale = 1 + influence * maxScaleBoost;
-    // Reserve the exact visual growth from center scaling so items never overlap.
-    // A centered scale grows by extra/2 on top and extra/2 on bottom.
-    const baseHeight = element.offsetHeight || rect.height;
-    const extraHeight = (scale - 1) * baseHeight;
+    // Reserve the visual growth from center scaling so items never overlap.
+    const baseSize = isHorizontal ? (element.offsetWidth || rect.width) : (element.offsetHeight || rect.height);
+    const extraHeight = (scale - 1) * baseSize;
     const spread = extraHeight / 2;
 
     return {
       transition,
-      willChange: 'transform, margin-top, margin-bottom',
+      willChange: isHorizontal ? 'transform, margin-left, margin-right' : 'transform, margin-top, margin-bottom',
       transform: `scale(${scale})`,
-      marginTop: `${baseHalfGap + spread}px`,
-      marginBottom: `${baseHalfGap + spread}px`,
+      marginTop: isHorizontal ? undefined : `${baseHalfGap + spread}px`,
+      marginBottom: isHorizontal ? undefined : `${baseHalfGap + spread}px`,
+      marginLeft: isHorizontal ? `${baseHalfGap + spread}px` : undefined,
+      marginRight: isHorizontal ? `${baseHalfGap + spread}px` : undefined,
       zIndex: Math.round(influence * 100) + 1
     } as const;
   };
@@ -275,30 +291,40 @@ export function SidebarRail(props: SidebarProps) {
       }}
       onMouseMove={(event) => {
         if (!sidebarDockHoverEnabled || !dockHoverReady) return;
-        setHoverY(event.clientY);
+        if (isHorizontal) setHoverX(event.clientX);
+        else setHoverY(event.clientY);
       }}
-      onMouseLeave={() => setHoverY(null)}
+      onMouseLeave={() => {
+        setHoverY(null);
+        setHoverX(null);
+      }}
       className={clsx(
-        'h-full flex flex-col items-center py-4 border-r backdrop-blur-xl transition-[width,padding,margin,border-radius] duration-200',
-        sidebarMode === 'expanded' && 'px-1',
-        sidebarMode === 'rail' && 'px-1',
-        sidebarMode === 'classic' && 'px-0',
-        sidebarMode === 'expanded' && 'rounded-r-2xl',
+        'flex items-center backdrop-blur-xl transition-[width,height,padding,margin,border-radius] duration-200',
+        isHorizontal ? (isBottom ? 'border-t' : 'border-b') : (isRight ? 'border-l' : 'border-r'),
+        isHorizontal ? 'w-full flex-row px-4' : 'h-full flex-col py-4',
+        !isHorizontal && sidebarMode === 'expanded' && 'px-1',
+        !isHorizontal && sidebarMode === 'rail' && 'px-1',
+        !isHorizontal && sidebarMode === 'classic' && 'px-0',
+        !isHorizontal && sidebarMode === 'expanded' && (isRight ? 'rounded-l-2xl' : 'rounded-r-2xl'),
+        isHorizontal && 'gap-2',
         className
       )}
       style={{
-        width: `${sidebarWidth}px`,
+        width: isHorizontal ? '100%' : `${sidebarWidth}px`,
+        height: isHorizontal ? `${sidebarHeight}px` : '100%',
         background: 'var(--g-sidebar)',
         borderColor: 'var(--g-sidebar-border)',
-        boxShadow: themeMode === 'true-dark' ? 'inset -1px 0 0 rgba(66,66,66,0.5)' : undefined,
-        margin: sidebarMode === 'expanded' ? '8px 0 8px 8px' : undefined
+        boxShadow: themeMode === 'true-dark' ? (isHorizontal ? 'inset 0 -1px 0 rgba(66,66,66,0.5)' : isRight ? 'inset 1px 0 0 rgba(66,66,66,0.5)' : 'inset -1px 0 0 rgba(66,66,66,0.5)') : undefined,
+        margin: sidebarMode === 'expanded'
+          ? (isHorizontal ? (isBottom ? '0 8px 8px 8px' : '8px 8px 0 8px') : (isRight ? '8px 8px 8px 0' : '8px 0 8px 8px'))
+          : undefined
       }}
     >
       <div className="js-side-item w-14 h-14 rounded-2xl border border-white/15 bg-white/5 flex items-center justify-center overflow-hidden">
         <img src={logo} alt="Bloom" className="w-10 h-10 object-contain" style={{ transform: 'scale(2.4)' }} />
       </div>
 
-      <div className="js-side-item mt-4 w-12 h-12 rounded-xl border border-white/15 bg-white/5 overflow-hidden flex items-center justify-center">
+      <div className={clsx('js-side-item w-12 h-12 rounded-xl border border-white/15 bg-white/5 overflow-hidden flex items-center justify-center', isHorizontal ? 'ml-1' : 'mt-4')}>
         {authState ? (
           <img
             src={profileAvatarUrl || authState.profile.skinUrl || `https://crafatar.com/avatars/${authState.profile.id}?size=64&default=MHF_Steve`}
@@ -317,7 +343,7 @@ export function SidebarRail(props: SidebarProps) {
         )}
       </div>
 
-      <nav className="mt-4 w-full flex-1 px-2 flex flex-col">
+      <nav className={clsx('w-full px-2 flex', isHorizontal ? 'ml-2 flex-1 flex-row items-center overflow-x-auto' : 'mt-4 flex-1 flex-col')}>
         {navItems.map((item, index) => (
           <NavLink
             key={item.label}
@@ -327,15 +353,15 @@ export function SidebarRail(props: SidebarProps) {
             }}
             style={getDockStyle(index)}
             className={({ isActive }) => clsx(
-              'js-side-item js-side-tab rounded-xl border flex flex-col items-center justify-center text-[11px] font-bold tracking-wide transition-colors origin-center',
-              showLabels ? 'h-14' : 'h-12',
+              'js-side-item js-side-tab rounded-xl border flex items-center justify-center text-[11px] font-bold tracking-wide transition-colors origin-center',
+              isHorizontal ? (showLabels ? 'h-12 min-w-[92px] px-2 flex-row gap-2' : 'h-10 min-w-[44px]') : (showLabels ? 'h-14 flex-col' : 'h-12 flex-col'),
               isActive
                 ? 'g-btn-accent text-white'
                 : 'border-white/10 bg-white/[0.03] text-white/45 hover:text-white/75 hover:bg-white/[0.08]'
             )}
           >
             <item.icon size={16} strokeWidth={iconStrokeWidth} />
-            {showLabels && <span className="mt-1">{item.label}</span>}
+            {showLabels && <span className={isHorizontal ? '' : 'mt-1'}>{item.label}</span>}
           </NavLink>
         ))}
       </nav>

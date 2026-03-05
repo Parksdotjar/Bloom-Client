@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { clsx } from 'clsx';
 import { checkForLauncherUpdate, downloadAndInstallLauncherUpdate, type ExternalUpdate } from '../services/updater';
 
@@ -8,7 +8,9 @@ type BackgroundMode = 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula';
 type DensityMode = 'compact' | 'cozy' | 'spacious';
 type FontPackMode = 'manrope' | 'space-grotesk' | 'sora';
 type SidebarMode = 'rail' | 'classic' | 'expanded';
+type SidebarPosition = 'left' | 'right' | 'top' | 'bottom';
 type CardStyleMode = 'glass' | 'solid' | 'outline';
+type ButtonThemeMode = 'default' | 'simple' | 'cartoon' | 'glass' | 'neon' | 'pixel' | 'brutalist' | 'pill' | 'terminal' | 'arcade';
 type MotionMode = 'off' | 'subtle' | 'standard' | 'cinematic';
 type MotionEasingPreset = 'out-quad' | 'out-cubic' | 'in-out-cubic' | 'out-back' | 'out-elastic' | 'linear' | 'custom';
 type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
@@ -30,8 +32,12 @@ const FONT_STORAGE_KEY = 'bloom_font_pack';
 const FONT_CHANGE_EVENT = 'bloom-font-change';
 const SIDEBAR_STORAGE_KEY = 'bloom_sidebar_mode';
 const SIDEBAR_CHANGE_EVENT = 'bloom-sidebar-change';
+const SIDEBAR_POSITION_STORAGE_KEY = 'bloom_sidebar_position';
+const SIDEBAR_POSITION_CHANGE_EVENT = 'bloom-sidebar-position-change';
 const CARD_STYLE_STORAGE_KEY = 'bloom_card_style';
 const CARD_STYLE_CHANGE_EVENT = 'bloom-card-style-change';
+const BUTTON_THEME_STORAGE_KEY = 'bloom_button_theme';
+const BUTTON_THEME_CHANGE_EVENT = 'bloom-button-theme-change';
 const MOTION_STORAGE_KEY = 'bloom_motion_mode';
 const MOTION_CHANGE_EVENT = 'bloom-motion-change';
 const MOTION_FPS_STORAGE_KEY = 'bloom_motion_fps';
@@ -77,8 +83,6 @@ const STARTUP_SCENE_SOUND_PROFILE_KEY = 'bloom_startup_scene_sound_profile';
 const STARTUP_SCENE_CHANGE_EVENT = 'bloom-startup-scene-change';
 
 const THEMES: { id: LauncherTheme; label: string; description: string }[] = [
-  { id: 'light', label: 'Light', description: 'Bright and clean default.' },
-  { id: 'light-gray', label: 'Light Gray', description: 'Neutral daylight tone.' },
   { id: 'dark', label: 'Dark', description: 'Deep contrast with glow.' },
   { id: 'gray', label: 'Gray', description: 'Desaturated graphite palette.' },
   { id: 'true-dark', label: 'True Dark', description: 'OLED-friendly blackout.' },
@@ -104,6 +108,19 @@ const ICON_PACKS: { id: IconPackMode; label: string; description: string }[] = [
   { id: 'bold', label: 'Bold', description: 'Thicker, stronger strokes.' },
   { id: 'rounded', label: 'Rounded', description: 'Soft modern icon finish.' },
   { id: 'pixel', label: 'Pixel', description: 'Sharper Minecraft-like look.' }
+];
+
+const BUTTON_THEMES: { id: ButtonThemeMode; label: string; description: string }[] = [
+  { id: 'default', label: 'Default', description: 'Balanced launcher style.' },
+  { id: 'simple', label: 'Simple', description: 'Quiet minimal buttons.' },
+  { id: 'cartoon', label: 'Cartoon', description: 'Bold comic outline feel.' },
+  { id: 'glass', label: 'Glass', description: 'Soft blurred elevated buttons.' },
+  { id: 'neon', label: 'Neon', description: 'Glowing cyber accent edges.' },
+  { id: 'pixel', label: 'Pixel', description: 'Chunky retro game switch look.' },
+  { id: 'brutalist', label: 'Brutalist', description: 'Hard edges and block shadows.' },
+  { id: 'pill', label: 'Pill', description: 'Rounded capsule controls.' },
+  { id: 'terminal', label: 'Terminal', description: 'Mono dashed command style.' },
+  { id: 'arcade', label: 'Arcade', description: 'Punchy cabinet-button depth.' }
 ];
 
 const SOUND_PACKS: { id: SoundPackMode; label: string; description: string }[] = [
@@ -147,6 +164,21 @@ function clampRoundness(value: number) {
 
 function clampGlassAmount(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function AppearanceDropdown(props: { title: string; description: string; children: ReactNode }) {
+  const { title, description, children } = props;
+  return (
+    <details className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+      <summary className="cursor-pointer list-none">
+        <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">{title}</p>
+        <p className="text-xs g-muted mt-1">{description}</p>
+      </summary>
+      <div className="mt-4 space-y-4">
+        {children}
+      </div>
+    </details>
+  );
 }
 
 function eventToShortcut(event: KeyboardEvent): string {
@@ -280,6 +312,7 @@ export function Settings() {
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [themeMode, setThemeMode] = useState<LauncherTheme>(() => {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === 'light' || stored === 'light-gray') return 'true-dark';
     return stored === 'light' || stored === 'light-gray' || stored === 'dark' || stored === 'gray' || stored === 'true-dark' || stored === 'ocean' || stored === 'forest' || stored === 'sunset' || stored === 'paper' || stored === 'crt' || stored === 'synthwave' || stored === 'sandstone' || stored === 'minecraft' || stored === 'cartoon' || stored === 'strength-smp' || stored === 'blueprint' || stored === 'holo-grid' || stored === 'lavaforge' || stored === 'candy-pop' || stored === 'mono-ink'
       ? stored
       : 'dark';
@@ -308,9 +341,19 @@ export function Settings() {
     const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
     return stored === 'rail' || stored === 'classic' || stored === 'expanded' ? stored : 'classic';
   });
+  const [sidebarPosition, setSidebarPosition] = useState<SidebarPosition>(() => {
+    const stored = localStorage.getItem(SIDEBAR_POSITION_STORAGE_KEY);
+    return stored === 'left' || stored === 'right' || stored === 'top' || stored === 'bottom' ? stored : 'left';
+  });
   const [cardStyleMode, setCardStyleMode] = useState<CardStyleMode>(() => {
     const stored = localStorage.getItem(CARD_STYLE_STORAGE_KEY);
     return stored === 'glass' || stored === 'solid' || stored === 'outline' ? stored : 'glass';
+  });
+  const [buttonTheme, setButtonTheme] = useState<ButtonThemeMode>(() => {
+    const stored = localStorage.getItem(BUTTON_THEME_STORAGE_KEY);
+    return stored === 'default' || stored === 'simple' || stored === 'cartoon' || stored === 'glass' || stored === 'neon' || stored === 'pixel' || stored === 'brutalist' || stored === 'pill' || stored === 'terminal' || stored === 'arcade'
+      ? stored
+      : 'default';
   });
   const [motionMode, setMotionMode] = useState<MotionMode>(() => {
     const stored = localStorage.getItem(MOTION_STORAGE_KEY);
@@ -541,10 +584,22 @@ export function Settings() {
     window.dispatchEvent(new CustomEvent(SIDEBAR_CHANGE_EVENT, { detail: { sidebar: next } }));
   };
 
+  const applySidebarPosition = (next: SidebarPosition) => {
+    setSidebarPosition(next);
+    localStorage.setItem(SIDEBAR_POSITION_STORAGE_KEY, next);
+    window.dispatchEvent(new CustomEvent(SIDEBAR_POSITION_CHANGE_EVENT, { detail: { position: next } }));
+  };
+
   const applyCardStyle = (next: CardStyleMode) => {
     setCardStyleMode(next);
     localStorage.setItem(CARD_STYLE_STORAGE_KEY, next);
     window.dispatchEvent(new CustomEvent(CARD_STYLE_CHANGE_EVENT, { detail: { cardStyle: next } }));
+  };
+
+  const applyButtonTheme = (next: ButtonThemeMode) => {
+    setButtonTheme(next);
+    localStorage.setItem(BUTTON_THEME_STORAGE_KEY, next);
+    window.dispatchEvent(new CustomEvent(BUTTON_THEME_CHANGE_EVENT, { detail: { buttonTheme: next } }));
   };
 
   const applyMotion = (next: MotionMode) => {
@@ -716,21 +771,33 @@ export function Settings() {
         </section>
       ) : tab === 'appearance' ? (
         <section className="g-panel p-6 space-y-6">
-          <div>
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60 mb-2">Theme Mode</p>
+          <AppearanceDropdown title="Theme Mode" description="Pick the overall visual theme for the launcher.">
+            <div className="flex justify-center">
+              <button
+                onClick={() => applyTheme('true-dark')}
+                className={clsx(
+                  'w-full max-w-md rounded-2xl border-2 p-4 text-left',
+                  themeMode === 'true-dark' ? 'bg-white/[0.06] border-[var(--g-accent)] shadow-[0_0_0_1px_var(--g-accent-soft)]' : 'border-white/20 bg-white/[0.02] hover:bg-white/[0.05]'
+                )}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-base font-extrabold text-white">True Dark</p>
+                  <span className="text-[10px] uppercase tracking-[0.12em] font-extrabold px-2 py-1 rounded-md border border-[var(--g-accent)] text-[var(--g-accent)]">Featured</span>
+                </div>
+                <p className="text-xs g-muted mt-1">OLED-friendly blackout with highest contrast.</p>
+              </button>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              {THEMES.map((theme) => (
+              {THEMES.filter((theme) => theme.id !== 'true-dark').map((theme) => (
                 <button key={theme.id} onClick={() => applyTheme(theme.id)} className={clsx('rounded-xl border p-4 text-left', themeMode === theme.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}>
                   <p className="text-base font-extrabold text-white">{theme.label}</p>
                   <p className="text-xs g-muted mt-1">{theme.description}</p>
                 </button>
               ))}
             </div>
-          </div>
+          </AppearanceDropdown>
 
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">UI Pixel Level</p>
-            <p className="text-xs g-muted mt-1">0 is normal. Higher values add a more pixelated Minecraft-like look to UI assets.</p>
+          <AppearanceDropdown title="UI Pixel Level" description="0 is normal. Higher values add a more pixelated Minecraft-like look to UI assets.">
             <div className="mt-3 flex items-center gap-3">
               <input
                 type="range"
@@ -743,10 +810,9 @@ export function Settings() {
               />
               <span className="w-12 text-right text-sm font-extrabold text-white">{uiAssetPixelLevel}</span>
             </div>
-          </div>
+          </AppearanceDropdown>
 
-          <div>
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60 mb-2">Icon Pack</p>
+          <AppearanceDropdown title="Icon Pack" description="Choose the icon drawing style across the launcher.">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
               {ICON_PACKS.map((pack) => (
                 <button key={pack.id} onClick={() => applyIconPack(pack.id)} className={clsx('rounded-xl border p-3 text-left', iconPackMode === pack.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}>
@@ -755,28 +821,34 @@ export function Settings() {
                 </button>
               ))}
             </div>
-          </div>
+          </AppearanceDropdown>
 
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Roundedness</p>
-            <p className="text-xs g-muted mt-1">Sharp to pill shape across core UI panels and controls.</p>
+          <AppearanceDropdown title="Button Theme" description="Switch button shape, stroke, and interaction style globally.">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {BUTTON_THEMES.map((theme) => (
+                <button key={theme.id} onClick={() => applyButtonTheme(theme.id)} className={clsx('rounded-xl border p-3 text-left', buttonTheme === theme.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}>
+                  <p className="text-sm font-extrabold text-white">{theme.label}</p>
+                  <p className="text-xs g-muted mt-1">{theme.description}</p>
+                </button>
+              ))}
+            </div>
+          </AppearanceDropdown>
+
+          <AppearanceDropdown title="Roundedness" description="Sharp to pill shape across core UI panels and controls.">
             <div className="mt-3 flex items-center gap-3">
               <input type="range" min={0} max={100} step={1} value={roundnessLevel} onChange={(event) => applyRoundness(Number(event.target.value))} className="w-full g-range" />
               <span className="w-12 text-right text-sm font-extrabold text-white">{roundnessLevel}</span>
             </div>
-          </div>
+          </AppearanceDropdown>
 
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Glass Amount</p>
-            <p className="text-xs g-muted mt-1">Controls panel transparency and blur intensity.</p>
+          <AppearanceDropdown title="Glass Amount" description="Controls panel transparency and blur intensity.">
             <div className="mt-3 flex items-center gap-3">
               <input type="range" min={0} max={100} step={1} value={glassAmount} onChange={(event) => applyGlassAmount(Number(event.target.value))} className="w-full g-range" />
               <span className="w-12 text-right text-sm font-extrabold text-white">{glassAmount}</span>
             </div>
-          </div>
+          </AppearanceDropdown>
 
-          <div>
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60 mb-2">Accent Color</p>
+          <AppearanceDropdown title="Accent Color" description="Global accent applied to controls and highlights.">
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {ACCENTS.map((accent) => (
                 <button
@@ -789,10 +861,9 @@ export function Settings() {
                 </button>
               ))}
             </div>
-          </div>
+          </AppearanceDropdown>
 
-          <div>
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60 mb-2">Background</p>
+          <AppearanceDropdown title="Background" description="Pick animated/background texture style.">
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               {([
                 { id: 'plus', label: 'Plus', preview: 'radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--g-accent) 34%, transparent) 1px, transparent 0)', size: '18px 18px' },
@@ -811,10 +882,9 @@ export function Settings() {
                 </button>
               ))}
             </div>
-          </div>
+          </AppearanceDropdown>
 
-          <div>
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60 mb-2">Layout Density</p>
+          <AppearanceDropdown title="Layout Density" description="Controls overall spacing and scale.">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {([
                 { id: 'compact', label: 'Compact', desc: 'Tighter spacing' },
@@ -827,10 +897,9 @@ export function Settings() {
                 </button>
               ))}
             </div>
-          </div>
+          </AppearanceDropdown>
 
-          <div>
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60 mb-2">Typography Pack</p>
+          <AppearanceDropdown title="Typography Pack" description="Switch global UI typeface and feel.">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {([
                 { id: 'manrope', label: 'Manrope', sample: 'Modern clean UI' },
@@ -843,10 +912,9 @@ export function Settings() {
                 </button>
               ))}
             </div>
-          </div>
+          </AppearanceDropdown>
 
-          <div>
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60 mb-2">Sidebar Style</p>
+          <AppearanceDropdown title="Sidebar Style" description="Choose the launcher dock density and labels.">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {([
                 { id: 'rail', label: 'Rail', desc: 'Icons only' },
@@ -859,10 +927,25 @@ export function Settings() {
                 </button>
               ))}
             </div>
-          </div>
+          </AppearanceDropdown>
 
-          <div>
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60 mb-2">Card Style</p>
+          <AppearanceDropdown title="Sidebar Position" description="Place navigation on left, right, top, or bottom.">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              {([
+                { id: 'left', label: 'Left', desc: 'Default dock placement' },
+                { id: 'right', label: 'Right', desc: 'Mirror the launcher dock' },
+                { id: 'top', label: 'Top', desc: 'Horizontal top navigation bar' },
+                { id: 'bottom', label: 'Bottom', desc: 'Horizontal bottom navigation bar' }
+              ] as { id: SidebarPosition; label: string; desc: string }[]).map((pos) => (
+                <button key={pos.id} onClick={() => applySidebarPosition(pos.id)} className={clsx('rounded-xl border p-3 text-left', sidebarPosition === pos.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}>
+                  <p className="text-sm font-extrabold text-white">{pos.label}</p>
+                  <p className="text-xs g-muted mt-1">{pos.desc}</p>
+                </button>
+              ))}
+            </div>
+          </AppearanceDropdown>
+
+          <AppearanceDropdown title="Card Style" description="Glass, solid, or outline panel rendering.">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {([
                 { id: 'glass', label: 'Glass', desc: 'Blur + glow' },
@@ -875,10 +958,9 @@ export function Settings() {
                 </button>
               ))}
             </div>
-          </div>
+          </AppearanceDropdown>
 
-          <div>
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60 mb-2">Motion Profile</p>
+          <AppearanceDropdown title="Motion Profile" description="Controls animation amount and pacing.">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
               {([
                 { id: 'off', label: 'Off', desc: 'Almost static' },
@@ -892,11 +974,9 @@ export function Settings() {
                 </button>
               ))}
             </div>
-          </div>
+          </AppearanceDropdown>
 
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Animation FPS</p>
-            <p className="text-xs g-muted mt-1">Controls anime.js update rate for launcher motion.</p>
+          <AppearanceDropdown title="Animation FPS" description="Controls anime.js update rate for launcher motion.">
             <div className="mt-3 flex items-center gap-3">
               <input
                 type="range"
@@ -909,10 +989,9 @@ export function Settings() {
               />
               <span className="w-14 text-right text-sm font-extrabold text-white">{motionFps} FPS</span>
             </div>
-          </div>
+          </AppearanceDropdown>
 
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Animation Tuning</p>
+          <AppearanceDropdown title="Animation Tuning" description="Advanced easing curve, timing, and offsets.">
 
             <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-3">
               <div className="flex items-center justify-between gap-3">
@@ -1021,7 +1100,7 @@ export function Settings() {
               </div>
               <input type="range" min={-70} max={70} step={1} value={motionOffsetY} onChange={(event) => applyMotionTuning({ offsetY: Number(event.target.value) })} className="w-full mt-1 g-range" />
             </div>
-          </div>
+          </AppearanceDropdown>
         </section>
       ) : (
         <section className="g-panel p-6 space-y-4">
