@@ -35,7 +35,7 @@ pub struct VersionDownloads {
     pub client: DownloadEntry,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct DownloadEntry {
     pub path: Option<String>,
     pub sha1: String,
@@ -48,11 +48,13 @@ pub struct LibraryEntry {
     pub name: String,
     pub downloads: Option<LibraryDownloads>,
     pub rules: Option<Vec<LibraryRule>>,
+    pub natives: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct LibraryDownloads {
     pub artifact: Option<DownloadEntry>,
+    pub classifiers: Option<HashMap<String, DownloadEntry>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -215,28 +217,63 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
     let libraries_dir = paths.runtimes.join("libraries");
     fs::create_dir_all(&libraries_dir).await.map_err(|e| e.to_string())?;
 
-    let mut valid_libs: Vec<_> = v_data.libraries.into_iter().filter_map(|lib| {
+    let mut valid_libs: Vec<DownloadEntry> = Vec::new();
+    for lib in v_data.libraries {
         if let Some(rules) = &lib.rules {
             let mut allow = false;
             let mut disallow = false;
             for rule in rules {
                 if rule.action == "allow" {
                     if let Some(os) = &rule.os {
-                        if os.name == "windows" { allow = true; }
+                        if os.name == "windows" {
+                            allow = true;
+                        }
                     } else {
                         allow = true; // no OS specified means allow for all
                     }
                 } else if rule.action == "disallow" {
                     if let Some(os) = &rule.os {
-                        if os.name == "windows" { disallow = true; }
+                        if os.name == "windows" {
+                            disallow = true;
+                        }
                     }
                 }
             }
-            if !allow || disallow { return None; }
+            if !allow || disallow {
+                continue;
+            }
         }
-        
-        lib.downloads.and_then(|d| d.artifact)
-    }).collect();
+
+        if let Some(downloads) = lib.downloads {
+            if let Some(artifact) = downloads.artifact {
+                valid_libs.push(artifact);
+            }
+
+            if let Some(classifiers) = downloads.classifiers {
+                let arch_token = if cfg!(target_pointer_width = "64") { "64" } else { "32" };
+                let native_key = lib
+                    .natives
+                    .as_ref()
+                    .and_then(|n| n.get("windows"))
+                    .map(|k| k.replace("${arch}", arch_token));
+
+                let selected = if let Some(key) = native_key {
+                    classifiers.get(&key).cloned()
+                } else {
+                    classifiers
+                        .get("natives-windows")
+                        .cloned()
+                        .or_else(|| classifiers.get("natives-windows-64").cloned())
+                        .or_else(|| classifiers.get("natives-windows-x86_64").cloned())
+                        .or_else(|| classifiers.get("natives-windows-32").cloned())
+                };
+
+                if let Some(native_artifact) = selected {
+                    valid_libs.push(native_artifact);
+                }
+            }
+        }
+    }
 
     // 7.5 If Fabric, append Fabric libraries to valid_libs
     if loader_type == "fabric" && !loader_version.is_empty() {
@@ -283,7 +320,7 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
         }
     }
 
-    let total_libs = valid_libs.len();
+    let _total_libs = valid_libs.len();
     let mut futures = Vec::new();
 
     for artifact in valid_libs {
@@ -312,6 +349,9 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
             
             match reqwest::get(&url).await {
                 Ok(resp) => {
+                    if !resp.status().is_success() {
+                        return Err(format!("Failed to download {} (HTTP {})", url, resp.status()));
+                    }
                     if let Ok(bytes) = resp.bytes().await {
                         let _ = fs::write(&lib_dest_path, bytes).await;
                         return Ok(());
@@ -327,10 +367,20 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
     
     // Wait for all library downloads
     let results = join_all(futures).await;
-    let failed: Vec<_> = results.into_iter().filter(|r| r.is_err() || r.as_ref().unwrap().is_err()).collect();
-    
-    if !failed.is_empty() {
-        println!("Warning: {} libraries failed to download.", failed.len());
+    let mut failed_libs: Vec<String> = Vec::new();
+    for result in results {
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => failed_libs.push(e),
+            Err(join_err) => failed_libs.push(format!("Library download task failed: {}", join_err)),
+        }
+    }
+    if !failed_libs.is_empty() {
+        return Err(format!(
+            "Installation failed: {} libraries could not be downloaded. First error: {}",
+            failed_libs.len(),
+            failed_libs.first().cloned().unwrap_or_else(|| "unknown".to_string())
+        ));
     }
     
     let _ = app.emit("download_progress", DownloadProgress {
@@ -383,7 +433,20 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
             object_futures.push(handle);
         }
         
-        join_all(object_futures).await; // await the chunk
+        let object_results = join_all(object_futures).await;
+        let mut failed_assets = 0usize;
+        for result in object_results {
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) | Err(_) => failed_assets += 1,
+            }
+        }
+        if failed_assets > 0 {
+            return Err(format!(
+                "Installation failed: {} assets could not be downloaded in one batch.",
+                failed_assets
+            ));
+        }
     }
     
     let _ = app.emit("download_progress", DownloadProgress {

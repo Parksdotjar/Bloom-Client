@@ -338,39 +338,82 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     fs::create_dir_all(&natives_dir).map_err(|e| e.to_string())?;
 
     // Extract Windows native libraries (LWJGL/OpenAL/etc.) from native classifier jars.
-    let mut native_jars: Vec<std::path::PathBuf> = Vec::new();
+    let mut native_jars: Vec<(std::path::PathBuf, Option<String>)> = Vec::new();
     if let Some(libs) = v_data["libraries"].as_array() {
         for lib in libs {
             if !is_allowed_on_windows(lib) {
                 continue;
             }
             if let Some(classifiers) = lib.get("downloads").and_then(|d| d.get("classifiers")) {
-                let native_key = if classifiers.get("natives-windows").is_some() {
-                    Some("natives-windows")
+                let arch_token = if cfg!(target_pointer_width = "64") { "64" } else { "32" };
+                let preferred_key = lib
+                    .get("natives")
+                    .and_then(|n| n.get("windows"))
+                    .and_then(|w| w.as_str())
+                    .map(|k| k.replace("${arch}", arch_token));
+
+                let native_key = if let Some(key) = preferred_key {
+                    if classifiers.get(&key).is_some() {
+                        Some(key)
+                    } else {
+                        None
+                    }
+                } else if classifiers.get("natives-windows").is_some() {
+                    Some("natives-windows".to_string())
                 } else if classifiers.get("natives-windows-64").is_some() {
-                    Some("natives-windows-64")
+                    Some("natives-windows-64".to_string())
                 } else if classifiers.get("natives-windows-x86_64").is_some() {
-                    Some("natives-windows-x86_64")
+                    Some("natives-windows-x86_64".to_string())
+                } else if classifiers.get("natives-windows-32").is_some() {
+                    Some("natives-windows-32".to_string())
                 } else {
                     None
                 };
 
                 if let Some(key) = native_key {
-                    if let Some(path) = classifiers
-                        .get(key)
-                        .and_then(|c| c.get("path"))
-                        .and_then(|p| p.as_str())
-                    {
-                        native_jars.push(libraries_dir.join(path));
+                    if let Some(native_obj) = classifiers.get(&key) {
+                        let path = native_obj
+                            .get("path")
+                            .and_then(|p| p.as_str());
+                        let url = native_obj
+                            .get("url")
+                            .and_then(|u| u.as_str())
+                            .map(|u| u.to_string());
+                        if let Some(path) = path {
+                            native_jars.push((libraries_dir.join(path), url));
+                        }
                     }
                 }
             }
         }
     }
 
-    for native_jar in native_jars {
+    for (native_jar, native_url) in native_jars {
         if !native_jar.exists() {
-            continue;
+            if let Some(url) = native_url {
+                let response = reqwest::get(&url)
+                    .await
+                    .map_err(|e| format!("Failed to download native jar {}: {}", url, e))?;
+                if !response.status().is_success() {
+                    return Err(format!(
+                        "Failed to download native jar {} (HTTP {})",
+                        url,
+                        response.status()
+                    ));
+                }
+                let bytes = response
+                    .bytes()
+                    .await
+                    .map_err(|e| format!("Failed reading native jar bytes {}: {}", url, e))?;
+                if let Some(parent) = native_jar.parent() {
+                    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                fs::write(&native_jar, bytes).map_err(|e| {
+                    format!("Failed to write native jar {}: {}", native_jar.display(), e)
+                })?;
+            } else {
+                continue;
+            }
         }
         let file = fs::File::open(&native_jar)
             .map_err(|e| format!("Failed to open native jar {}: {}", native_jar.display(), e))?;
@@ -400,6 +443,14 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                 .map_err(|e| format!("Failed extracting native file {}: {}", out_path.display(), e))?;
             out_file.flush().map_err(|e| e.to_string())?;
         }
+    }
+
+    let lwjgl_dll = natives_dir.join("lwjgl.dll");
+    if !lwjgl_dll.exists() {
+        return Err(format!(
+            "Missing native library lwjgl.dll after native extraction. Try Install again. Natives dir: {}",
+            natives_dir.display()
+        ));
     }
 
     let asset_index_id = v_data["assetIndex"]["id"].as_str().unwrap_or("1.21");

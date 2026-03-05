@@ -73,14 +73,24 @@ export function useDownloader() {
                 }
             });
 
-            // Clear active download state to reset the button
+            setActiveDownloads(prev => ({
+                ...prev,
+                [instanceId]: {
+                    id: instanceId,
+                    status: 'Game launch started',
+                    progress: 100,
+                    speed: ''
+                }
+            }));
+
+            // Keep status visible longer so it does not look like it instantly disappeared.
             setTimeout(() => {
                 setActiveDownloads(prev => {
                     const newD = { ...prev };
                     delete newD[instanceId];
                     return newD;
                 });
-            }, 3000);
+            }, 15000);
         } catch (e: any) {
             console.error("Downloader error:", e);
             const message = e?.toString?.() ?? String(e);
