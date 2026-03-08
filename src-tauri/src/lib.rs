@@ -1,12 +1,12 @@
-mod paths;
-mod instances;
 mod auth;
-mod mojang;
-mod downloader;
-mod launcher;
-mod fabric;
-mod external_updater;
 mod discord_presence;
+mod downloader;
+mod external_updater;
+mod fabric;
+mod instances;
+mod launcher;
+mod mojang;
+mod paths;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -32,19 +32,28 @@ pub fn run() {
             instances::instances_update,
             instances::instances_delete,
             instances::open_mods_folder,
+            instances::open_resourcepacks_folder,
+            instances::open_shaderpacks_folder,
             instances::instance_install_mod_files,
             instances::instance_install_mod_paths,
             instances::instance_install_fabric_api,
             instances::instance_list_mods,
+            instances::instance_list_resourcepacks,
+            instances::instance_list_shaderpacks,
             instances::instance_toggle_mod,
             instances::instance_disable_incompatible_mods,
             instances::instance_delete_mod,
+            instances::instance_delete_resourcepack,
+            instances::instance_delete_shaderpack,
             instances::marketplace_search_mods,
             instances::marketplace_install_mod,
             instances::marketplace_search_modpacks,
             instances::marketplace_install_modpack_instance,
+            instances::import_local_modpack_instance,
             instances::marketplace_search_resourcepacks,
             instances::marketplace_install_resourcepack,
+            instances::marketplace_search_shaders,
+            instances::marketplace_install_shaderpack,
             auth::auth_login_start,
             auth::auth_open_browser,
             auth::auth_login_poll,

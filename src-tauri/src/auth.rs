@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
-use reqwest::Client;
-use reqwest::multipart;
-use std::time::Duration;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use reqwest::multipart;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 const CLIENT_ID: &str = "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb"; // Prism Launcher Client ID (Supports Device Code)
 const SCOPE: &str = "XboxLive.signin offline_access";
@@ -81,17 +81,15 @@ pub fn auth_open_browser(url: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn auth_login_start() -> Result<DeviceCodeResponse, String> {
     let client = auth_http_client()?;
-    let res = client.post("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
-        .form(&[
-            ("client_id", CLIENT_ID),
-            ("scope", SCOPE),
-        ])
+    let res = client
+        .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
+        .form(&[("client_id", CLIENT_ID), ("scope", SCOPE)])
         .send()
         .await
         .map_err(|e| e.to_string())?;
 
     let data: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
-    
+
     if let Some(err) = data.get("error") {
         return Err(err.as_str().unwrap_or("Unknown MS error").to_string());
     }
@@ -102,7 +100,12 @@ pub async fn auth_login_start() -> Result<DeviceCodeResponse, String> {
         .get("verification_uri_complete")
         .and_then(|v| v.as_str())
         .map(|v| v.to_string())
-        .or_else(|| Some(build_verification_uri_complete(&verification_uri, &user_code)));
+        .or_else(|| {
+            Some(build_verification_uri_complete(
+                &verification_uri,
+                &user_code,
+            ))
+        });
 
     Ok(DeviceCodeResponse {
         user_code,
@@ -118,7 +121,8 @@ pub async fn auth_login_start() -> Result<DeviceCodeResponse, String> {
 #[tauri::command]
 pub async fn auth_login_poll(device_code: String) -> Result<Option<AuthState>, String> {
     let client = auth_http_client()?;
-    let res = client.post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+    let res = client
+        .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
         .form(&[
             ("client_id", CLIENT_ID),
             ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
@@ -195,17 +199,17 @@ pub async fn auth_refresh_session(refresh_token: String) -> Result<AuthState, St
             .get("error")
             .and_then(|v| v.as_str())
             .unwrap_or("refresh_failed");
-        return Err(format!("Microsoft token refresh failed ({}): {}", status, err));
+        return Err(format!(
+            "Microsoft token refresh failed ({}): {}",
+            status, err
+        ));
     }
 
     let access_token = data["access_token"]
         .as_str()
         .ok_or("No Microsoft access token in refresh response.")?
         .to_string();
-    let next_refresh = data["refresh_token"]
-        .as_str()
-        .unwrap_or(token)
-        .to_string();
+    let next_refresh = data["refresh_token"].as_str().unwrap_or(token).to_string();
 
     let (mc_token, profile) = perform_mc_exchange(&client, &access_token).await?;
 
@@ -217,7 +221,10 @@ pub async fn auth_refresh_session(refresh_token: String) -> Result<AuthState, St
     })
 }
 
-async fn perform_mc_exchange(client: &Client, access_token: &str) -> Result<(String, MinecraftProfile), String> {
+async fn perform_mc_exchange(
+    client: &Client,
+    access_token: &str,
+) -> Result<(String, MinecraftProfile), String> {
     // 1. XBL Exchange
     let xbl_req = serde_json::json!({
         "Properties": {
@@ -229,7 +236,8 @@ async fn perform_mc_exchange(client: &Client, access_token: &str) -> Result<(Str
         "TokenType": "JWT"
     });
 
-    let xbl_http = client.post("https://user.auth.xboxlive.com/user/authenticate")
+    let xbl_http = client
+        .post("https://user.auth.xboxlive.com/user/authenticate")
         .json(&xbl_req)
         .send()
         .await
@@ -239,9 +247,11 @@ async fn perform_mc_exchange(client: &Client, access_token: &str) -> Result<(Str
     if !xbl_status.is_success() {
         return Err(format!("Xbox Live auth failed ({}).", xbl_status));
     }
-    
+
     let xbl_token = xbl_res["Token"].as_str().ok_or("No XBL Token")?;
-    let uhs = xbl_res["DisplayClaims"]["xui"][0]["uhs"].as_str().ok_or("No UHS")?;
+    let uhs = xbl_res["DisplayClaims"]["xui"][0]["uhs"]
+        .as_str()
+        .ok_or("No UHS")?;
 
     // 2. XSTS Exchange
     let xsts_req = serde_json::json!({
@@ -253,7 +263,8 @@ async fn perform_mc_exchange(client: &Client, access_token: &str) -> Result<(Str
         "TokenType": "JWT"
     });
 
-    let xsts_http = client.post("https://xsts.auth.xboxlive.com/xsts/authorize")
+    let xsts_http = client
+        .post("https://xsts.auth.xboxlive.com/xsts/authorize")
         .json(&xsts_req)
         .send()
         .await
@@ -266,7 +277,7 @@ async fn perform_mc_exchange(client: &Client, access_token: &str) -> Result<(Str
         }
         return Err(format!("Xbox/XSTS authorization failed ({}).", xsts_status));
     }
-    
+
     let xsts_token = xsts_res["Token"].as_str().ok_or("No XSTS Token")?;
 
     // 3. Minecraft Login
@@ -274,7 +285,8 @@ async fn perform_mc_exchange(client: &Client, access_token: &str) -> Result<(Str
         "identityToken": format!("XBL3.0 x={};{}", uhs, xsts_token)
     });
 
-    let mc_http = client.post("https://api.minecraftservices.com/authentication/login_with_xbox")
+    let mc_http = client
+        .post("https://api.minecraftservices.com/authentication/login_with_xbox")
         .json(&mc_req)
         .send()
         .await
@@ -285,14 +297,21 @@ async fn perform_mc_exchange(client: &Client, access_token: &str) -> Result<(Str
         return Err(format!("Minecraft auth failed ({}).", mc_status));
     }
 
-    let mc_token = mc_res["access_token"].as_str().ok_or("No MC Token")?.to_string();
+    let mc_token = mc_res["access_token"]
+        .as_str()
+        .ok_or("No MC Token")?
+        .to_string();
 
     let profile = fetch_minecraft_profile(client, &mc_token).await?;
     Ok((mc_token, profile))
 }
 
-async fn fetch_minecraft_profile(client: &Client, mc_access_token: &str) -> Result<MinecraftProfile, String> {
-    let profile_http = client.get("https://api.minecraftservices.com/minecraft/profile")
+async fn fetch_minecraft_profile(
+    client: &Client,
+    mc_access_token: &str,
+) -> Result<MinecraftProfile, String> {
+    let profile_http = client
+        .get("https://api.minecraftservices.com/minecraft/profile")
         .bearer_auth(mc_access_token)
         .send()
         .await
@@ -300,19 +319,34 @@ async fn fetch_minecraft_profile(client: &Client, mc_access_token: &str) -> Resu
     let profile_status = profile_http.status();
     let profile_res: serde_json::Value = profile_http.json().await.map_err(|e| e.to_string())?;
     if !profile_status.is_success() {
-        return Err(format!("Minecraft profile fetch failed ({}).", profile_status));
+        return Err(format!(
+            "Minecraft profile fetch failed ({}).",
+            profile_status
+        ));
     }
 
-    let uuid = profile_res["id"].as_str().ok_or("No Profile ID")?.to_string();
-    let name = profile_res["name"].as_str().ok_or("No Profile Name")?.to_string();
+    let uuid = profile_res["id"]
+        .as_str()
+        .ok_or("No Profile ID")?
+        .to_string();
+    let name = profile_res["name"]
+        .as_str()
+        .ok_or("No Profile Name")?
+        .to_string();
 
-    let skin_url = profile_res.get("skins").and_then(|s| s.as_array())
+    let skin_url = profile_res
+        .get("skins")
+        .and_then(|s| s.as_array())
         .and_then(|s| s.first())
         .and_then(|s| s.get("url"))
         .and_then(|s| s.as_str())
         .map(|s| s.to_string());
 
-    Ok(MinecraftProfile { id: uuid, name, skin_url })
+    Ok(MinecraftProfile {
+        id: uuid,
+        name,
+        skin_url,
+    })
 }
 
 #[tauri::command]
@@ -356,7 +390,9 @@ pub async fn auth_upload_skin(
     }
 
     let profile = fetch_minecraft_profile(&client, &mc_access_token).await?;
-    Ok(SkinUploadResult { skin_url: profile.skin_url })
+    Ok(SkinUploadResult {
+        skin_url: profile.skin_url,
+    })
 }
 
 #[derive(Deserialize)]
@@ -406,7 +442,10 @@ pub async fn auth_pull_skin_by_username(username: String) -> Result<PulledSkinRe
     }
 
     let client = auth_http_client()?;
-    let profile_url = format!("https://api.mojang.com/users/profiles/minecraft/{}", trimmed);
+    let profile_url = format!(
+        "https://api.mojang.com/users/profiles/minecraft/{}",
+        trimmed
+    );
     let profile_res = client
         .get(profile_url)
         .send()
@@ -417,7 +456,10 @@ pub async fn auth_pull_skin_by_username(username: String) -> Result<PulledSkinRe
         return Err("Minecraft username not found.".into());
     }
     if !profile_res.status().is_success() {
-        return Err(format!("Username lookup failed ({}).", profile_res.status()));
+        return Err(format!(
+            "Username lookup failed ({}).",
+            profile_res.status()
+        ));
     }
 
     let profile: MojangUser = profile_res.json().await.map_err(|e| e.to_string())?;
@@ -432,7 +474,10 @@ pub async fn auth_pull_skin_by_username(username: String) -> Result<PulledSkinRe
         .await
         .map_err(|e| e.to_string())?;
     if !session_res.status().is_success() {
-        return Err(format!("Skin session lookup failed ({}).", session_res.status()));
+        return Err(format!(
+            "Skin session lookup failed ({}).",
+            session_res.status()
+        ));
     }
 
     let session: SessionProfile = session_res.json().await.map_err(|e| e.to_string())?;
@@ -453,12 +498,7 @@ pub async fn auth_pull_skin_by_username(username: String) -> Result<PulledSkinRe
         .and_then(|textures| textures.skin)
         .ok_or("No skin texture found for this account.")?;
 
-    let model = if skin
-        .metadata
-        .and_then(|meta| meta.model)
-        .as_deref()
-        == Some("slim")
-    {
+    let model = if skin.metadata.and_then(|meta| meta.model).as_deref() == Some("slim") {
         "slim".to_string()
     } else {
         "classic".to_string()
@@ -470,7 +510,10 @@ pub async fn auth_pull_skin_by_username(username: String) -> Result<PulledSkinRe
         .await
         .map_err(|e| e.to_string())?;
     if !image_res.status().is_success() {
-        return Err(format!("Skin image download failed ({}).", image_res.status()));
+        return Err(format!(
+            "Skin image download failed ({}).",
+            image_res.status()
+        ));
     }
     let image_bytes = image_res.bytes().await.map_err(|e| e.to_string())?.to_vec();
 

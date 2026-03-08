@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEventHandler, type DragEventHandler } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEventHandler, type DragEventHandler, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Download, FolderOpen, ImageIcon, RefreshCcw, Save, Search, ShieldPlus, Trash2, UploadCloud } from 'lucide-react';
+import { ArrowLeft, Download, FolderOpen, ImageIcon, RefreshCcw, Save, Search, ShieldPlus, Sparkles, Trash2, UploadCloud } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useInstances } from '../hooks/useInstances';
-import { TauriApi, type InstanceModFile, type ModInstallResult, type MarketplaceMod, type MarketplacePack } from '../services/tauri';
+import { TauriApi, type InstanceContentFile, type InstanceModFile, type MarketplaceMod, type MarketplacePack, type ModInstallResult } from '../services/tauri';
 
-type EditorTab = 'mods' | 'resourcepacks' | 'settings';
+type EditorTab = 'mods' | 'resourcepacks' | 'shaders' | 'settings';
 type SourceFilter = 'all' | 'modrinth' | 'curseforge';
+type LibraryView = 'installed' | 'install';
+type NativeFile = File & { path?: string };
 
 function humanSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -14,7 +16,9 @@ function humanSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-type NativeFile = File & { path?: string };
+function EmptyState({ message }: { message: string }) {
+  return <div className="p-6 text-center text-sm font-semibold text-slate-500 dark:text-white/55">{message}</div>;
+}
 
 export function InstanceEditor() {
   const navigate = useNavigate();
@@ -24,7 +28,9 @@ export function InstanceEditor() {
     ? 'settings'
     : searchParams.get('tab') === 'resourcepacks'
       ? 'resourcepacks'
-      : 'mods';
+      : searchParams.get('tab') === 'shaders'
+        ? 'shaders'
+        : 'mods';
 
   const { instances, updateInstance, loading } = useInstances();
 
@@ -34,6 +40,9 @@ export function InstanceEditor() {
   }, [instances, instanceId]);
 
   const [activeTab, setActiveTab] = useState<EditorTab>(initialTab);
+  const [modsView, setModsView] = useState<LibraryView>('installed');
+  const [resourcepacksView, setResourcepacksView] = useState<LibraryView>('installed');
+  const [shadersView, setShadersView] = useState<LibraryView>('installed');
   const [name, setName] = useState('');
   const [memoryMb, setMemoryMb] = useState(4096);
   const [jvmArgs, setJvmArgs] = useState('');
@@ -46,7 +55,11 @@ export function InstanceEditor() {
   const [saving, setSaving] = useState(false);
 
   const [mods, setMods] = useState<InstanceModFile[]>([]);
+  const [resourcepacks, setResourcepacks] = useState<InstanceContentFile[]>([]);
+  const [shaderpacks, setShaderpacks] = useState<InstanceContentFile[]>([]);
   const [modLoading, setModLoading] = useState(false);
+  const [resourcepacksLoading, setResourcepacksLoading] = useState(false);
+  const [shaderpacksLoading, setShaderpacksLoading] = useState(false);
   const [installingMods, setInstallingMods] = useState(false);
   const [installingFabricApi, setInstallingFabricApi] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -62,6 +75,11 @@ export function InstanceEditor() {
   const [resourcepacksSearching, setResourcepacksSearching] = useState(false);
   const [resourcepacksResults, setResourcepacksResults] = useState<MarketplacePack[]>([]);
   const [resourcepacksInstallingId, setResourcepacksInstallingId] = useState<string | null>(null);
+  const [shadersQuery, setShadersQuery] = useState('');
+  const [shadersSource, setShadersSource] = useState<SourceFilter>('all');
+  const [shadersSearching, setShadersSearching] = useState(false);
+  const [shadersResults, setShadersResults] = useState<MarketplacePack[]>([]);
+  const [shadersInstallingId, setShadersInstallingId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const iconInputRef = useRef<HTMLInputElement | null>(null);
@@ -81,6 +99,9 @@ export function InstanceEditor() {
       setCoverDataUrl(instance.coverDataUrl);
       setColorTag(instance.colorTag || '#9a65ff');
       setIconFrame(instance.iconFrame || 'rounded');
+      setModsView('installed');
+      setResourcepacksView('installed');
+      setShadersView('installed');
     }
   }, [instance]);
 
@@ -90,8 +111,7 @@ export function InstanceEditor() {
     if (!instance) return;
     setModLoading(true);
     try {
-      const rows = await TauriApi.instanceListMods(instance.id);
-      setMods(rows);
+      setMods(await TauriApi.instanceListMods(instance.id));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(`Failed loading mods: ${message}`);
@@ -100,8 +120,36 @@ export function InstanceEditor() {
     }
   };
 
+  const reloadResourcepacks = async () => {
+    if (!instance) return;
+    setResourcepacksLoading(true);
+    try {
+      setResourcepacks(await TauriApi.instanceListResourcepacks(instance.id));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Failed loading resource packs: ${message}`);
+    } finally {
+      setResourcepacksLoading(false);
+    }
+  };
+
+  const reloadShaderpacks = async () => {
+    if (!instance) return;
+    setShaderpacksLoading(true);
+    try {
+      setShaderpacks(await TauriApi.instanceListShaderpacks(instance.id));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Failed loading shader packs: ${message}`);
+    } finally {
+      setShaderpacksLoading(false);
+    }
+  };
+
   useEffect(() => {
     void reloadMods();
+    void reloadResourcepacks();
+    void reloadShaderpacks();
   }, [instance?.id]);
 
   const saveSettings = async () => {
@@ -136,12 +184,8 @@ export function InstanceEditor() {
       setStatusMessage('Please choose an image file.');
       return;
     }
-
     const reader = new FileReader();
-    reader.onload = () => {
-      const value = typeof reader.result === 'string' ? reader.result : undefined;
-      setIconDataUrl(value);
-    };
+    reader.onload = () => setIconDataUrl(typeof reader.result === 'string' ? reader.result : undefined);
     reader.readAsDataURL(file);
     event.target.value = '';
   };
@@ -153,12 +197,8 @@ export function InstanceEditor() {
       setStatusMessage('Please choose an image file.');
       return;
     }
-
     const reader = new FileReader();
-    reader.onload = () => {
-      const value = typeof reader.result === 'string' ? reader.result : undefined;
-      setCoverDataUrl(value);
-    };
+    reader.onload = () => setCoverDataUrl(typeof reader.result === 'string' ? reader.result : undefined);
     reader.readAsDataURL(file);
     event.target.value = '';
   };
@@ -176,17 +216,11 @@ export function InstanceEditor() {
     try {
       const pathBackedFiles = jars.filter((file) => Boolean((file as NativeFile).path));
       if (pathBackedFiles.length === jars.length && pathBackedFiles.length > 0) {
-        const paths = pathBackedFiles
-          .map((file) => (file as NativeFile).path as string)
-          .filter((value) => value.length > 0);
+        const paths = pathBackedFiles.map((file) => (file as NativeFile).path as string).filter(Boolean);
         const result = await TauriApi.instanceInstallModPaths(instance.id, paths);
         setLastInstallResult(result);
         await reloadMods();
-        if (result.skipped.length > 0) {
-          setStatusMessage(`Installed ${result.installed.length} file(s), skipped ${result.skipped.length} invalid file(s).`);
-        } else {
-          setStatusMessage(`Installed ${result.installed.length} file(s).`);
-        }
+        setStatusMessage(result.skipped.length > 0 ? `Installed ${result.installed.length} file(s), skipped ${result.skipped.length} invalid file(s).` : `Installed ${result.installed.length} file(s).`);
         return;
       }
 
@@ -204,11 +238,7 @@ export function InstanceEditor() {
       const result = await TauriApi.instanceInstallModFiles(instance.id, payload);
       setLastInstallResult(result);
       await reloadMods();
-      if (result.skipped.length > 0) {
-        setStatusMessage(`Installed ${result.installed.length} file(s), skipped ${result.skipped.length} invalid file(s).`);
-      } else {
-        setStatusMessage(`Installed ${result.installed.length} file(s).`);
-      }
+      setStatusMessage(result.skipped.length > 0 ? `Installed ${result.installed.length} file(s), skipped ${result.skipped.length} invalid file(s).` : `Installed ${result.installed.length} file(s).`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(`Mod install failed: ${message}`);
@@ -225,21 +255,15 @@ export function InstanceEditor() {
         multiple: true,
         filters: [{ name: 'Java Mods', extensions: ['jar'] }]
       });
-
       if (!selected) return;
       const paths = Array.isArray(selected) ? selected : [selected];
       if (paths.length === 0) return;
-
       setInstallingMods(true);
       setStatusMessage('Installing mods...');
       const result = await TauriApi.instanceInstallModPaths(instance.id, paths);
       setLastInstallResult(result);
       await reloadMods();
-      if (result.skipped.length > 0) {
-        setStatusMessage(`Installed ${result.installed.length} file(s), skipped ${result.skipped.length} invalid file(s).`);
-      } else {
-        setStatusMessage(`Installed ${result.installed.length} file(s).`);
-      }
+      setStatusMessage(result.skipped.length > 0 ? `Installed ${result.installed.length} file(s), skipped ${result.skipped.length} invalid file(s).` : `Installed ${result.installed.length} file(s).`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(`Mod install failed: ${message}`);
@@ -292,6 +316,28 @@ export function InstanceEditor() {
     }
   };
 
+  const removeResourcepack = async (pack: InstanceContentFile) => {
+    if (!instance) return;
+    try {
+      await TauriApi.instanceDeleteResourcepack(instance.id, pack.fileName);
+      await reloadResourcepacks();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Delete failed: ${message}`);
+    }
+  };
+
+  const removeShaderpack = async (pack: InstanceContentFile) => {
+    if (!instance) return;
+    try {
+      await TauriApi.instanceDeleteShaderpack(instance.id, pack.fileName);
+      await reloadShaderpacks();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Delete failed: ${message}`);
+    }
+  };
+
   const autoInstallFabricApi = async () => {
     if (!instance || instance.loader !== 'fabric') return;
     setInstallingFabricApi(true);
@@ -323,6 +369,36 @@ export function InstanceEditor() {
     }
   };
 
+  const searchResourcePacksMarket = async () => {
+    if (!instance || !resourcepacksQuery.trim()) return;
+    setResourcepacksSearching(true);
+    try {
+      const rows = await TauriApi.marketplaceSearchResourcepacks(resourcepacksQuery.trim(), resourcepacksSource, instance.mcVersion);
+      setResourcepacksResults(rows);
+      if (rows.length === 0) setStatusMessage('No resource packs matched this search.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Resource pack search failed: ${message}`);
+    } finally {
+      setResourcepacksSearching(false);
+    }
+  };
+
+  const searchShadersMarket = async () => {
+    if (!instance || !shadersQuery.trim()) return;
+    setShadersSearching(true);
+    try {
+      const rows = await TauriApi.marketplaceSearchShaders(shadersQuery.trim(), shadersSource, instance.mcVersion);
+      setShadersResults(rows);
+      if (rows.length === 0) setStatusMessage('No shader packs matched this search.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Shader pack search failed: ${message}`);
+    } finally {
+      setShadersSearching(false);
+    }
+  };
+
   const installMarketplaceMod = async (mod: MarketplaceMod) => {
     if (!instance) return;
     const rowId = `${mod.source}:${mod.id}`;
@@ -340,21 +416,6 @@ export function InstanceEditor() {
     }
   };
 
-  const searchResourcePacksMarket = async () => {
-    if (!instance || !resourcepacksQuery.trim()) return;
-    setResourcepacksSearching(true);
-    try {
-      const rows = await TauriApi.marketplaceSearchResourcepacks(resourcepacksQuery.trim(), resourcepacksSource, instance.mcVersion);
-      setResourcepacksResults(rows);
-      if (rows.length === 0) setStatusMessage('No resource packs matched this search.');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatusMessage(`Resource pack search failed: ${message}`);
-    } finally {
-      setResourcepacksSearching(false);
-    }
-  };
-
   const installMarketplaceResourcePack = async (pack: MarketplacePack) => {
     if (!instance) return;
     const rowId = `${pack.source}:${pack.id}`;
@@ -362,6 +423,7 @@ export function InstanceEditor() {
     setStatusMessage(`Installing ${pack.title}...`);
     try {
       const file = await TauriApi.marketplaceInstallResourcepack(instance.id, pack.source, pack.id, instance.mcVersion);
+      await reloadResourcepacks();
       setStatusMessage(`Installed ${file} into ${instance.name}/resourcepacks.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -370,6 +432,152 @@ export function InstanceEditor() {
       setResourcepacksInstallingId(null);
     }
   };
+
+  const installMarketplaceShader = async (pack: MarketplacePack) => {
+    if (!instance) return;
+    const rowId = `${pack.source}:${pack.id}`;
+    setShadersInstallingId(rowId);
+    setStatusMessage(`Installing ${pack.title}...`);
+    try {
+      const file = await TauriApi.marketplaceInstallShaderpack(instance.id, pack.source, pack.id, instance.mcVersion);
+      await reloadShaderpacks();
+      setStatusMessage(`Installed ${file} into ${instance.name}/shaderpacks.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Install failed: ${message}`);
+    } finally {
+      setShadersInstallingId(null);
+    }
+  };
+
+  const renderInstalledLibrary = (
+    title: string,
+    loadingState: boolean,
+    rows: InstanceContentFile[] | InstanceModFile[],
+    onRefresh: () => void,
+    onFolderOpen: () => void,
+    onSwitch: () => void,
+    onDelete: (row: InstanceContentFile | InstanceModFile) => void,
+    onToggle?: (row: InstanceModFile) => void,
+    extraAction?: ReactNode
+  ) => (
+    <section className="g-panel p-6 space-y-4">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h2 className="text-lg font-black text-slate-900 dark:text-white">{title}</h2>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={onRefresh} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5"><RefreshCcw size={13} /> Refresh</button>
+          {extraAction}
+          <button onClick={onFolderOpen} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5"><FolderOpen size={13} /> Folder</button>
+          <button onClick={onSwitch} className="g-btn-accent px-3 py-2 text-xs font-black tracking-[0.14em] uppercase">Open Install View</button>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-300/80 dark:border-white/12 overflow-hidden">
+        {loadingState ? (
+          <div className="p-6 text-center text-xs font-black tracking-[0.16em] uppercase text-slate-500 dark:text-white/55">Loading...</div>
+        ) : rows.length === 0 ? (
+          <EmptyState message={`No ${title.toLowerCase()} installed.`} />
+        ) : (
+          rows.map((row) => {
+            const modRow = 'enabled' in row ? row : null;
+            return (
+              <div key={row.fileName} className="px-3 py-2.5 border-b border-slate-200 dark:border-white/10 last:border-b-0 bg-white/80 dark:bg-white/[0.02] flex items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-black text-slate-900 dark:text-white truncate">{row.displayName}</p>
+                  <p className="text-xs font-semibold text-slate-500 dark:text-white/55">{humanSize(row.sizeBytes)}</p>
+                </div>
+                {modRow && onToggle ? (
+                  <button
+                    onClick={() => onToggle(modRow)}
+                    data-on={modRow.enabled}
+                    className="g-switch"
+                    aria-label={`Toggle ${modRow.displayName}`}
+                    aria-pressed={modRow.enabled}
+                  />
+                ) : null}
+                <button onClick={() => onDelete(row)} className="h-8 w-8 rounded-lg border border-red-300/70 dark:border-red-500/35 text-red-600 dark:text-red-300 inline-flex items-center justify-center"><Trash2 size={13} /></button>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </section>
+  );
+
+  const renderMarketplaceList = (
+    title: string,
+    query: string,
+    setQuery: (value: string) => void,
+    source: SourceFilter,
+    setSource: (value: SourceFilter) => void,
+    searchingState: boolean,
+    onSearch: () => void,
+    rows: MarketplacePack[] | MarketplaceMod[],
+    installingId: string | null,
+    onInstall: (row: MarketplacePack | MarketplaceMod) => void,
+    placeholder: string,
+    emptyMessage: string,
+    accentClasses: string,
+    icon: 'mod' | 'pack' | 'shader'
+  ) => (
+    <section className="g-panel p-6 space-y-4">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h2 className="text-lg font-black text-slate-900 dark:text-white">{title}</h2>
+        <button onClick={() => {
+          if (title === 'Mods Marketplace') setModsView('installed');
+          if (title === 'Resource Packs Marketplace') setResourcepacksView('installed');
+          if (title === 'Shaders Marketplace') setShadersView('installed');
+        }} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase">Back To Installed</button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_120px] gap-2">
+        <div className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 h-11 flex items-center gap-2">
+          <Search size={14} className="text-slate-500 dark:text-white/60" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') onSearch();
+            }}
+            placeholder={placeholder}
+            className="w-full bg-transparent text-sm font-semibold outline-none text-slate-900 dark:text-white"
+          />
+        </div>
+        <select value={source} onChange={(event) => setSource(event.target.value as SourceFilter)} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 h-11 text-sm font-bold text-slate-900 dark:text-white">
+          <option value="all">All Sources</option>
+          <option value="modrinth">Modrinth</option>
+          <option value="curseforge">CurseForge</option>
+        </select>
+        <button onClick={onSearch} disabled={searchingState} className={`rounded-xl border h-11 text-xs font-black tracking-[0.14em] uppercase disabled:opacity-45 ${accentClasses}`}>
+          {searchingState ? 'Searching...' : 'Search'}
+        </button>
+      </div>
+
+      <div className="rounded-2xl border border-slate-300/80 dark:border-white/12 overflow-hidden">
+        {rows.length === 0 ? (
+          <EmptyState message={emptyMessage} />
+        ) : (
+          rows.map((row) => {
+            const rowId = `${row.source}:${row.id}`;
+            return (
+              <div key={rowId} className="px-3 py-2.5 border-b border-slate-200 dark:border-white/10 last:border-b-0 bg-white/80 dark:bg-white/[0.02] flex items-center gap-2">
+                <div className="w-10 h-10 rounded-lg border border-slate-300 dark:border-white/15 bg-slate-200 dark:bg-white/10 overflow-hidden flex items-center justify-center">
+                  {row.iconUrl ? <img src={row.iconUrl} alt={row.title} className="w-full h-full object-cover" /> : icon === 'mod' || icon === 'shader' ? <Sparkles size={14} className="text-slate-500 dark:text-white/55" /> : <ImageIcon size={14} className="text-slate-500 dark:text-white/55" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-black text-slate-900 dark:text-white truncate">{row.title}</p>
+                  <p className="text-xs font-semibold text-slate-500 dark:text-white/55 truncate">{row.description}</p>
+                </div>
+                <button onClick={() => onInstall(row)} disabled={installingId === rowId} className={`rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5 disabled:opacity-45 ${accentClasses}`}>
+                  <Download size={12} /> {installingId === rowId ? 'Installing...' : 'Install'}
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </section>
+  );
 
   if (loading) {
     return <div className="min-h-full p-8 flex items-center justify-center"><p className="text-sm font-black tracking-[0.16em] uppercase text-slate-500 dark:text-white/55">Loading instance...</p></div>;
@@ -408,13 +616,38 @@ export function InstanceEditor() {
           </div>
         </div>
 
-        <div className="mt-4 inline-flex rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 p-1">
+        <div className="mt-4 inline-flex rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 p-1 flex-wrap">
           <button onClick={() => setActiveTab('mods')} className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", activeTab === 'mods' ? 'bg-emerald-500/20 border border-emerald-500/45 text-emerald-700 dark:text-emerald-300' : 'text-slate-600 dark:text-white/60'].join(' ')}>Mods</button>
           <button onClick={() => setActiveTab('resourcepacks')} className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", activeTab === 'resourcepacks' ? 'bg-cyan-500/20 border border-cyan-500/45 text-cyan-700 dark:text-cyan-300' : 'text-slate-600 dark:text-white/60'].join(' ')}>Resource Packs</button>
+          <button onClick={() => setActiveTab('shaders')} className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", activeTab === 'shaders' ? 'bg-fuchsia-500/20 border border-fuchsia-500/45 text-fuchsia-700 dark:text-fuchsia-300' : 'text-slate-600 dark:text-white/60'].join(' ')}>Shaders</button>
           <button onClick={() => setActiveTab('settings')} className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", activeTab === 'settings' ? 'g-btn-accent' : 'text-slate-600 dark:text-white/60'].join(' ')}>Settings</button>
         </div>
-      </section>
 
+        {activeTab !== 'settings' && (
+          <div className="mt-4 inline-flex rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 p-1">
+            <button
+              onClick={() => {
+                if (activeTab === 'mods') setModsView('installed');
+                if (activeTab === 'resourcepacks') setResourcepacksView('installed');
+                if (activeTab === 'shaders') setShadersView('installed');
+              }}
+              className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", (activeTab === 'mods' ? modsView : activeTab === 'resourcepacks' ? resourcepacksView : shadersView) === 'installed' ? 'g-btn-accent' : 'text-slate-600 dark:text-white/60'].join(' ')}
+            >
+              Installed
+            </button>
+            <button
+              onClick={() => {
+                if (activeTab === 'mods') setModsView('install');
+                if (activeTab === 'resourcepacks') setResourcepacksView('install');
+                if (activeTab === 'shaders') setShadersView('install');
+              }}
+              className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", (activeTab === 'mods' ? modsView : activeTab === 'resourcepacks' ? resourcepacksView : shadersView) === 'install' ? 'g-btn-accent' : 'text-slate-600 dark:text-white/60'].join(' ')}
+            >
+              Install
+            </button>
+          </div>
+        )}
+      </section>
       {activeTab === 'settings' ? (
         <section className="g-panel p-6 space-y-4">
           <h2 className="text-lg font-black text-slate-900 dark:text-white">Instance Settings</h2>
@@ -458,14 +691,7 @@ export function InstanceEditor() {
               <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Icon Frame</label>
               <div className="grid grid-cols-3 gap-2">
                 {(['square', 'rounded', 'diamond'] as const).map((frame) => (
-                  <button
-                    key={frame}
-                    onClick={() => setIconFrame(frame)}
-                    className={[
-                      'rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase',
-                      iconFrame === frame ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'
-                    ].join(' ')}
-                  >
+                  <button key={frame} onClick={() => setIconFrame(frame)} className={['rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase', iconFrame === frame ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'].join(' ')}>
                     {frame}
                   </button>
                 ))}
@@ -494,210 +720,71 @@ export function InstanceEditor() {
             {instance.mcVersion.startsWith('1.19') && (
               <div className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs font-semibold text-amber-800 dark:text-amber-200">
                 Recommended: Java 17 for 1.19 packs.
-                <button
-                  onClick={() => {
-                    setJavaRuntime('java17');
-                    setJavaPathOverride('java17');
-                  }}
-                  className="ml-2 rounded-md border border-amber-500/50 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em]"
-                >
+                <button onClick={() => { setJavaRuntime('java17'); setJavaPathOverride('java17'); }} className="ml-2 rounded-md border border-amber-500/50 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em]">
                   Use Java 17
                 </button>
               </div>
             )}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              <button
-                onClick={() => setJavaRuntime('system')}
-                className={[
-                  'rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase',
-                  javaRuntime === 'system' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'
-                ].join(' ')}
-              >
-                System Java
-              </button>
-              <button
-                onClick={() => {
-                  setJavaRuntime('java17');
-                  setJavaPathOverride('java17');
-                }}
-                className={[
-                  'rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase',
-                  javaRuntime === 'java17' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'
-                ].join(' ')}
-              >
-                Java 17 Preset
-              </button>
-              <button
-                onClick={() => setJavaRuntime('custom')}
-                className={[
-                  'rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase',
-                  javaRuntime === 'custom' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'
-                ].join(' ')}
-              >
-                Custom Path
-              </button>
+              <button onClick={() => setJavaRuntime('system')} className={['rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase', javaRuntime === 'system' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'].join(' ')}>System Java</button>
+              <button onClick={() => { setJavaRuntime('java17'); setJavaPathOverride('java17'); }} className={['rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase', javaRuntime === 'java17' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'].join(' ')}>Java 17 Preset</button>
+              <button onClick={() => setJavaRuntime('custom')} className={['rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase', javaRuntime === 'custom' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'].join(' ')}>Custom Path</button>
             </div>
-            <input
-              value={javaPathOverride}
-              onChange={(event) => setJavaPathOverride(event.target.value)}
-              disabled={javaRuntime === 'system'}
-              placeholder={javaRuntime === 'custom' ? 'C:\\Program Files\\Java\\jdk-17\\bin\\javaw.exe' : 'java'}
-              className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-white/35 focus:outline-none disabled:opacity-50"
-            />
+            <input value={javaPathOverride} onChange={(event) => setJavaPathOverride(event.target.value)} disabled={javaRuntime === 'system'} placeholder={javaRuntime === 'custom' ? 'C:\\Program Files\\Java\\jdk-17\\bin\\javaw.exe' : 'java'} className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-white/35 focus:outline-none disabled:opacity-50" />
             <p className="text-xs font-semibold text-slate-500 dark:text-white/55">This is saved per instance and used by Launch.</p>
           </div>
         </section>
-      ) : activeTab === 'resourcepacks' ? (
-        <section className="g-panel p-6 space-y-4">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <h2 className="text-lg font-black text-slate-900 dark:text-white">Resource Packs Market</h2>
-            <p className="text-xs font-semibold text-slate-500 dark:text-white/55">Target: {instance.name} ({instance.mcVersion})</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_120px] gap-2">
-            <div className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 h-11 flex items-center gap-2">
-              <Search size={14} className="text-slate-500 dark:text-white/60" />
-              <input
-                value={resourcepacksQuery}
-                onChange={(event) => setResourcepacksQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') void searchResourcePacksMarket();
-                }}
-                placeholder="Search resource packs..."
-                className="w-full bg-transparent text-sm font-semibold outline-none text-slate-900 dark:text-white"
-              />
-            </div>
-            <select value={resourcepacksSource} onChange={(event) => setResourcepacksSource(event.target.value as SourceFilter)} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 h-11 text-sm font-bold text-slate-900 dark:text-white">
-              <option value="all">All Sources</option>
-              <option value="modrinth">Modrinth</option>
-              <option value="curseforge">CurseForge</option>
-            </select>
-            <button onClick={() => { void searchResourcePacksMarket(); }} disabled={resourcepacksSearching} className="rounded-xl border border-cyan-500/50 bg-cyan-500/15 h-11 text-xs font-black tracking-[0.14em] uppercase text-cyan-700 dark:text-cyan-200 disabled:opacity-45">
-              {resourcepacksSearching ? 'Searching...' : 'Search'}
-            </button>
-          </div>
-
-          <div className="rounded-2xl border border-slate-300/80 dark:border-white/12 overflow-hidden">
-            {resourcepacksResults.length === 0 ? (
-              <div className="p-6 text-center text-sm font-semibold text-slate-500 dark:text-white/55">Search to load resource packs.</div>
-            ) : (
-              resourcepacksResults.map((pack) => {
-                const rowId = `${pack.source}:${pack.id}`;
-                return (
-                  <div key={rowId} className="px-3 py-2.5 border-b border-slate-200 dark:border-white/10 last:border-b-0 bg-white/80 dark:bg-white/[0.02] flex items-center gap-2">
-                    <div className="w-10 h-10 rounded-lg border border-slate-300 dark:border-white/15 bg-slate-200 dark:bg-white/10 overflow-hidden flex items-center justify-center">
-                      {pack.iconUrl ? <img src={pack.iconUrl} alt={pack.title} className="w-full h-full object-cover" /> : <ImageIcon size={14} className="text-slate-500 dark:text-white/55" />}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-black text-slate-900 dark:text-white truncate">{pack.title}</p>
-                      <p className="text-xs font-semibold text-slate-500 dark:text-white/55 truncate">{pack.description}</p>
-                    </div>
-                    <button
-                      onClick={() => { void installMarketplaceResourcePack(pack); }}
-                      disabled={resourcepacksInstallingId === rowId}
-                      className="rounded-xl border border-cyan-500/50 bg-cyan-500/15 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase text-cyan-700 dark:text-cyan-200 inline-flex items-center gap-1.5 disabled:opacity-45"
-                    >
-                      <Download size={12} /> {resourcepacksInstallingId === rowId ? 'Installing...' : 'Install'}
-                    </button>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </section>
-      ) : (
-        <section className="g-panel p-6 space-y-4">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <h2 className="text-lg font-black text-slate-900 dark:text-white">Mods</h2>
-            <div className="flex items-center gap-2">
-              <button onClick={() => void reloadMods()} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5"><RefreshCcw size={13} /> Refresh</button>
-              <button onClick={autoInstallFabricApi} disabled={instance.loader !== 'fabric' || installingFabricApi} className="rounded-xl border border-emerald-500/50 bg-emerald-500/15 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1.5 disabled:opacity-45"><ShieldPlus size={13} /> {installingFabricApi ? 'Installing...' : 'Auto Fabric API'}</button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_120px] gap-2">
-            <div className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 h-11 flex items-center gap-2">
-              <Search size={14} className="text-slate-500 dark:text-white/60" />
-              <input
-                value={modsQuery}
-                onChange={(event) => setModsQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') void searchModsMarket();
-                }}
-                placeholder="Search marketplace mods..."
-                className="w-full bg-transparent text-sm font-semibold outline-none text-slate-900 dark:text-white"
-              />
-            </div>
-            <select value={modsSource} onChange={(event) => setModsSource(event.target.value as SourceFilter)} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 h-11 text-sm font-bold text-slate-900 dark:text-white">
-              <option value="all">All Sources</option>
-              <option value="modrinth">Modrinth</option>
-              <option value="curseforge">CurseForge</option>
-            </select>
-            <button onClick={() => { void searchModsMarket(); }} disabled={modsSearching} className="rounded-xl border border-emerald-500/50 bg-emerald-500/15 h-11 text-xs font-black tracking-[0.14em] uppercase text-emerald-700 dark:text-emerald-200 disabled:opacity-45">
-              {modsSearching ? 'Searching...' : 'Search'}
-            </button>
-          </div>
-
-          <div className="rounded-2xl border border-slate-300/80 dark:border-white/12 overflow-hidden">
-            {modsResults.length === 0 ? (
-              <div className="p-4 text-center text-sm font-semibold text-slate-500 dark:text-white/55">Search to load marketplace mods for this instance.</div>
-            ) : (
-              modsResults.map((mod) => {
-                const rowId = `${mod.source}:${mod.id}`;
-                return (
-                  <div key={rowId} className="px-3 py-2.5 border-b border-slate-200 dark:border-white/10 last:border-b-0 bg-white/80 dark:bg-white/[0.02] flex items-center gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-black text-slate-900 dark:text-white truncate">{mod.title}</p>
-                      <p className="text-xs font-semibold text-slate-500 dark:text-white/55 truncate">{mod.description}</p>
-                    </div>
-                    <button
-                      onClick={() => { void installMarketplaceMod(mod); }}
-                      disabled={modsInstallingId === rowId}
-                      className="rounded-xl border border-emerald-500/50 bg-emerald-500/15 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase text-emerald-700 dark:text-emerald-200 inline-flex items-center gap-1.5 disabled:opacity-45"
-                    >
-                      <Download size={12} /> {modsInstallingId === rowId ? 'Installing...' : 'Install'}
-                    </button>
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          <div onDrop={handleDrop} onDragOver={handleDragOver} onDragLeave={handleDragLeave} className={['rounded-2xl border-2 border-dashed p-4 text-center transition-colors', isDragging ? 'border-[var(--g-accent)] bg-[var(--g-accent-soft)]' : 'border-slate-300/80 dark:border-white/20 bg-slate-100/40 dark:bg-white/[0.03]'].join(' ')}>
-            <p className="text-sm font-black text-slate-700 dark:text-white/75 inline-flex items-center gap-2"><UploadCloud size={15} /> Drop .jar files here</p>
-            <input ref={fileInputRef} type="file" multiple accept=".jar" className="hidden" onChange={handleFileInput} />
-            <div className="mt-3 flex justify-center gap-2">
-              <button onClick={() => { void pickAndInstallMods(); }} disabled={installingMods} className="g-btn-accent px-3 py-2 text-xs font-black tracking-[0.14em] uppercase">{installingMods ? 'Installing...' : 'Choose Files'}</button>
-              <button onClick={() => fileInputRef.current?.click()} disabled={installingMods} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase">{installingMods ? 'Installing...' : 'Browser Fallback'}</button>
-              <button onClick={() => { void TauriApi.openModsFolder(instance.id); }} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5"><FolderOpen size={13} /> Folder</button>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-300/80 dark:border-white/12 overflow-hidden">
-            {modLoading ? (
-              <div className="p-6 text-center text-xs font-black tracking-[0.16em] uppercase text-slate-500 dark:text-white/55">Loading mods...</div>
-            ) : mods.length === 0 ? (
-              <div className="p-6 text-center text-sm font-semibold text-slate-500 dark:text-white/55">No mods installed.</div>
-            ) : (
-              mods.map((mod) => (
-                <div key={mod.fileName} className="px-3 py-2.5 border-b border-slate-200 dark:border-white/10 last:border-b-0 bg-white/80 dark:bg-white/[0.02] flex items-center gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-black text-slate-900 dark:text-white truncate">{mod.displayName}</p>
-                    <p className="text-xs font-semibold text-slate-500 dark:text-white/55">{humanSize(mod.sizeBytes)}</p>
-                  </div>
-                  <button
-                    onClick={() => void toggleMod(mod)}
-                    data-on={mod.enabled}
-                    className="g-switch"
-                    aria-label={`Toggle ${mod.displayName}`}
-                    aria-pressed={mod.enabled}
-                  />
-                  <button onClick={() => void removeMod(mod)} className="h-8 w-8 rounded-lg border border-red-300/70 dark:border-red-500/35 text-red-600 dark:text-red-300 inline-flex items-center justify-center"><Trash2 size={13} /></button>
+      ) : activeTab === 'mods' ? (
+        modsView === 'installed' ? renderInstalledLibrary(
+          'Mods',
+          modLoading,
+          mods,
+          () => { void reloadMods(); },
+          () => { void TauriApi.openModsFolder(instance.id); },
+          () => setModsView('install'),
+          (row) => { void removeMod(row as InstanceModFile); },
+          (row) => { void toggleMod(row); },
+          <button onClick={autoInstallFabricApi} disabled={instance.loader !== 'fabric' || installingFabricApi} className="rounded-xl border border-emerald-500/50 bg-emerald-500/15 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1.5 disabled:opacity-45"><ShieldPlus size={13} /> {installingFabricApi ? 'Installing...' : 'Auto Fabric API'}</button>
+        ) : (
+          <div className="space-y-4">
+            {renderMarketplaceList('Mods Marketplace', modsQuery, setModsQuery, modsSource, setModsSource, modsSearching, () => { void searchModsMarket(); }, modsResults, modsInstallingId, (row) => { void installMarketplaceMod(row as MarketplaceMod); }, 'Search marketplace mods...', 'Search to load marketplace mods for this instance.', 'border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-200', 'mod')}
+            <section className="g-panel p-6">
+              <div onDrop={handleDrop} onDragOver={handleDragOver} onDragLeave={handleDragLeave} className={['rounded-2xl border-2 border-dashed p-4 text-center transition-colors', isDragging ? 'border-[var(--g-accent)] bg-[var(--g-accent-soft)]' : 'border-slate-300/80 dark:border-white/20 bg-slate-100/40 dark:bg-white/[0.03]'].join(' ')}>
+                <p className="text-sm font-black text-slate-700 dark:text-white/75 inline-flex items-center gap-2"><UploadCloud size={15} /> Drop .jar files here</p>
+                <input ref={fileInputRef} type="file" multiple accept=".jar" className="hidden" onChange={handleFileInput} />
+                <div className="mt-3 flex justify-center gap-2 flex-wrap">
+                  <button onClick={() => { void pickAndInstallMods(); }} disabled={installingMods} className="g-btn-accent px-3 py-2 text-xs font-black tracking-[0.14em] uppercase">{installingMods ? 'Installing...' : 'Choose Files'}</button>
+                  <button onClick={() => fileInputRef.current?.click()} disabled={installingMods} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase">{installingMods ? 'Installing...' : 'Browser Fallback'}</button>
+                  <button onClick={() => { void TauriApi.openModsFolder(instance.id); }} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5"><FolderOpen size={13} /> Folder</button>
                 </div>
-              ))
-            )}
+              </div>
+            </section>
           </div>
-        </section>
+        )
+      ) : activeTab === 'resourcepacks' ? (
+        resourcepacksView === 'installed'
+          ? renderInstalledLibrary(
+            'Resource Packs',
+            resourcepacksLoading,
+            resourcepacks,
+            () => { void reloadResourcepacks(); },
+            () => { void TauriApi.openResourcepacksFolder(instance.id); },
+            () => setResourcepacksView('install'),
+            (row) => { void removeResourcepack(row as InstanceContentFile); }
+          )
+          : renderMarketplaceList('Resource Packs Marketplace', resourcepacksQuery, setResourcepacksQuery, resourcepacksSource, setResourcepacksSource, resourcepacksSearching, () => { void searchResourcePacksMarket(); }, resourcepacksResults, resourcepacksInstallingId, (row) => { void installMarketplaceResourcePack(row as MarketplacePack); }, 'Search resource packs...', 'Search to load resource packs.', 'border-cyan-500/50 bg-cyan-500/15 text-cyan-700 dark:text-cyan-200', 'pack')
+      ) : (
+        shadersView === 'installed'
+          ? renderInstalledLibrary(
+            'Shaders',
+            shaderpacksLoading,
+            shaderpacks,
+            () => { void reloadShaderpacks(); },
+            () => { void TauriApi.openShaderpacksFolder(instance.id); },
+            () => setShadersView('install'),
+            (row) => { void removeShaderpack(row as InstanceContentFile); }
+          )
+          : renderMarketplaceList('Shaders Marketplace', shadersQuery, setShadersQuery, shadersSource, setShadersSource, shadersSearching, () => { void searchShadersMarket(); }, shadersResults, shadersInstallingId, (row) => { void installMarketplaceShader(row as MarketplacePack); }, 'Search shaders...', 'Search to load shader packs.', 'border-fuchsia-500/50 bg-fuchsia-500/15 text-fuchsia-700 dark:text-fuchsia-200', 'shader')
       )}
 
       {(statusMessage || lastInstallResult) && (

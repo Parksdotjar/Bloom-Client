@@ -75,25 +75,14 @@ const WIDGET_PAGES: WidgetPageDef[] = [
     ]
   },
   {
-    pageKey: 'downloads',
-    label: 'Downloads',
-    route: '/downloads',
+    pageKey: 'importer',
+    label: 'Importer',
+    route: '/importer',
     storageType: 'pagewidgets',
     widgets: [
-      { id: 'downloads-hero', title: 'Header', description: 'Downloads page hero section.' },
-      { id: 'downloads-queue', title: 'Queue', description: 'Current download queue.' }
-    ]
-  },
-  {
-    pageKey: 'skins',
-    label: 'Skins',
-    route: '/skins',
-    storageType: 'pagewidgets',
-    widgets: [
-      { id: 'skins-hero', title: 'Header', description: 'Skin studio header.' },
-      { id: 'skins-auth', title: 'Account', description: 'Account/login skin controls.' },
-      { id: 'skins-preview', title: 'Preview', description: '3D skin preview.' },
-      { id: 'skins-presets', title: 'Presets', description: 'Saved presets and apply controls.' }
+      { id: 'importer-hero', title: 'Header', description: 'Importer page hero section.' },
+      { id: 'importer-modrinth', title: 'Modrinth', description: 'Search and install Modrinth modpacks.' },
+      { id: 'importer-local', title: 'Local Import', description: 'Import local .mrpack and .zip files.' }
     ]
   }
 ];

@@ -3,7 +3,8 @@ use std::fs;
 use std::process::Command;
 use tauri::AppHandle;
 
-const GITHUB_LATEST_RELEASE_API: &str = "https://api.github.com/repos/Parksdotjar/Bloom-Client/releases/latest";
+const GITHUB_LATEST_RELEASE_API: &str =
+    "https://api.github.com/repos/Parksdotjar/Bloom-Client/releases/latest";
 
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {
@@ -102,13 +103,19 @@ pub async fn external_update_check(app: AppHandle) -> Result<Option<ExternalUpda
 }
 
 #[tauri::command]
-pub async fn external_update_install(app: AppHandle, installer_url: String, version: String) -> Result<(), String> {
+pub async fn external_update_install(
+    app: AppHandle,
+    installer_url: String,
+    version: String,
+) -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     {
         let _ = app;
         let _ = installer_url;
         let _ = version;
-        return Err("External installer updates are currently implemented for Windows only".to_string());
+        return Err(
+            "External installer updates are currently implemented for Windows only".to_string(),
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -121,7 +128,10 @@ pub async fn external_update_install(app: AppHandle, installer_url: String, vers
             .map_err(|e| format!("Failed to download installer: {e}"))?;
 
         if !response.status().is_success() {
-            return Err(format!("Installer download returned HTTP {}", response.status()));
+            return Err(format!(
+                "Installer download returned HTTP {}",
+                response.status()
+            ));
         }
 
         let bytes = response

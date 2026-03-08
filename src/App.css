@@ -39,6 +39,7 @@
   --g-menu-solid-text: #111827;
   --g-menu-solid-hover: #e9eef7;
   --g-btn-radius: 12px;
+  --g-btn-roundness-mult: 1;
   --g-btn-border-width: 1px;
   --g-btn-border-style: solid;
   --g-btn-shadow: none;
@@ -816,6 +817,10 @@ html[data-card-style='outline'] {
     box-shadow: 0 14px 40px rgba(0, 0, 0, 0.42);
   }
 
+  html[data-background='none'] .g-window-shell {
+    background: var(--g-bg);
+  }
+
   .g-panel {
     border: 1px solid var(--g-border);
     background: color-mix(in srgb, var(--g-surface) calc(var(--g-glass-opacity-mult) * 100%), transparent);
@@ -907,7 +912,7 @@ html[data-card-style='outline'] {
     border-color: var(--g-border);
     border-width: var(--g-btn-border-width);
     border-style: var(--g-btn-border-style);
-    border-radius: calc(var(--g-btn-radius) * var(--g-roundness-mult));
+    border-radius: calc(var(--g-btn-radius) * var(--g-roundness-mult) * var(--g-btn-roundness-mult));
     background: var(--g-soft);
     color: var(--g-text);
     box-shadow: var(--g-btn-shadow);
@@ -925,7 +930,7 @@ html[data-card-style='outline'] {
     border-color: color-mix(in srgb, var(--g-accent) 65%, transparent);
     border-width: var(--g-btn-border-width);
     border-style: var(--g-btn-border-style);
-    border-radius: calc(var(--g-btn-radius) * var(--g-roundness-mult));
+    border-radius: calc(var(--g-btn-radius) * var(--g-roundness-mult) * var(--g-btn-roundness-mult));
     background: var(--g-accent-soft);
     color: var(--g-text);
     box-shadow: var(--g-btn-shadow);

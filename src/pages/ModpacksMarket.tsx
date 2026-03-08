@@ -24,7 +24,10 @@ export function ModpacksMarket() {
   const [status, setStatus] = useState<string | null>(null);
   const [versionModalFor, setVersionModalFor] = useState<MarketplacePack | null>(null);
   const [selectedVersion, setSelectedVersion] = useState<string>('');
+  const [versionOpen, setVersionOpen] = useState(false);
+  const [didLoadFeatured, setDidLoadFeatured] = useState(false);
   const sourceRef = useRef<HTMLDivElement | null>(null);
+  const versionRef = useRef<HTMLDivElement | null>(null);
 
   const availableVersions = useMemo(() => {
     if (!versionModalFor) return [];
@@ -37,6 +40,7 @@ export function ModpacksMarket() {
     const onMouseDown = (event: MouseEvent) => {
       const node = event.target as Node;
       if (sourceRef.current && !sourceRef.current.contains(node)) setSourceOpen(false);
+      if (versionRef.current && !versionRef.current.contains(node)) setVersionOpen(false);
     };
     window.addEventListener('mousedown', onMouseDown);
     return () => window.removeEventListener('mousedown', onMouseDown);
@@ -45,15 +49,23 @@ export function ModpacksMarket() {
   useEffect(() => {
     if (!versionModalFor) return;
     setSelectedVersion(availableVersions[0] || '1.21.1');
+    setVersionOpen(false);
   }, [versionModalFor, availableVersions]);
 
-  const runSearch = async () => {
-    if (!query.trim()) return;
+  const runSearch = async (forcedQuery?: string) => {
+    const effectiveQuery = (forcedQuery ?? query).trim();
+    if (!effectiveQuery) return;
     setSearching(true);
     setStatus(null);
     try {
-      const rows = await TauriApi.marketplaceSearchModpacks(query.trim(), source);
-      setResults(rows);
+      const rows = await TauriApi.marketplaceSearchModpacks(effectiveQuery, source);
+      const sorted = [...rows].sort((a, b) => {
+        const aScore = a.title.toLowerCase() === 'fabulously optimized' ? 2 : a.title.toLowerCase().includes('fabulously optimized') ? 1 : 0;
+        const bScore = b.title.toLowerCase() === 'fabulously optimized' ? 2 : b.title.toLowerCase().includes('fabulously optimized') ? 1 : 0;
+        if (aScore !== bScore) return bScore - aScore;
+        return b.downloads - a.downloads;
+      });
+      setResults(sorted);
       if (rows.length === 0) {
         if (source === 'curseforge') setStatus('No results. If CurseForge is empty, set CURSEFORGE_API_KEY for full access.');
         else setStatus('No modpacks matched this search.');
@@ -65,6 +77,13 @@ export function ModpacksMarket() {
       setSearching(false);
     }
   };
+
+  useEffect(() => {
+    if (didLoadFeatured) return;
+    setDidLoadFeatured(true);
+    setQuery('Fabulously Optimized');
+    void runSearch('Fabulously Optimized');
+  }, [didLoadFeatured]);
 
   const openInstallModal = (pack: MarketplacePack) => {
     setVersionModalFor(pack);
@@ -161,7 +180,7 @@ export function ModpacksMarket() {
                     <p className="text-base font-extrabold truncate">{pack.title}</p>
                     <p className="text-xs g-muted truncate">{pack.description}</p>
                     <p className="text-[10px] uppercase tracking-[0.12em] g-muted mt-1">
-                      {pack.source} {pack.author ? `• ${pack.author}` : ''} • {compactDownloads(pack.downloads)} downloads • {versionCount} versions • {loaderText}
+                      {pack.source} {pack.author ? `| ${pack.author}` : ''} | {compactDownloads(pack.downloads)} downloads | {versionCount} versions | {loaderText}
                     </p>
                   </div>
                 </div>
@@ -175,7 +194,7 @@ export function ModpacksMarket() {
               </article>
             );
           })}
-          {results.length === 0 && <p className="text-sm g-muted py-6 text-center">Search to load modpacks.</p>}
+          {results.length === 0 && <p className="text-sm g-muted py-6 text-center">Featured modpacks load here first, then search can refine it.</p>}
         </div>
       </section>
   );
@@ -198,17 +217,27 @@ export function ModpacksMarket() {
             </div>
             <p className="text-sm g-muted mt-1">{versionModalFor.title}</p>
             <p className="text-xs g-muted mt-1">Choose one supported Minecraft version before install.</p>
-            <div className="mt-3">
-              <select
-                value={selectedVersion}
-                onChange={(event) => setSelectedVersion(event.target.value)}
-                className="g-select-trigger w-full h-11 px-3 text-sm font-bold"
-              >
-                {availableVersions.map((version) => (
-                  <option key={version} value={version} className="text-black">{version}</option>
-                ))}
-                {availableVersions.length === 0 && <option value="1.21.1" className="text-black">1.21.1</option>}
-              </select>
+            <div ref={versionRef} className="relative mt-3 z-[520]">
+              <button onClick={() => setVersionOpen((v) => !v)} className="g-select-trigger w-full h-11 px-3 text-sm font-bold inline-flex items-center justify-between">
+                <span>{selectedVersion || 'Select version'}</span>
+                <ChevronDown size={14} className={versionOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
+              </button>
+              {versionOpen && (
+                <div className="absolute left-0 right-0 top-[46px] z-[540] g-select-menu p-1.5 max-h-[240px] overflow-y-auto">
+                  {(availableVersions.length > 0 ? availableVersions : ['1.21.1']).map((version) => (
+                    <button
+                      key={version}
+                      onClick={() => {
+                        setSelectedVersion(version);
+                        setVersionOpen(false);
+                      }}
+                      className="g-select-option w-full text-left px-3 py-2 text-sm font-bold"
+                    >
+                      {version}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2">
               <button onClick={() => setVersionModalFor(null)} className="g-btn h-10 text-xs font-extrabold uppercase tracking-[0.12em]">Cancel</button>
@@ -223,3 +252,5 @@ export function ModpacksMarket() {
     </>
   );
 }
+
+

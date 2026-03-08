@@ -23,6 +23,7 @@ export function ResourcePacksMarket() {
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [results, setResults] = useState<MarketplacePack[]>([]);
   const [status, setStatus] = useState<string | null>(null);
+  const [didLoadFeatured, setDidLoadFeatured] = useState(false);
   const sourceRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<HTMLDivElement | null>(null);
 
@@ -60,6 +61,26 @@ export function ResourcePacksMarket() {
       setSearching(false);
     }
   };
+
+  useEffect(() => {
+    if (didLoadFeatured) return;
+    setDidLoadFeatured(true);
+    setQuery('Faithful');
+    void (async () => {
+      setSearching(true);
+      setStatus(null);
+      try {
+        const version = selectedInstance?.mcVersion || '1.21.1';
+        const rows = await TauriApi.marketplaceSearchResourcepacks('Faithful', source, version);
+        setResults(rows);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setStatus(`Search failed: ${message}`);
+      } finally {
+        setSearching(false);
+      }
+    })();
+  }, [didLoadFeatured]);
 
   const installPack = async (pack: MarketplacePack) => {
     if (!selectedInstance) {
@@ -179,7 +200,7 @@ export function ResourcePacksMarket() {
                     <p className="text-base font-extrabold truncate">{pack.title}</p>
                     <p className="text-xs g-muted truncate">{pack.description}</p>
                     <p className="text-[10px] uppercase tracking-[0.12em] g-muted mt-1">
-                      {pack.source} {pack.author ? `• ${pack.author}` : ''} • {compactDownloads(pack.downloads)} downloads • {versionCount} versions
+                      {pack.source} {pack.author ? `| ${pack.author}` : ''} | {compactDownloads(pack.downloads)} downloads | {versionCount} versions
                     </p>
                   </div>
                 </div>
@@ -193,7 +214,7 @@ export function ResourcePacksMarket() {
               </article>
             );
           })}
-          {results.length === 0 && <p className="text-sm g-muted py-6 text-center">Search to load resource packs.</p>}
+          {results.length === 0 && <p className="text-sm g-muted py-6 text-center">Featured resource packs load here first, then search can refine it.</p>}
         </div>
       </section>
   );
@@ -206,3 +227,4 @@ export function ResourcePacksMarket() {
 
   return <PageWidgets pageKey="resourcepacks" widgets={widgets} />;
 }
+

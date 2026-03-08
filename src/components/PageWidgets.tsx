@@ -12,6 +12,7 @@ export type PageWidget = {
 };
 
 const SHOW_WIDGET_DOCKER_KEY = 'bloom_show_widget_docker';
+const HIDE_EMPTY_WIDGET_SLOTS_KEY = 'bloom_hide_empty_widget_slots';
 const EXTRA_CHANGE_EVENT = 'bloom-extra-change';
 
 const SLOT_LABELS: Record<WidgetSlot, string> = {
@@ -31,6 +32,7 @@ export function PageWidgets({ pageKey, widgets }: { pageKey: string; widgets: Pa
   const visibleStorageKey = `bloom_widget_visible_${pageKey}`;
 
   const [showWidgetDocker, setShowWidgetDocker] = useState<boolean>(() => localStorage.getItem(SHOW_WIDGET_DOCKER_KEY) === 'true');
+  const [hideEmptyWidgetSlots, setHideEmptyWidgetSlots] = useState<boolean>(() => localStorage.getItem(HIDE_EMPTY_WIDGET_SLOTS_KEY) === 'true');
   const [draggingWidget, setDraggingWidget] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ widgetId: string; x: number; y: number } | null>(null);
 
@@ -82,8 +84,11 @@ export function PageWidgets({ pageKey, widgets }: { pageKey: string; widgets: Pa
 
   useEffect(() => {
     const onExtraChange = (event: Event) => {
-      const custom = event as CustomEvent<{ showWidgetDocker?: boolean }>;
+      const custom = event as CustomEvent<{ showWidgetDocker?: boolean; hideEmptyWidgetSlots?: boolean }>;
       setShowWidgetDocker(custom.detail?.showWidgetDocker === true);
+      if (typeof custom.detail?.hideEmptyWidgetSlots === 'boolean') {
+        setHideEmptyWidgetSlots(custom.detail.hideEmptyWidgetSlots);
+      }
     };
     window.addEventListener(EXTRA_CHANGE_EVENT, onExtraChange as EventListener);
     return () => window.removeEventListener(EXTRA_CHANGE_EVENT, onExtraChange as EventListener);
@@ -204,6 +209,9 @@ export function PageWidgets({ pageKey, widgets }: { pageKey: string; widgets: Pa
   const renderSlot = (slot: WidgetSlot, className?: string) => {
     const widget = widgetAtSlot(slot);
     if (!widget) {
+      if (hideEmptyWidgetSlots && !draggingWidget) {
+        return <div ref={(el) => { slotRefs.current[slot] = el; }} className={className || ''} />;
+      }
       return (
         <div
           ref={(el) => { slotRefs.current[slot] = el; }}

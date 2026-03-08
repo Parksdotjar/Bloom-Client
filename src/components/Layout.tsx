@@ -31,7 +31,7 @@ import {
 
 type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'rainbow';
-type BackgroundMode = 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula';
+type BackgroundMode = 'none' | 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula';
 type DensityMode = 'compact' | 'cozy' | 'spacious';
 type FontPackMode = 'manrope' | 'space-grotesk' | 'sora';
 type SidebarMode = 'rail' | 'classic' | 'expanded';
@@ -50,14 +50,6 @@ type SearchEntry = {
   description: string;
   route?: string;
   action?: 'signin';
-};
-
-type SkinPreset = {
-  id: string;
-  name: string;
-  previewDataUrl: string;
-  model: 'classic' | 'slim';
-  createdAt: number;
 };
 
 const THEME_STORAGE_KEY = 'bloom_theme_mode';
@@ -89,6 +81,8 @@ const ICON_PACK_KEY = 'bloom_icon_pack';
 const ICON_PACK_CHANGE_EVENT = 'bloom-icon-pack-change';
 const ROUNDNESS_KEY = 'bloom_roundness_level';
 const ROUNDNESS_CHANGE_EVENT = 'bloom-roundness-change';
+const BUTTON_ROUNDNESS_KEY = 'bloom_button_roundness_level';
+const BUTTON_ROUNDNESS_CHANGE_EVENT = 'bloom-button-roundness-change';
 const GLASS_AMOUNT_KEY = 'bloom_glass_amount';
 const GLASS_AMOUNT_CHANGE_EVENT = 'bloom-glass-amount-change';
 const SHORTCUT_SEARCH_KEY = 'bloom_shortcut_search';
@@ -107,6 +101,7 @@ const STARTUP_SCENE_CHANGE_EVENT = 'bloom-startup-scene-change';
 const STARTUP_SCENE_AUTOPLAY_SESSION_KEY = 'bloom_startup_scene_autoplay_done';
 const MODS_REFRESH_EVENT = 'bloom-refresh-mods';
 const ONBOARDING_DONE_PREFIX = 'bloom_onboarding_done_';
+const ROUTE_TAB_ANIMATIONS_KEY = 'bloom_route_tab_animations_enabled';
 
 const ACCENT_MAP: Record<AccentMode, { accent: string; soft: string; gradient: string }> = {
   purple: { accent: '#9a65ff', soft: 'rgba(154, 101, 255, 0.26)', gradient: 'linear-gradient(90deg, #8f58ff 0%, #ba96ff 100%)' },
@@ -150,27 +145,6 @@ const ONBOARDING_ACCENT_OPTIONS: { id: AccentMode; label: string; swatch: string
   { id: 'rose', label: 'Rose', swatch: 'linear-gradient(90deg,#ff5c89,#ff9cb7)' },
   { id: 'rainbow', label: 'Rainbow', swatch: 'linear-gradient(90deg,#ff5f6d,#ffc371,#47e0ff,#60ff9f,#b57bff)' }
 ];
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<T>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
-  });
-  return Promise.race([promise, timeoutPromise]).finally(() => {
-    if (timeoutId) clearTimeout(timeoutId);
-  }) as Promise<T>;
-}
-
-function dataUrlToBytes(dataUrl: string): number[] {
-  const parts = dataUrl.split(',');
-  const base64 = parts.length > 1 ? parts[1] : '';
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return Array.from(bytes);
-}
 
 function normalizeShortcut(text: string): string {
   return text
@@ -223,7 +197,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   });
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>(() => {
     const stored = localStorage.getItem(BACKGROUND_STORAGE_KEY);
-    return stored === 'plus' || stored === 'particles' || stored === 'aurora' || stored === 'scanlines' || stored === 'nebula'
+    return stored === 'none' || stored === 'plus' || stored === 'particles' || stored === 'aurora' || stored === 'scanlines' || stored === 'nebula'
       ? stored
       : 'particles';
   });
@@ -276,6 +250,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       easingY2: Number(localStorage.getItem(MOTION_EASING_Y2_KEY) ?? MOTION_TUNING_DEFAULTS.easingY2)
     })
   );
+  const [routeTabAnimationsEnabled, setRouteTabAnimationsEnabled] = useState<boolean>(() => localStorage.getItem(ROUTE_TAB_ANIMATIONS_KEY) === 'true');
   const [isMaximized, setIsMaximized] = useState(false);
   const [iconPack, setIconPack] = useState<IconPackMode>(() => {
     const stored = localStorage.getItem(ICON_PACK_KEY);
@@ -285,6 +260,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
     const stored = Number(localStorage.getItem(ROUNDNESS_KEY));
     if (Number.isFinite(stored)) return Math.max(0, Math.min(100, Math.round(stored)));
     return 50;
+  });
+  const [buttonRoundnessLevel, setButtonRoundnessLevel] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(BUTTON_ROUNDNESS_KEY));
+    if (Number.isFinite(stored)) return Math.max(0, Math.min(100, Math.round(stored)));
+    return 100;
   });
   const [glassAmount, setGlassAmount] = useState<number>(() => {
     const stored = Number(localStorage.getItem(GLASS_AMOUNT_KEY));
@@ -317,10 +297,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [avatarContextMenu, setAvatarContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const [skinModel, setSkinModel] = useState<'classic' | 'slim'>('classic');
-  const [skinPresets, setSkinPresets] = useState<SkinPreset[]>([]);
   const [skinStatus, setSkinStatus] = useState<string | null>(null);
-  const [uploadingSkin, setUploadingSkin] = useState(false);
   const [quickLaunchInstanceId, setQuickLaunchInstanceId] = useState<string>(() => localStorage.getItem(ACCOUNT_LAUNCH_INSTANCE_KEY) || '');
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState<0 | 1 | 2 | 3>(0);
@@ -332,7 +309,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const notifRef = useRef<HTMLDivElement | null>(null);
   const accountRef = useRef<HTMLDivElement | null>(null);
-  const accountUploadRef = useRef<HTMLInputElement | null>(null);
   const profileUploadRef = useRef<HTMLInputElement | null>(null);
   const onboardingProfileUploadRef = useRef<HTMLInputElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -354,24 +330,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
     cancelLogin,
     dismissAuthOverlay,
     clearError,
-    uploadSkin,
     setProfileAvatar,
     clearProfileAvatar
   } = useAuth();
   const { instances } = useInstances();
   const { startDownload } = useDownloader();
 
-  const presetsKey = authState ? `bloom_skin_presets_${authState.profile.id}` : null;
-
   const entries: SearchEntry[] = useMemo(() => {
     const base: SearchEntry[] = [
       { id: 'home', label: 'Home', description: 'Launcher overview', route: '/' },
       { id: 'instances', label: 'Instances', description: 'Create and edit instances', route: '/instances' },
-      { id: 'mods', label: 'Mods Market', description: 'Search and install mods', route: '/mods' },
-      { id: 'modpacks', label: 'Modpacks', description: 'Install modpacks into new instances', route: '/modpacks' },
-      { id: 'resourcepacks', label: 'Resource Packs', description: 'Search and install resource packs', route: '/resourcepacks' },
-      { id: 'skins', label: 'Skin Studio', description: '3D skin preview and presets', route: '/skins' },
-      { id: 'downloads', label: 'Downloads', description: 'Track install progress', route: '/downloads' },
+      { id: 'marketplace', label: 'Marketplace', description: 'Install modpacks, mods, and resource packs', route: '/marketplace' },
+      { id: 'importer', label: 'Importer', description: 'Create instances from Modrinth packs or local archives', route: '/importer' },
       { id: 'widgets', label: 'Widgets', description: 'Manage per-page widgets and visibility', route: '/widgets' },
       { id: 'settings', label: 'Settings', description: 'Theme and launcher options', route: '/settings' }
     ];
@@ -449,10 +419,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const clamped = Math.max(0, Math.min(100, Math.round(roundnessLevel)));
-    const roundnessMult = 0.45 + (clamped / 100) * 1.55;
+    const roundnessMult = clamped / 100;
     document.documentElement.style.setProperty('--g-roundness-mult', String(roundnessMult));
     localStorage.setItem(ROUNDNESS_KEY, String(clamped));
   }, [roundnessLevel]);
+
+  useEffect(() => {
+    const clamped = Math.max(0, Math.min(100, Math.round(buttonRoundnessLevel)));
+    document.documentElement.style.setProperty('--g-btn-roundness-mult', String(clamped / 100));
+    localStorage.setItem(BUTTON_ROUNDNESS_KEY, String(clamped));
+  }, [buttonRoundnessLevel]);
 
   useEffect(() => {
     const clamped = Math.max(0, Math.min(100, Math.round(glassAmount)));
@@ -472,6 +448,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, [accentMode]);
 
   useEffect(() => {
+    document.documentElement.setAttribute('data-background', backgroundMode);
     localStorage.setItem(BACKGROUND_STORAGE_KEY, backgroundMode);
   }, [backgroundMode]);
 
@@ -565,6 +542,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    const onButtonRoundnessChange = (event: Event) => {
+      const custom = event as CustomEvent<{ roundness?: number }>;
+      const next = Number(custom.detail?.roundness);
+      if (Number.isFinite(next)) setButtonRoundnessLevel(Math.max(0, Math.min(100, Math.round(next))));
+    };
+    window.addEventListener(BUTTON_ROUNDNESS_CHANGE_EVENT, onButtonRoundnessChange as EventListener);
+    return () => window.removeEventListener(BUTTON_ROUNDNESS_CHANGE_EVENT, onButtonRoundnessChange as EventListener);
+  }, []);
+
+  useEffect(() => {
     const onGlassAmountChange = (event: Event) => {
       const custom = event as CustomEvent<{ amount?: number }>;
       const next = Number(custom.detail?.amount);
@@ -634,7 +621,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     const onBackgroundChange = (event: Event) => {
       const custom = event as CustomEvent<{ background?: BackgroundMode }>;
       const requestedBackground = custom.detail?.background;
-      if (requestedBackground === 'plus' || requestedBackground === 'particles' || requestedBackground === 'aurora' || requestedBackground === 'scanlines' || requestedBackground === 'nebula') {
+      if (requestedBackground === 'none' || requestedBackground === 'plus' || requestedBackground === 'particles' || requestedBackground === 'aurora' || requestedBackground === 'scanlines' || requestedBackground === 'nebula') {
         setBackgroundMode(requestedBackground);
       }
     };
@@ -794,38 +781,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
     const pageName =
       location.pathname === '/' ? 'Home' :
       location.pathname === '/instances' ? 'Instances' :
-      location.pathname === '/mods' ? 'Mods Market' :
-      location.pathname === '/modpacks' ? 'Modpacks' :
-      location.pathname === '/resourcepacks' ? 'Resourcepacks' :
-      location.pathname === '/skins' ? 'Skin Studio' :
-      location.pathname === '/downloads' ? 'Downloads' :
+      location.pathname === '/marketplace' ? 'Marketplace' :
+      location.pathname === '/importer' || location.pathname === '/downloads' ? 'Modpack Importer' :
       location.pathname === '/settings' ? 'Settings' :
       'Launcher';
     void setDiscordPresence(`Browsing ${pageName}`, `Bloom Client ${APP_VERSION}`);
   }, [location.pathname]);
-
-  useEffect(() => {
-    if (!presetsKey) {
-      setSkinPresets([]);
-      return;
-    }
-    try {
-      const raw = localStorage.getItem(presetsKey);
-      if (!raw) {
-        setSkinPresets([]);
-        return;
-      }
-      const parsed = JSON.parse(raw) as SkinPreset[];
-      setSkinPresets(parsed);
-    } catch {
-      setSkinPresets([]);
-    }
-  }, [presetsKey]);
-
-  useEffect(() => {
-    if (!presetsKey) return;
-    localStorage.setItem(presetsKey, JSON.stringify(skinPresets));
-  }, [presetsKey, skinPresets]);
 
   useEffect(() => {
     const blockNativeContextMenu = (event: MouseEvent) => {
@@ -962,9 +923,25 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, [navigate, startupSceneSoundProfile, authState]);
 
   useEffect(() => {
+    const onExtraChange = (event: Event) => {
+      const custom = event as CustomEvent<{ routeTabAnimationsEnabled?: boolean }>;
+      if (typeof custom.detail?.routeTabAnimationsEnabled === 'boolean') {
+        setRouteTabAnimationsEnabled(custom.detail.routeTabAnimationsEnabled);
+      }
+    };
+    window.addEventListener('bloom-extra-change', onExtraChange as EventListener);
+    return () => window.removeEventListener('bloom-extra-change', onExtraChange as EventListener);
+  }, []);
+
+  useEffect(() => {
     if (!mainRef.current) return;
     const nodes = Array.from(mainRef.current.querySelectorAll('.js-giga-reveal'));
     if (nodes.length === 0) return;
+    if (!routeTabAnimationsEnabled) {
+      remove(nodes);
+      set(nodes, { opacity: 1, translateX: 0, translateY: 0 });
+      return;
+    }
     remove(nodes);
     set(nodes, { opacity: 0, translateX: motionTuning.offsetX, translateY: motionTuning.offsetY });
 
@@ -986,7 +963,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       moveAnimation.pause();
       fadeAnimation.pause();
     };
-  }, [location.pathname, motionTuning]);
+  }, [location.pathname, motionTuning, routeTabAnimationsEnabled]);
 
   useEffect(() => {
     if (authDebug.phase !== 'authenticated') return;
@@ -1133,48 +1110,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
     setSearchQuery('');
   };
 
-  const storePreset = (name: string, previewDataUrl: string, model: 'classic' | 'slim') => {
-    setSkinPresets((prev) => [{ id: crypto.randomUUID(), name, previewDataUrl, model, createdAt: Date.now() }, ...prev].slice(0, 24));
-  };
-
-  const handleUploadSkinFile = async (file: File) => {
-    if (!authState) return;
-    if (!file.type.startsWith('image/')) {
-      setSkinStatus('Please upload a PNG skin file.');
-      return;
-    }
-
-    setUploadingSkin(true);
-    setSkinStatus('Uploading skin...');
-
-    try {
-      const buffer = await file.arrayBuffer();
-      const bytes = Array.from(new Uint8Array(buffer));
-
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onerror = () => reject(new Error('Failed reading skin file.'));
-        reader.onload = () => resolve(String(reader.result));
-        reader.readAsDataURL(file);
-      });
-
-      await withTimeout(uploadSkin(file.name, bytes, skinModel), 35000, 'Skin upload timed out.');
-      storePreset(file.name, dataUrl, skinModel);
-      setSkinStatus('Skin applied successfully.');
-    } catch (err) {
-      setSkinStatus(err instanceof Error ? err.message : String(err));
-    } finally {
-      setUploadingSkin(false);
-    }
-  };
-
-  const onSkinInputChange: React.ChangeEventHandler<HTMLInputElement> = (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    void handleUploadSkinFile(file);
-    event.target.value = '';
-  };
-
   const onProfileInputChange: React.ChangeEventHandler<HTMLInputElement> = (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -1194,30 +1129,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
     event.target.value = '';
   };
 
-  const applyPreset = async (preset: SkinPreset) => {
-    try {
-      setUploadingSkin(true);
-      setSkinStatus('Applying preset...');
-      await uploadSkin(preset.name, dataUrlToBytes(preset.previewDataUrl), preset.model);
-      setSkinStatus('Preset applied.');
-    } catch (err) {
-      setSkinStatus(err instanceof Error ? err.message : String(err));
-    } finally {
-      setUploadingSkin(false);
-    }
-  };
-
-  const removePreset = (id: string) => {
-    setSkinPresets((prev) => prev.filter((preset) => preset.id !== id));
-  };
-
   const runQuickLaunchLastInstance = () => {
     if (!quickLaunchInstance) return;
     void startDownload(quickLaunchInstance, authState);
   };
 
   const runOpenLogs = () => {
-    navigate('/downloads');
+    navigate('/importer');
   };
 
   const runRefreshMods = () => {
@@ -1384,7 +1302,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   {!authState ? (
                     <div>
                       <p className="text-lg font-extrabold">Account</p>
-                      <p className="text-sm g-muted mt-1">Sign in to manage skins and profile.</p>
+                      <p className="text-sm g-muted mt-1">Sign in to manage your profile and quick launch.</p>
                       <button onClick={() => { void startLogin(); }} className="mt-3 g-btn-accent px-4 py-2 text-sm font-extrabold">
                         Sign In
                       </button>
@@ -1434,45 +1352,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                             Reset
                           </button>
                         </div>
-                      </div>
-
-                      <div className="mt-4 g-panel p-3">
-                        <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold g-accent-text">Skin Studio</p>
-                        <div className="mt-2 flex items-center gap-2">
-                          <select
-                            value={skinModel}
-                            onChange={(event) => setSkinModel(event.target.value as 'classic' | 'slim')}
-                            className="h-9 rounded-lg border border-white/12 bg-white/[0.04] px-3 text-sm font-bold text-white outline-none"
-                          >
-                            <option value="classic" className="text-black">Classic</option>
-                            <option value="slim" className="text-black">Slim</option>
-                          </select>
-                          <input ref={accountUploadRef} type="file" accept="image/png" className="hidden" onChange={onSkinInputChange} />
-                          <button
-                            onClick={() => accountUploadRef.current?.click()}
-                            disabled={uploadingSkin}
-                            className="g-btn-accent px-3 h-9 text-xs font-extrabold tracking-[0.12em] uppercase disabled:opacity-50"
-                          >
-                            {uploadingSkin ? 'Uploading...' : 'Upload Skin'}
-                          </button>
-                        </div>
                         {skinStatus && <p className="text-xs text-white/60 mt-2">{skinStatus}</p>}
-                      </div>
-
-                      <div className="mt-3">
-                        <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/50 mb-2">Saved Skins</p>
-                        <div className="grid grid-cols-4 gap-2 max-h-[180px] overflow-y-auto pr-1">
-                          {skinPresets.map((preset) => (
-                            <div key={preset.id} className="rounded-lg border border-white/10 bg-white/[0.03] p-1.5">
-                              <button onClick={() => { void applyPreset(preset); }} className="w-full rounded-md overflow-hidden border border-white/10">
-                                <img src={preset.previewDataUrl} alt={preset.name} className="w-full h-16 object-cover" />
-                              </button>
-                              <p className="mt-1 text-[10px] font-bold text-white/70 truncate">{preset.name}</p>
-                              <button onClick={() => removePreset(preset.id)} className="text-[10px] font-extrabold uppercase tracking-wider text-red-300 mt-0.5">Remove</button>
-                            </div>
-                          ))}
-                          {skinPresets.length === 0 && <p className="col-span-4 text-xs text-white/45">No saved skins yet.</p>}
-                        </div>
                       </div>
                     </>
                   )}

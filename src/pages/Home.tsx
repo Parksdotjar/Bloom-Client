@@ -13,6 +13,7 @@ const WIDGETS_STORAGE_KEY = 'bloom_home_widgets';
 const WIDGET_LAYOUT_STORAGE_KEY = 'bloom_home_widget_layout';
 const ACCOUNT_LAUNCH_INSTANCE_KEY = 'bloom_account_launch_instance';
 const SHOW_WIDGET_DOCKER_KEY = 'bloom_show_widget_docker';
+const HIDE_EMPTY_WIDGET_SLOTS_KEY = 'bloom_hide_empty_widget_slots';
 const EXTRA_CHANGE_EVENT = 'bloom-extra-change';
 
 const SLOT_LABELS: Record<WidgetSlot, string> = {
@@ -43,6 +44,7 @@ export function Home() {
   const [draggingWidget, setDraggingWidget] = useState<HomeWidgetId | null>(null);
   const [contextMenu, setContextMenu] = useState<{ widgetId: HomeWidgetId; x: number; y: number } | null>(null);
   const [showWidgetDocker, setShowWidgetDocker] = useState<boolean>(() => localStorage.getItem(SHOW_WIDGET_DOCKER_KEY) === 'true');
+  const [hideEmptyWidgetSlots, setHideEmptyWidgetSlots] = useState<boolean>(() => localStorage.getItem(HIDE_EMPTY_WIDGET_SLOTS_KEY) === 'true');
   const [accountLaunchInstanceId, setAccountLaunchInstanceId] = useState<string>(() => localStorage.getItem(ACCOUNT_LAUNCH_INSTANCE_KEY) || '');
   const [now, setNow] = useState<Date>(() => new Date());
   const [stopwatchRunning, setStopwatchRunning] = useState(false);
@@ -105,8 +107,11 @@ export function Home() {
 
   useEffect(() => {
     const onExtraChange = (event: Event) => {
-      const custom = event as CustomEvent<{ showWidgetDocker?: boolean }>;
+      const custom = event as CustomEvent<{ showWidgetDocker?: boolean; hideEmptyWidgetSlots?: boolean }>;
       setShowWidgetDocker(custom.detail?.showWidgetDocker === true);
+      if (typeof custom.detail?.hideEmptyWidgetSlots === 'boolean') {
+        setHideEmptyWidgetSlots(custom.detail.hideEmptyWidgetSlots);
+      }
     };
     window.addEventListener(EXTRA_CHANGE_EVENT, onExtraChange as EventListener);
     return () => window.removeEventListener(EXTRA_CHANGE_EVENT, onExtraChange as EventListener);
@@ -424,6 +429,9 @@ export function Home() {
   const renderSlot = (slot: WidgetSlot, className?: string) => {
     const widgetId = widgetAtSlot(slot);
     if (!widgetId || !isWidgetVisible(widgetId)) {
+      if (hideEmptyWidgetSlots && !draggingWidget) {
+        return <div ref={(el) => { slotRefs.current[slot] = el; }} className={className || ''} />;
+      }
       return (
         <div
           ref={(el) => { slotRefs.current[slot] = el; }}

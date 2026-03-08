@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { TauriApi, Instance } from '../services/tauri';
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
@@ -13,7 +13,19 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: 
     }) as Promise<T>;
 }
 
-export function useInstances() {
+type InstancesContextValue = {
+    instances: Instance[];
+    loading: boolean;
+    error: string | null;
+    loadInstances: () => Promise<void>;
+    createInstance: (payload: Instance) => Promise<void>;
+    updateInstance: (id: string, payload: Instance) => Promise<void>;
+    deleteInstance: (id: string) => Promise<void>;
+};
+
+const InstancesContext = createContext<InstancesContextValue | null>(null);
+
+function useInstancesController(): InstancesContextValue {
     const [instances, setInstances] = useState<Instance[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -66,7 +78,7 @@ export function useInstances() {
     };
 
     useEffect(() => {
-        loadInstances();
+        void loadInstances();
     }, []);
 
     return {
@@ -78,4 +90,17 @@ export function useInstances() {
         updateInstance,
         deleteInstance
     };
+}
+
+export function InstancesProvider({ children }: { children: React.ReactNode }) {
+    const value = useInstancesController();
+    return React.createElement(InstancesContext.Provider, { value }, children);
+}
+
+export function useInstances() {
+    const context = useContext(InstancesContext);
+    if (!context) {
+        throw new Error('useInstances must be used within InstancesProvider');
+    }
+    return context;
 }

@@ -4,7 +4,7 @@ import { checkForLauncherUpdate, downloadAndInstallLauncherUpdate, type External
 
 type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'rainbow';
-type BackgroundMode = 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula';
+type BackgroundMode = 'none' | 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula';
 type DensityMode = 'compact' | 'cozy' | 'spacious';
 type FontPackMode = 'manrope' | 'space-grotesk' | 'sora';
 type SidebarMode = 'rail' | 'classic' | 'expanded';
@@ -18,7 +18,7 @@ type SoundPackMode = 'off' | 'soft' | 'arcade' | 'retro';
 type StartupSceneTheme = 'nova' | 'horizon' | 'matrix';
 type StartupSceneSoundProfile = 'off' | 'shimmer' | 'impact';
 
-type SettingsTab = 'general' | 'appearance' | 'extra';
+type SettingsTab = 'general' | 'appearance' | 'widgets' | 'extra';
 
 const THEME_STORAGE_KEY = 'bloom_theme_mode';
 const THEME_CHANGE_EVENT = 'bloom-theme-change';
@@ -54,6 +54,7 @@ const MOTION_EASING_Y1_KEY = 'bloom_motion_easing_y1';
 const MOTION_EASING_X2_KEY = 'bloom_motion_easing_x2';
 const MOTION_EASING_Y2_KEY = 'bloom_motion_easing_y2';
 const SHOW_WIDGET_DOCKER_KEY = 'bloom_show_widget_docker';
+const HIDE_EMPTY_WIDGET_SLOTS_KEY = 'bloom_hide_empty_widget_slots';
 const EXTRA_CHANGE_EVENT = 'bloom-extra-change';
 const SIDEBAR_DOCK_HOVER_ENABLED_KEY = 'bloom_sidebar_dock_hover_enabled';
 const SIDEBAR_DOCK_GROW_SIZE_KEY = 'bloom_sidebar_dock_grow_size';
@@ -65,6 +66,8 @@ const ICON_PACK_KEY = 'bloom_icon_pack';
 const ICON_PACK_CHANGE_EVENT = 'bloom-icon-pack-change';
 const ROUNDNESS_KEY = 'bloom_roundness_level';
 const ROUNDNESS_CHANGE_EVENT = 'bloom-roundness-change';
+const BUTTON_ROUNDNESS_KEY = 'bloom_button_roundness_level';
+const BUTTON_ROUNDNESS_CHANGE_EVENT = 'bloom-button-roundness-change';
 const GLASS_AMOUNT_KEY = 'bloom_glass_amount';
 const GLASS_AMOUNT_CHANGE_EVENT = 'bloom-glass-amount-change';
 const SHORTCUT_SEARCH_KEY = 'bloom_shortcut_search';
@@ -81,6 +84,7 @@ const STARTUP_SCENE_ENABLED_KEY = 'bloom_startup_scene_enabled';
 const STARTUP_SCENE_THEME_KEY = 'bloom_startup_scene_theme';
 const STARTUP_SCENE_SOUND_PROFILE_KEY = 'bloom_startup_scene_sound_profile';
 const STARTUP_SCENE_CHANGE_EVENT = 'bloom-startup-scene-change';
+const ROUTE_TAB_ANIMATIONS_KEY = 'bloom_route_tab_animations_enabled';
 
 const THEMES: { id: LauncherTheme; label: string; description: string }[] = [
   { id: 'dark', label: 'Dark', description: 'Deep contrast with glow.' },
@@ -249,6 +253,8 @@ function clampMotionTuning(input: Partial<typeof MOTION_TUNING_DEFAULTS>) {
 export function Settings() {
   const [tab, setTab] = useState<SettingsTab>('general');
   const [showWidgetDocker, setShowWidgetDocker] = useState<boolean>(() => localStorage.getItem(SHOW_WIDGET_DOCKER_KEY) === 'true');
+  const [hideEmptyWidgetSlots, setHideEmptyWidgetSlots] = useState<boolean>(() => localStorage.getItem(HIDE_EMPTY_WIDGET_SLOTS_KEY) === 'true');
+  const [routeTabAnimationsEnabled, setRouteTabAnimationsEnabled] = useState<boolean>(() => localStorage.getItem(ROUTE_TAB_ANIMATIONS_KEY) === 'true');
   const [sidebarDockHoverEnabled, setSidebarDockHoverEnabled] = useState<boolean>(() => localStorage.getItem(SIDEBAR_DOCK_HOVER_ENABLED_KEY) === 'true');
   const [sidebarDockGrowSize, setSidebarDockGrowSize] = useState<number>(() => {
     const stored = Number(localStorage.getItem(SIDEBAR_DOCK_GROW_SIZE_KEY));
@@ -278,6 +284,11 @@ export function Settings() {
     const stored = Number(localStorage.getItem(ROUNDNESS_KEY));
     if (Number.isFinite(stored)) return clampRoundness(stored);
     return 50;
+  });
+  const [buttonRoundnessLevel, setButtonRoundnessLevel] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(BUTTON_ROUNDNESS_KEY));
+    if (Number.isFinite(stored)) return clampRoundness(stored);
+    return 100;
   });
   const [glassAmount, setGlassAmount] = useState<number>(() => {
     const stored = Number(localStorage.getItem(GLASS_AMOUNT_KEY));
@@ -325,7 +336,7 @@ export function Settings() {
   });
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>(() => {
     const stored = localStorage.getItem(BACKGROUND_STORAGE_KEY);
-    return stored === 'plus' || stored === 'particles' || stored === 'aurora' || stored === 'scanlines' || stored === 'nebula'
+    return stored === 'none' || stored === 'plus' || stored === 'particles' || stored === 'aurora' || stored === 'scanlines' || stored === 'nebula'
       ? stored
       : 'particles';
   });
@@ -439,6 +450,13 @@ export function Settings() {
     setRoundnessLevel(clamped);
     localStorage.setItem(ROUNDNESS_KEY, String(clamped));
     window.dispatchEvent(new CustomEvent(ROUNDNESS_CHANGE_EVENT, { detail: { roundness: clamped } }));
+  };
+
+  const applyButtonRoundness = (next: number) => {
+    const clamped = clampRoundness(next);
+    setButtonRoundnessLevel(clamped);
+    localStorage.setItem(BUTTON_ROUNDNESS_KEY, String(clamped));
+    window.dispatchEvent(new CustomEvent(BUTTON_ROUNDNESS_CHANGE_EVENT, { detail: { roundness: clamped } }));
   };
 
   const applyGlassAmount = (next: number) => {
@@ -664,6 +682,8 @@ export function Settings() {
 
   const dispatchExtraChange = (partial: {
     showWidgetDocker?: boolean;
+    hideEmptyWidgetSlots?: boolean;
+    routeTabAnimationsEnabled?: boolean;
     sidebarDockHoverEnabled?: boolean;
     sidebarDockGrowSize?: number;
     sidebarDockGrowSpeed?: number;
@@ -673,6 +693,8 @@ export function Settings() {
       new CustomEvent(EXTRA_CHANGE_EVENT, {
         detail: {
           showWidgetDocker: partial.showWidgetDocker ?? showWidgetDocker,
+          hideEmptyWidgetSlots: partial.hideEmptyWidgetSlots ?? hideEmptyWidgetSlots,
+          routeTabAnimationsEnabled: partial.routeTabAnimationsEnabled ?? routeTabAnimationsEnabled,
           sidebarDockHoverEnabled: partial.sidebarDockHoverEnabled ?? sidebarDockHoverEnabled,
           sidebarDockGrowSize: partial.sidebarDockGrowSize ?? sidebarDockGrowSize,
           sidebarDockGrowSpeed: partial.sidebarDockGrowSpeed ?? sidebarDockGrowSpeed,
@@ -686,6 +708,18 @@ export function Settings() {
     setShowWidgetDocker(next);
     localStorage.setItem(SHOW_WIDGET_DOCKER_KEY, next ? 'true' : 'false');
     dispatchExtraChange({ showWidgetDocker: next });
+  };
+
+  const applyHideEmptyWidgetSlots = (next: boolean) => {
+    setHideEmptyWidgetSlots(next);
+    localStorage.setItem(HIDE_EMPTY_WIDGET_SLOTS_KEY, next ? 'true' : 'false');
+    dispatchExtraChange({ hideEmptyWidgetSlots: next });
+  };
+
+  const applyRouteTabAnimationsEnabled = (next: boolean) => {
+    setRouteTabAnimationsEnabled(next);
+    localStorage.setItem(ROUTE_TAB_ANIMATIONS_KEY, next ? 'true' : 'false');
+    dispatchExtraChange({ routeTabAnimationsEnabled: next });
   };
 
   const applySidebarDockHoverEnabled = (next: boolean) => {
@@ -729,6 +763,7 @@ export function Settings() {
       <section className="g-panel p-1 inline-flex">
         <button onClick={() => setTab('general')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'general' ? 'bg-white/15 text-white' : 'text-white/55')}>General</button>
         <button onClick={() => setTab('appearance')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'appearance' ? 'bg-white/15 text-white' : 'text-white/55')}>Appearance</button>
+        <button onClick={() => setTab('widgets')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'widgets' ? 'bg-white/15 text-white' : 'text-white/55')}>Widgets</button>
         <button onClick={() => setTab('extra')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'extra' ? 'bg-white/15 text-white' : 'text-white/55')}>Extra</button>
       </section>
 
@@ -834,6 +869,13 @@ export function Settings() {
             </div>
           </AppearanceDropdown>
 
+          <AppearanceDropdown title="Button Roundness" description="Separate corner control for buttons. Set it to 0 for rectangular buttons.">
+            <div className="mt-3 flex items-center gap-3">
+              <input type="range" min={0} max={100} step={1} value={buttonRoundnessLevel} onChange={(event) => applyButtonRoundness(Number(event.target.value))} className="w-full g-range" />
+              <span className="w-12 text-right text-sm font-extrabold text-white">{buttonRoundnessLevel}</span>
+            </div>
+          </AppearanceDropdown>
+
           <AppearanceDropdown title="Roundedness" description="Sharp to pill shape across core UI panels and controls.">
             <div className="mt-3 flex items-center gap-3">
               <input type="range" min={0} max={100} step={1} value={roundnessLevel} onChange={(event) => applyRoundness(Number(event.target.value))} className="w-full g-range" />
@@ -866,6 +908,7 @@ export function Settings() {
           <AppearanceDropdown title="Background" description="Pick animated/background texture style.">
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               {([
+                { id: 'none', label: 'None', preview: 'var(--g-bg)', size: 'auto' },
                 { id: 'plus', label: 'Plus', preview: 'radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--g-accent) 34%, transparent) 1px, transparent 0)', size: '18px 18px' },
                 { id: 'particles', label: 'Particles', preview: 'radial-gradient(circle at 25% 35%, color-mix(in srgb, var(--g-accent) 60%, transparent), transparent 55%), radial-gradient(circle at 70% 60%, color-mix(in srgb, var(--g-accent) 42%, #ffffff 10%), transparent 58%)', size: 'auto' },
                 { id: 'aurora', label: 'Aurora', preview: 'radial-gradient(120% 100% at 20% 20%, color-mix(in srgb, var(--g-accent) 40%, transparent), transparent 62%), radial-gradient(120% 100% at 80% 80%, color-mix(in srgb, var(--g-accent) 24%, #39d682 26%), transparent 65%)', size: 'auto' },
@@ -1102,6 +1145,38 @@ export function Settings() {
             </div>
           </AppearanceDropdown>
         </section>
+      ) : tab === 'widgets' ? (
+        <section className="g-panel p-6 space-y-4">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Show Widget Docker</p>
+                <p className="text-xs g-muted mt-1">Show the widget docking controls on pages that support widgets.</p>
+              </div>
+              <button
+                data-on={showWidgetDocker}
+                onClick={() => applyShowWidgetDocker(!showWidgetDocker)}
+                className="g-toggle"
+                aria-label="Toggle Widget Docker"
+              />
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Hide Empty Slots</p>
+                <p className="text-xs g-muted mt-1">Hide empty widget placeholders during normal use. Empty slots still appear while dragging widgets.</p>
+              </div>
+              <button
+                data-on={hideEmptyWidgetSlots}
+                onClick={() => applyHideEmptyWidgetSlots(!hideEmptyWidgetSlots)}
+                className="g-toggle"
+                aria-label="Toggle Empty Widget Slots"
+              />
+            </div>
+          </div>
+        </section>
       ) : (
         <section className="g-panel p-6 space-y-4">
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
@@ -1211,14 +1286,14 @@ export function Settings() {
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Show Widget Docker</p>
-                <p className="text-xs g-muted mt-1">Show the home widget docking dropdown panel.</p>
+                <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Animate Tab Changes</p>
+                <p className="text-xs g-muted mt-1">Replay sidebar and page entrance animations on every route change. Default is off for smoother navigation.</p>
               </div>
               <button
-                data-on={showWidgetDocker}
-                onClick={() => applyShowWidgetDocker(!showWidgetDocker)}
+                data-on={routeTabAnimationsEnabled}
+                onClick={() => applyRouteTabAnimationsEnabled(!routeTabAnimationsEnabled)}
                 className="g-toggle"
-                aria-label="Toggle Widget Docker"
+                aria-label="Toggle Route Tab Animations"
               />
             </div>
           </div>

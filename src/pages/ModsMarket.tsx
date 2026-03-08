@@ -24,6 +24,7 @@ export function ModsMarket() {
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [results, setResults] = useState<MarketplaceMod[]>([]);
   const [status, setStatus] = useState<string | null>(null);
+  const [didLoadFeatured, setDidLoadFeatured] = useState(false);
   const sourceRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<HTMLDivElement | null>(null);
 
@@ -75,6 +76,13 @@ export function ModsMarket() {
     window.addEventListener(MODS_REFRESH_EVENT, onRefreshMods as EventListener);
     return () => window.removeEventListener(MODS_REFRESH_EVENT, onRefreshMods as EventListener);
   }, [query, source, selectedInstance]);
+
+  useEffect(() => {
+    if (didLoadFeatured) return;
+    setDidLoadFeatured(true);
+    setQuery('Sodium');
+    void runSearch('Sodium');
+  }, [didLoadFeatured]);
 
   const installMod = async (mod: MarketplaceMod) => {
     if (!selectedInstance) {
@@ -192,7 +200,7 @@ export function ModsMarket() {
                     <p className="text-base font-extrabold truncate">{mod.title}</p>
                     <p className="text-xs g-muted truncate">{mod.description}</p>
                     <p className="text-[10px] uppercase tracking-[0.12em] g-muted mt-1">
-                      {mod.source} {mod.author ? `• ${mod.author}` : ''} • {compactDownloads(mod.downloads)} downloads
+                      {mod.source} {mod.author ? `| ${mod.author}` : ''} | {compactDownloads(mod.downloads)} downloads
                     </p>
                   </div>
                 </div>
@@ -206,7 +214,7 @@ export function ModsMarket() {
               </article>
             );
           })}
-          {results.length === 0 && <p className="text-sm g-muted py-6 text-center">Search to load mods.</p>}
+          {results.length === 0 && <p className="text-sm g-muted py-6 text-center">Featured mods load here first, then search can refine it.</p>}
         </div>
       </section>
   );
@@ -219,3 +227,4 @@ export function ModsMarket() {
 
   return <PageWidgets pageKey="mods" widgets={widgets} />;
 }
+

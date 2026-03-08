@@ -41,11 +41,17 @@ pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(),
     let paths: AppPaths = paths_get(app.clone())?;
 
     // 1. Read Instance Config
-    let instance_path = paths.instances.join(&config.instance_id).join("instance.json");
+    let instance_path = paths
+        .instances
+        .join(&config.instance_id)
+        .join("instance.json");
     let instance_data = fs::read_to_string(&instance_path).map_err(|e| e.to_string())?;
-    let instance_json: serde_json::Value = serde_json::from_str(&instance_data).map_err(|e| e.to_string())?;
-    
-    let mc_version = instance_json["mcVersion"].as_str().ok_or("Missing mcVersion")?;
+    let instance_json: serde_json::Value =
+        serde_json::from_str(&instance_data).map_err(|e| e.to_string())?;
+
+    let mc_version = instance_json["mcVersion"]
+        .as_str()
+        .ok_or("Missing mcVersion")?;
     let loader_type = instance_json["loader"].as_str().unwrap_or("vanilla");
 
     // Guard against broken mod files that would crash Fabric with ZipException.
@@ -115,14 +121,17 @@ pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(),
                 .join(&config.instance_id)
                 .join("fabric_profile.json");
             if fabric_profile_path.exists() {
-                let profile_str = fs::read_to_string(&fabric_profile_path).map_err(|e| e.to_string())?;
+                let profile_str =
+                    fs::read_to_string(&fabric_profile_path).map_err(|e| e.to_string())?;
                 let profile_json: serde_json::Value =
                     serde_json::from_str(&profile_str).map_err(|e| e.to_string())?;
                 if let Some(libs) = profile_json["libraries"].as_array() {
                     for lib in libs {
                         if let Some(name) = lib["name"].as_str() {
                             let lowered = name.to_ascii_lowercase();
-                            if lowered.contains("net.fabricmc.fabric-api:fabric-networking-api-v1:5.1.4") {
+                            if lowered
+                                .contains("net.fabricmc.fabric-api:fabric-networking-api-v1:5.1.4")
+                            {
                                 profile_has_networking_v1_5_1_4 = true;
                             }
                             if lowered.contains("net.fabricmc.fabric-api:fabric-api-base:1.0.5") {
@@ -163,7 +172,11 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     }
 
     // 2. Read Version JSON
-    let version_json_path = paths.cache.join("versions").join(mc_version).join(format!("{}.json", mc_version));
+    let version_json_path = paths
+        .cache
+        .join("versions")
+        .join(mc_version)
+        .join(format!("{}.json", mc_version));
     let v_json_str = fs::read_to_string(&version_json_path).map_err(|e| e.to_string())?;
     let v_data: serde_json::Value = serde_json::from_str(&v_json_str).map_err(|e| e.to_string())?;
 
@@ -232,7 +245,11 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     let mut cp_entries = Vec::new();
 
     // Client JAR
-    let client_jar = paths.runtimes.join("versions").join(mc_version).join(format!("{}.jar", mc_version));
+    let client_jar = paths
+        .runtimes
+        .join("versions")
+        .join(mc_version)
+        .join(format!("{}.jar", mc_version));
     cp_entries.push(client_jar.to_string_lossy().to_string());
 
     // Libraries
@@ -277,14 +294,22 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     }
 
     // Fabric Libraries
-    let mut main_class = v_data["mainClass"].as_str().unwrap_or("net.minecraft.client.main.Main").to_string();
+    let mut main_class = v_data["mainClass"]
+        .as_str()
+        .unwrap_or("net.minecraft.client.main.Main")
+        .to_string();
 
     if loader_type == "fabric" {
-        let fabric_profile_path = paths.instances.join(&config.instance_id).join("fabric_profile.json");
+        let fabric_profile_path = paths
+            .instances
+            .join(&config.instance_id)
+            .join("fabric_profile.json");
         if fabric_profile_path.exists() {
-            let fabric_json_str = fs::read_to_string(&fabric_profile_path).map_err(|e| e.to_string())?;
-            let fabric_data: serde_json::Value = serde_json::from_str(&fabric_json_str).map_err(|e| e.to_string())?;
-            
+            let fabric_json_str =
+                fs::read_to_string(&fabric_profile_path).map_err(|e| e.to_string())?;
+            let fabric_data: serde_json::Value =
+                serde_json::from_str(&fabric_json_str).map_err(|e| e.to_string())?;
+
             if let Some(m) = fabric_data["mainClass"].as_str() {
                 main_class = m.to_string();
             }
@@ -371,7 +396,8 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                     let classifier = parts[3];
                     let is_windows_native = classifier_matches_host(classifier);
                     if is_windows_native {
-                        if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
+                        if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact"))
+                        {
                             let path = artifact
                                 .get("path")
                                 .and_then(|p| p.as_str())
@@ -390,7 +416,11 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                 }
             }
             if let Some(classifiers) = lib.get("downloads").and_then(|d| d.get("classifiers")) {
-                let arch_token = if cfg!(target_pointer_width = "64") { "64" } else { "32" };
+                let arch_token = if cfg!(target_pointer_width = "64") {
+                    "64"
+                } else {
+                    "32"
+                };
                 let preferred_key = lib
                     .get("natives")
                     .and_then(|n| n.get("windows"))
@@ -403,15 +433,25 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                     } else {
                         None
                     }
-                } else if classifiers.get("natives-windows").is_some() && classifier_matches_host("natives-windows") {
+                } else if classifiers.get("natives-windows").is_some()
+                    && classifier_matches_host("natives-windows")
+                {
                     Some("natives-windows".to_string())
-                } else if classifiers.get("natives-windows-64").is_some() && classifier_matches_host("natives-windows-64") {
+                } else if classifiers.get("natives-windows-64").is_some()
+                    && classifier_matches_host("natives-windows-64")
+                {
                     Some("natives-windows-64".to_string())
-                } else if classifiers.get("natives-windows-x86_64").is_some() && classifier_matches_host("natives-windows-x86_64") {
+                } else if classifiers.get("natives-windows-x86_64").is_some()
+                    && classifier_matches_host("natives-windows-x86_64")
+                {
                     Some("natives-windows-x86_64".to_string())
-                } else if classifiers.get("natives-windows-32").is_some() && classifier_matches_host("natives-windows-32") {
+                } else if classifiers.get("natives-windows-32").is_some()
+                    && classifier_matches_host("natives-windows-32")
+                {
                     Some("natives-windows-32".to_string())
-                } else if classifiers.get("natives-windows-x86").is_some() && classifier_matches_host("natives-windows-x86") {
+                } else if classifiers.get("natives-windows-x86").is_some()
+                    && classifier_matches_host("natives-windows-x86")
+                {
                     Some("natives-windows-x86".to_string())
                 } else {
                     None
@@ -419,9 +459,7 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
 
                 if let Some(key) = native_key {
                     if let Some(native_obj) = classifiers.get(&key) {
-                        let path = native_obj
-                            .get("path")
-                            .and_then(|p| p.as_str());
+                        let path = native_obj.get("path").and_then(|p| p.as_str());
                         let url = native_obj
                             .get("url")
                             .and_then(|u| u.as_str())
@@ -464,13 +502,17 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
         }
         let file = fs::File::open(&native_jar)
             .map_err(|e| format!("Failed to open native jar {}: {}", native_jar.display(), e))?;
-        let mut archive =
-            ZipArchive::new(file).map_err(|e| format!("Invalid native jar {}: {}", native_jar.display(), e))?;
+        let mut archive = ZipArchive::new(file)
+            .map_err(|e| format!("Invalid native jar {}: {}", native_jar.display(), e))?;
 
         for i in 0..archive.len() {
-            let mut entry = archive
-                .by_index(i)
-                .map_err(|e| format!("Failed reading native jar entry {}: {}", native_jar.display(), e))?;
+            let mut entry = archive.by_index(i).map_err(|e| {
+                format!(
+                    "Failed reading native jar entry {}: {}",
+                    native_jar.display(),
+                    e
+                )
+            })?;
             let name = entry.name().replace('\\', "/");
             if entry.is_dir() || name.starts_with("META-INF/") {
                 continue;
@@ -479,15 +521,23 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                 continue;
             }
 
-            let file_name = match std::path::Path::new(&name).file_name().and_then(|n| n.to_str()) {
+            let file_name = match std::path::Path::new(&name)
+                .file_name()
+                .and_then(|n| n.to_str())
+            {
                 Some(n) => n,
                 None => continue,
             };
             let out_path = natives_dir.join(file_name);
             let mut out_file = fs::File::create(&out_path)
                 .map_err(|e| format!("Failed writing native file {}: {}", out_path.display(), e))?;
-            io::copy(&mut entry, &mut out_file)
-                .map_err(|e| format!("Failed extracting native file {}: {}", out_path.display(), e))?;
+            io::copy(&mut entry, &mut out_file).map_err(|e| {
+                format!(
+                    "Failed extracting native file {}: {}",
+                    out_path.display(),
+                    e
+                )
+            })?;
             out_file.flush().map_err(|e| e.to_string())?;
         }
     }
@@ -506,12 +556,18 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
 
     // JVM Args
     args.push(format!("-Xmx{}M", config.max_memory_mb));
-    args.push(format!("-Djava.library.path={}", natives_dir.to_string_lossy()));
-    args.push(format!("-Dorg.lwjgl.librarypath={}", natives_dir.to_string_lossy()));
+    args.push(format!(
+        "-Djava.library.path={}",
+        natives_dir.to_string_lossy()
+    ));
+    args.push(format!(
+        "-Dorg.lwjgl.librarypath={}",
+        natives_dir.to_string_lossy()
+    ));
     args.push(format!("-Djna.tmpdir={}", natives_dir.to_string_lossy()));
     args.push("-Dminecraft.launcher.brand=bloom".to_string());
     args.push("-Dminecraft.launcher.version=1.0".to_string());
-    
+
     // Modern versions define JVM args in JSON, but we can safely skip mapping them all and just provide CP and MainClass
     args.push("-cp".to_string());
     args.push(classpath);
@@ -523,7 +579,13 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     args.push("--version".to_string());
     args.push(mc_version.to_string());
     args.push("--gameDir".to_string());
-    args.push(paths.instances.join(&config.instance_id).to_string_lossy().to_string());
+    args.push(
+        paths
+            .instances
+            .join(&config.instance_id)
+            .to_string_lossy()
+            .to_string(),
+    );
     args.push("--assetsDir".to_string());
     args.push(paths.runtimes.join("assets").to_string_lossy().to_string());
     args.push("--assetIndex".to_string());
@@ -538,11 +600,12 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     args.push("release".to_string());
 
     // Prefer javaw on Windows when using default java launcher to avoid flashing a console.
-    let launch_java = if cfg!(target_os = "windows") && config.java_path.trim().eq_ignore_ascii_case("java") {
-        "javaw".to_string()
-    } else {
-        config.java_path.clone()
-    };
+    let launch_java =
+        if cfg!(target_os = "windows") && config.java_path.trim().eq_ignore_ascii_case("java") {
+            "javaw".to_string()
+        } else {
+            config.java_path.clone()
+        };
 
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -559,10 +622,16 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     let working_dir = paths.instances.join(&config.instance_id);
     let mut launch_candidates = vec![launch_java.clone()];
     if cfg!(target_os = "windows") {
-        if !launch_candidates.iter().any(|c| c.eq_ignore_ascii_case("javaw")) {
+        if !launch_candidates
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case("javaw"))
+        {
             launch_candidates.push("javaw".to_string());
         }
-        if !launch_candidates.iter().any(|c| c.eq_ignore_ascii_case("java")) {
+        if !launch_candidates
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case("java"))
+        {
             launch_candidates.push("java".to_string());
         }
     }
@@ -574,7 +643,13 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
             .create(true)
             .append(true)
             .open(&launch_log)
-            .map_err(|e| format!("Failed to open launch log file {}: {}", launch_log.display(), e))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to open launch log file {}: {}",
+                    launch_log.display(),
+                    e
+                )
+            })?;
         let stderr_handle = stdout_handle
             .try_clone()
             .map_err(|e| format!("Failed to clone launch log handle: {}", e))?;

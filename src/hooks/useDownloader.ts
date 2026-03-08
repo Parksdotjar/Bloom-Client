@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { TauriApi, type Instance } from '../services/tauri';
@@ -12,7 +12,15 @@ export interface DownloadProgressEvent {
     remediation?: 'disable_essential_conflict';
 }
 
-export function useDownloader() {
+type DownloaderContextValue = {
+    activeDownloads: Record<string, DownloadProgressEvent>;
+    startDownload: (instance: Instance, authState?: any) => Promise<void>;
+    disableIncompatibleMods: (instanceId: string) => Promise<string[]>;
+};
+
+const DownloaderContext = createContext<DownloaderContextValue | null>(null);
+
+function useDownloaderController(): DownloaderContextValue {
     const [activeDownloads, setActiveDownloads] = useState<Record<string, DownloadProgressEvent>>({});
 
     useEffect(() => {
@@ -153,4 +161,17 @@ export function useDownloader() {
     };
 
     return { activeDownloads, startDownload, disableIncompatibleMods };
+}
+
+export function DownloaderProvider({ children }: { children: React.ReactNode }) {
+    const value = useDownloaderController();
+    return React.createElement(DownloaderContext.Provider, { value }, children);
+}
+
+export function useDownloader() {
+    const context = useContext(DownloaderContext);
+    if (!context) {
+        throw new Error('useDownloader must be used within DownloaderProvider');
+    }
+    return context;
 }

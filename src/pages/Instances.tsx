@@ -138,7 +138,12 @@ export function Instances() {
   return (
     <>
       <PageWidgets pageKey="instances" widgets={widgets} />
-      <CreateInstanceModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} onSubmit={createInstance} />
+      <CreateInstanceModal
+        isOpen={isCreateOpen}
+        onClose={() => setIsCreateOpen(false)}
+        onSubmit={createInstance}
+        onRefresh={loadInstances}
+      />
     </>
   );
 }

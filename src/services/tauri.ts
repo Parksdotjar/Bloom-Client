@@ -36,6 +36,13 @@ export interface InstanceModFile {
     updatedAt: number;
 }
 
+export interface InstanceContentFile {
+    fileName: string;
+    displayName: string;
+    sizeBytes: number;
+    updatedAt: number;
+}
+
 export interface MarketplaceMod {
     id: string;
     source: 'modrinth' | 'curseforge';
@@ -82,6 +89,16 @@ export const TauriApi = {
     instanceDeleteMod: (instanceId: string, fileName: string) =>
         invoke<void>('instance_delete_mod', { instanceId, fileName }),
     openModsFolder: (id: string) => invoke<void>('open_mods_folder', { id }),
+    instanceListResourcepacks: (instanceId: string) =>
+        invoke<InstanceContentFile[]>('instance_list_resourcepacks', { instanceId }),
+    instanceDeleteResourcepack: (instanceId: string, fileName: string) =>
+        invoke<void>('instance_delete_resourcepack', { instanceId, fileName }),
+    openResourcepacksFolder: (id: string) => invoke<void>('open_resourcepacks_folder', { id }),
+    instanceListShaderpacks: (instanceId: string) =>
+        invoke<InstanceContentFile[]>('instance_list_shaderpacks', { instanceId }),
+    instanceDeleteShaderpack: (instanceId: string, fileName: string) =>
+        invoke<void>('instance_delete_shaderpack', { instanceId, fileName }),
+    openShaderpacksFolder: (id: string) => invoke<void>('open_shaderpacks_folder', { id }),
     marketplaceSearchMods: (query: string, source?: 'all' | 'modrinth' | 'curseforge', loader?: string, gameVersion?: string) =>
         invoke<MarketplaceMod[]>('marketplace_search_mods', { query, source, loader, gameVersion }),
     marketplaceInstallMod: (instanceId: string, source: 'modrinth' | 'curseforge', projectId: string) =>
@@ -90,8 +107,14 @@ export const TauriApi = {
         invoke<MarketplacePack[]>('marketplace_search_modpacks', { query, source }),
     marketplaceInstallModpackInstance: (source: 'modrinth' | 'curseforge', projectId: string, gameVersion: string) =>
         invoke<Instance>('marketplace_install_modpack_instance', { source, projectId, gameVersion }),
+    importLocalModpackInstance: (filePath: string, gameVersion: string, instanceName?: string) =>
+        invoke<Instance>('import_local_modpack_instance', { filePath, gameVersion, instanceName }),
     marketplaceSearchResourcepacks: (query: string, source?: 'all' | 'modrinth' | 'curseforge', gameVersion?: string) =>
         invoke<MarketplacePack[]>('marketplace_search_resourcepacks', { query, source, gameVersion }),
     marketplaceInstallResourcepack: (instanceId: string, source: 'modrinth' | 'curseforge', projectId: string, gameVersion?: string) =>
-        invoke<string>('marketplace_install_resourcepack', { instanceId, source, projectId, gameVersion })
+        invoke<string>('marketplace_install_resourcepack', { instanceId, source, projectId, gameVersion }),
+    marketplaceSearchShaders: (query: string, source?: 'all' | 'modrinth' | 'curseforge', gameVersion?: string) =>
+        invoke<MarketplacePack[]>('marketplace_search_shaders', { query, source, gameVersion }),
+    marketplaceInstallShaderpack: (instanceId: string, source: 'modrinth' | 'curseforge', projectId: string, gameVersion?: string) =>
+        invoke<string>('marketplace_install_shaderpack', { instanceId, source, projectId, gameVersion })
 };

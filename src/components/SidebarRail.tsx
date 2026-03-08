@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { BookImage, Compass, Gamepad2, LayoutDashboard, Layers3, LogIn, Package2, Plus, Settings, Shirt, User } from 'lucide-react';
+import { FolderUp, Gamepad2, LayoutDashboard, Layers3, LogIn, Plus, Settings, User } from 'lucide-react';
 import { animate, remove, set } from 'animejs';
 import { clsx } from 'clsx';
 import logo from '../assets/logo.png';
@@ -34,6 +34,7 @@ const SIDEBAR_DOCK_GROW_SPEED_KEY = 'bloom_sidebar_dock_grow_speed';
 const SIDEBAR_TAB_GAP_KEY = 'bloom_sidebar_tab_gap';
 const ICON_PACK_KEY = 'bloom_icon_pack';
 const ICON_PACK_CHANGE_EVENT = 'bloom-icon-pack-change';
+const ROUTE_TAB_ANIMATIONS_KEY = 'bloom_route_tab_animations_enabled';
 
 interface SidebarProps {
   className?: string;
@@ -52,6 +53,9 @@ export function SidebarRail(props: SidebarProps) {
   const location = useLocation();
   const railRef = useRef<HTMLDivElement | null>(null);
   const tabRefs = useRef<(HTMLElement | null)[]>([]);
+  const tabCentersRef = useRef<number[]>([]);
+  const hoverFrameRef = useRef<number | null>(null);
+  const hoverPositionRef = useRef<{ x: number | null; y: number | null }>({ x: null, y: null });
   const { authState, profileAvatarUrl, startLogin, loading } = useAuth();
   const [motionTuning, setMotionTuning] = useState(() =>
     clampMotionTuning({
@@ -83,6 +87,7 @@ export function SidebarRail(props: SidebarProps) {
     if (Number.isFinite(stored)) return Math.max(0, Math.min(30, Math.round(stored)));
     return 12;
   });
+  const [routeTabAnimationsEnabled, setRouteTabAnimationsEnabled] = useState<boolean>(() => localStorage.getItem(ROUTE_TAB_ANIMATIONS_KEY) === 'true');
   const [hoverY, setHoverY] = useState<number | null>(null);
   const [hoverX, setHoverX] = useState<number | null>(null);
   const [dockHoverReady, setDockHoverReady] = useState(false);
@@ -102,11 +107,8 @@ export function SidebarRail(props: SidebarProps) {
   const navItems = [
     { icon: User, path: '/', label: 'Account' },
     { icon: Gamepad2, path: '/instances', label: 'Play' },
-    { icon: Layers3, path: '/mods', label: 'Mods' },
-    { icon: Package2, path: '/modpacks', label: 'Packs' },
-    { icon: BookImage, path: '/resourcepacks', label: 'R Packs' },
-    { icon: Shirt, path: '/skins', label: 'Skins' },
-    { icon: Compass, path: '/downloads', label: 'Library' },
+    { icon: Layers3, path: '/marketplace', label: 'Market' },
+    { icon: FolderUp, path: '/importer', label: 'Importer' },
     { icon: LayoutDashboard, path: '/widgets', label: 'Widgets' },
     { icon: Settings, path: '/settings', label: 'Settings' }
   ];
@@ -150,6 +152,7 @@ export function SidebarRail(props: SidebarProps) {
         sidebarDockGrowSize?: number;
         sidebarDockGrowSpeed?: number;
         sidebarTabGap?: number;
+        routeTabAnimationsEnabled?: boolean;
       }>;
       if (typeof custom.detail?.sidebarDockHoverEnabled === 'boolean') {
         setSidebarDockHoverEnabled(custom.detail.sidebarDockHoverEnabled);
@@ -162,6 +165,9 @@ export function SidebarRail(props: SidebarProps) {
       }
       if (Number.isFinite(custom.detail?.sidebarTabGap)) {
         setSidebarTabGap(Math.max(0, Math.min(30, Math.round(Number(custom.detail?.sidebarTabGap)))));
+      }
+      if (typeof custom.detail?.routeTabAnimationsEnabled === 'boolean') {
+        setRouteTabAnimationsEnabled(custom.detail.routeTabAnimationsEnabled);
       }
     };
     window.addEventListener(EXTRA_CHANGE_EVENT, onExtraChange as EventListener);
@@ -194,6 +200,12 @@ export function SidebarRail(props: SidebarProps) {
     setDockHoverReady(false);
     setHoverY(null);
     setHoverX(null);
+    if (!routeTabAnimationsEnabled) {
+      remove(nodes);
+      set(nodes, { opacity: 1, translateX: 0, translateY: 0 });
+      setDockHoverReady(true);
+      return;
+    }
     remove(nodes);
     set(nodes, { opacity: 0, translateX: motionTuning.offsetX, translateY: motionTuning.offsetY });
 
@@ -221,7 +233,32 @@ export function SidebarRail(props: SidebarProps) {
       moveAnimation.pause();
       fadeAnimation.pause();
     };
-  }, [location.pathname, authState?.profile.id, motionTuning]);
+  }, [location.pathname, authState?.profile.id, motionTuning, routeTabAnimationsEnabled]);
+
+  useEffect(() => {
+    const measureTabs = () => {
+      tabCentersRef.current = tabRefs.current.map((element) => {
+        if (!element) return 0;
+        const rect = element.getBoundingClientRect();
+        return isHorizontal ? rect.left + rect.width / 2 : rect.top + rect.height / 2;
+      });
+    };
+
+    measureTabs();
+    window.addEventListener('resize', measureTabs);
+    window.addEventListener('scroll', measureTabs, true);
+
+    return () => {
+      window.removeEventListener('resize', measureTabs);
+      window.removeEventListener('scroll', measureTabs, true);
+    };
+  }, [isHorizontal, location.pathname, sidebarMode, sidebarPosition, authState?.profile.id]);
+
+  useEffect(() => () => {
+    if (hoverFrameRef.current !== null) {
+      window.cancelAnimationFrame(hoverFrameRef.current);
+    }
+  }, []);
 
   const getDockStyle = (index: number) => {
     const baseHalfGap = sidebarTabGap / 2;
@@ -245,7 +282,8 @@ export function SidebarRail(props: SidebarProps) {
     }
 
     const element = tabRefs.current[index];
-    if (!element) {
+    const center = tabCentersRef.current[index];
+    if (!element || !center) {
       return {
         transition,
         willChange: isHorizontal ? 'transform, margin-left, margin-right' : 'transform, margin-top, margin-bottom',
@@ -257,8 +295,6 @@ export function SidebarRail(props: SidebarProps) {
       };
     }
 
-    const rect = element.getBoundingClientRect();
-    const center = isHorizontal ? rect.left + rect.width / 2 : rect.top + rect.height / 2;
     const cursor = isHorizontal ? hoverX! : hoverY!;
     const distance = Math.abs(cursor - center);
     const radius = 230;
@@ -266,7 +302,7 @@ export function SidebarRail(props: SidebarProps) {
     const maxScaleBoost = (sidebarDockGrowSize / 100) * 0.85;
     const scale = 1 + influence * maxScaleBoost;
     // Reserve the visual growth from center scaling so items never overlap.
-    const baseSize = isHorizontal ? (element.offsetWidth || rect.width) : (element.offsetHeight || rect.height);
+    const baseSize = isHorizontal ? element.offsetWidth : element.offsetHeight;
     const extraHeight = (scale - 1) * baseSize;
     const spread = extraHeight / 2;
 
@@ -291,10 +327,20 @@ export function SidebarRail(props: SidebarProps) {
       }}
       onMouseMove={(event) => {
         if (!sidebarDockHoverEnabled || !dockHoverReady) return;
-        if (isHorizontal) setHoverX(event.clientX);
-        else setHoverY(event.clientY);
+        hoverPositionRef.current = { x: event.clientX, y: event.clientY };
+        if (hoverFrameRef.current !== null) return;
+        hoverFrameRef.current = window.requestAnimationFrame(() => {
+          hoverFrameRef.current = null;
+          if (isHorizontal) setHoverX(hoverPositionRef.current.x);
+          else setHoverY(hoverPositionRef.current.y);
+        });
       }}
       onMouseLeave={() => {
+        if (hoverFrameRef.current !== null) {
+          window.cancelAnimationFrame(hoverFrameRef.current);
+          hoverFrameRef.current = null;
+        }
+        hoverPositionRef.current = { x: null, y: null };
         setHoverY(null);
         setHoverX(null);
       }}
