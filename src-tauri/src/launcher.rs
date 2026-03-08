@@ -167,6 +167,292 @@ fn build_java_launch_candidates(requested: &str) -> Vec<String> {
     out
 }
 
+fn bloom_pack_format_for(mc_version: &str) -> u32 {
+    let trimmed = mc_version.trim();
+    if trimmed.starts_with("1.21.4")
+        || trimmed.starts_with("1.21.5")
+        || trimmed.starts_with("1.21.6")
+        || trimmed.starts_with("1.21.7")
+        || trimmed.starts_with("1.21.8")
+        || trimmed.starts_with("1.21.9")
+        || trimmed.starts_with("1.21.10")
+    {
+        61
+    } else if trimmed.starts_with("1.21") {
+        34
+    } else if trimmed.starts_with("1.20.5") || trimmed.starts_with("1.20.6") {
+        32
+    } else if trimmed.starts_with("1.20.3") || trimmed.starts_with("1.20.4") {
+        22
+    } else if trimmed.starts_with("1.20.2") {
+        18
+    } else {
+        15
+    }
+}
+
+fn make_rgba(r: u8, g: u8, b: u8, a: u8) -> image::Rgba<u8> {
+    image::Rgba([r, g, b, a])
+}
+
+fn generate_bloom_panorama(face_index: u32) -> image::RgbaImage {
+    let width = 512;
+    let height = 512;
+    let mut img = image::RgbaImage::new(width, height);
+
+    for y in 0..height {
+        let t = y as f32 / (height.saturating_sub(1)) as f32;
+        for x in 0..width {
+            let nx = (x as f32 / width as f32) - 0.5;
+            let face_shift = face_index as f32 * 0.11;
+            let wave = ((nx * 7.5) + face_shift).sin() * 0.5 + 0.5;
+            let glow = (1.0 - ((nx * 1.55).abs())).max(0.0);
+            let r = (6.0 + wave * 10.0 + glow * 8.0 + t * 12.0) as u8;
+            let g = (12.0 + wave * 28.0 + glow * 16.0 + t * 18.0) as u8;
+            let b = (26.0 + wave * 60.0 + glow * 34.0 + t * 44.0) as u8;
+            img.put_pixel(x, y, make_rgba(r, g, b, 255));
+        }
+    }
+
+    for star in 0..80u32 {
+        let px = ((star * 53 + face_index * 97) % (width - 12)) + 6;
+        let py = ((star * 97 + face_index * 29) % (height / 2)) + 10;
+        let radius = ((star + face_index) % 3) + 1;
+        let alpha = 110 + (((star * 19) + face_index * 13) % 110) as u8;
+        for dy in 0..=radius {
+            for dx in 0..=radius {
+                let tx = (px + dx).min(width - 1);
+                let ty = (py + dy).min(height - 1);
+                img.put_pixel(tx, ty, make_rgba(240, 249, 255, alpha));
+                if px >= dx {
+                    img.put_pixel(px - dx, ty, make_rgba(240, 249, 255, alpha));
+                }
+                if py >= dy {
+                    img.put_pixel(tx, py - dy, make_rgba(240, 249, 255, alpha));
+                    if px >= dx {
+                        img.put_pixel(px - dx, py - dy, make_rgba(240, 249, 255, alpha));
+                    }
+                }
+            }
+        }
+    }
+
+    img
+}
+
+fn generate_bloom_overlay() -> image::RgbaImage {
+    let width = 256;
+    let height = 256;
+    let mut img = image::RgbaImage::new(width, height);
+
+    for y in 0..height {
+        let ny = y as f32 / (height.saturating_sub(1)) as f32;
+        for x in 0..width {
+            let nx = x as f32 / (width.saturating_sub(1)) as f32;
+            let edge_x = (nx - 0.5).abs() * 2.0;
+            let edge_y = (ny - 0.5).abs() * 2.0;
+            let vignette = edge_x.max(edge_y).powf(1.65).min(1.0);
+            let top_fog = (1.0 - ny).powf(1.7) * 0.55;
+            let alpha = ((vignette * 170.0) + (top_fog * 85.0)).min(220.0) as u8;
+            img.put_pixel(x, y, make_rgba(2, 5, 9, alpha));
+        }
+    }
+
+    img
+}
+
+fn generate_bloom_title_texture() -> Result<image::RgbaImage, String> {
+    use image::imageops::{overlay, resize, FilterType};
+
+    let mut canvas = image::RgbaImage::new(512, 256);
+    for pixel in canvas.pixels_mut() {
+        *pixel = make_rgba(0, 0, 0, 0);
+    }
+
+    let logo = image::load_from_memory(include_bytes!("../../src/assets/logo.png"))
+        .map_err(|e| format!("Failed to load Bloom logo asset: {}", e))?
+        .to_rgba8();
+
+    let glow = resize(&logo, 226, 226, FilterType::Lanczos3);
+    for y in 0..glow.height() {
+        for x in 0..glow.width() {
+            let pixel = glow.get_pixel(x, y);
+            let alpha = pixel[3];
+            if alpha == 0 {
+                continue;
+            }
+            let tx = 52 + x;
+            let ty = 14 + y;
+            if tx >= canvas.width() || ty >= canvas.height() {
+                continue;
+            }
+            let glow_alpha = ((alpha as f32) * 0.22) as u8;
+            let existing = *canvas.get_pixel(tx, ty);
+            let mixed = make_rgba(
+                existing[0].saturating_add(14),
+                existing[1].saturating_add(48),
+                existing[2].saturating_add(68),
+                existing[3].saturating_add(glow_alpha),
+            );
+            canvas.put_pixel(tx, ty, mixed);
+        }
+    }
+
+    let resized_logo = resize(&logo, 212, 212, FilterType::Lanczos3);
+    overlay(&mut canvas, &resized_logo, 62, 20);
+    Ok(canvas)
+}
+
+fn write_png_to_zip<W: std::io::Write + std::io::Seek>(
+    zip: &mut zip::ZipWriter<W>,
+    path: &str,
+    image: &image::RgbaImage,
+) -> Result<(), String> {
+    use std::io::Cursor;
+
+    let mut bytes = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image.clone())
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .map_err(|e| format!("Failed encoding {}: {}", path, e))?;
+
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    zip.start_file(path, options)
+        .map_err(|e| format!("Failed writing {} to Bloom pack: {}", path, e))?;
+    std::io::Write::write_all(zip, &bytes.into_inner())
+        .map_err(|e| format!("Failed finalizing {} in Bloom pack: {}", path, e))?;
+    Ok(())
+}
+
+fn ensure_bloom_title_pack(instance_dir: &std::path::Path, mc_version: &str) -> Result<String, String> {
+    use std::fs;
+    use std::io::Write;
+
+    let resourcepacks_dir = instance_dir.join("resourcepacks");
+    fs::create_dir_all(&resourcepacks_dir).map_err(|e| e.to_string())?;
+
+    let pack_name = "Bloom UI.zip".to_string();
+    let pack_path = resourcepacks_dir.join(&pack_name);
+    let file = fs::File::create(&pack_path).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+    let pack_format = bloom_pack_format_for(mc_version);
+    let pack_meta = serde_json::json!({
+        "pack": {
+            "pack_format": pack_format,
+            "description": "Bloom Client custom title screen"
+        }
+    });
+
+    zip.start_file("pack.mcmeta", options)
+        .map_err(|e| format!("Failed writing pack.mcmeta: {}", e))?;
+    zip.write_all(pack_meta.to_string().as_bytes())
+        .map_err(|e| format!("Failed writing pack.mcmeta contents: {}", e))?;
+
+    zip.start_file("pack.png", options)
+        .map_err(|e| format!("Failed writing pack.png: {}", e))?;
+    zip.write_all(include_bytes!("../../src/assets/logo.png"))
+        .map_err(|e| format!("Failed writing pack.png contents: {}", e))?;
+
+    let title_texture = generate_bloom_title_texture()?;
+    write_png_to_zip(
+        &mut zip,
+        "assets/minecraft/textures/gui/title/minecraft.png",
+        &title_texture,
+    )?;
+
+    let blank = image::RgbaImage::from_pixel(192, 32, make_rgba(0, 0, 0, 0));
+    write_png_to_zip(
+        &mut zip,
+        "assets/minecraft/textures/gui/title/edition.png",
+        &blank,
+    )?;
+
+    let overlay = generate_bloom_overlay();
+    write_png_to_zip(
+        &mut zip,
+        "assets/minecraft/textures/gui/title/background/panorama_overlay.png",
+        &overlay,
+    )?;
+
+    for face in 0..6u32 {
+        let panorama = generate_bloom_panorama(face);
+        write_png_to_zip(
+            &mut zip,
+            &format!(
+                "assets/minecraft/textures/gui/title/background/panorama_{}.png",
+                face
+            ),
+            &panorama,
+        )?;
+    }
+
+    zip.finish()
+        .map_err(|e| format!("Failed finishing Bloom title pack: {}", e))?;
+
+    Ok(pack_name)
+}
+
+fn parse_options_array(raw: &str) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(raw).unwrap_or_default()
+}
+
+fn ensure_bloom_pack_enabled(instance_dir: &std::path::Path, pack_name: &str) -> Result<(), String> {
+    use std::fs;
+
+    let options_path = instance_dir.join("options.txt");
+    let bloom_entry = format!("file/{}", pack_name);
+    let mut lines = if options_path.exists() {
+        fs::read_to_string(&options_path)
+            .map_err(|e| e.to_string())?
+            .lines()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    let mut found_resourcepacks = false;
+    let mut found_incompatible = false;
+
+    for line in &mut lines {
+        if let Some(value) = line.strip_prefix("resourcePacks:") {
+            let mut packs = parse_options_array(value);
+            packs.retain(|item| item != &bloom_entry);
+            packs.insert(0, bloom_entry.clone());
+            *line = format!(
+                "resourcePacks:{}",
+                serde_json::to_string(&packs).map_err(|e| e.to_string())?
+            );
+            found_resourcepacks = true;
+        } else if let Some(value) = line.strip_prefix("incompatibleResourcePacks:") {
+            let mut packs = parse_options_array(value);
+            packs.retain(|item| item != &bloom_entry);
+            *line = format!(
+                "incompatibleResourcePacks:{}",
+                serde_json::to_string(&packs).map_err(|e| e.to_string())?
+            );
+            found_incompatible = true;
+        }
+    }
+
+    if !found_resourcepacks {
+        lines.push(format!(
+            "resourcePacks:{}",
+            serde_json::to_string(&vec![bloom_entry.clone()])
+                .map_err(|e| e.to_string())?
+        ));
+    }
+    if !found_incompatible {
+        lines.push("incompatibleResourcePacks:[]".to_string());
+    }
+
+    fs::write(&options_path, lines.join("\n")).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(), String> {
     use crate::paths::{paths_get, AppPaths};
@@ -192,10 +478,14 @@ pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(),
         .as_str()
         .ok_or("Missing mcVersion")?;
     let loader_type = instance_json["loader"].as_str().unwrap_or("vanilla");
+    let instance_dir = paths.instances.join(&config.instance_id);
+
+    let bloom_pack_name = ensure_bloom_title_pack(&instance_dir, mc_version)?;
+    ensure_bloom_pack_enabled(&instance_dir, &bloom_pack_name)?;
 
     // Guard against broken mod files that would crash Fabric with ZipException.
     if loader_type == "fabric" {
-        let mods_dir = paths.instances.join(&config.instance_id).join("mods");
+        let mods_dir = instance_dir.join("mods");
         if mods_dir.exists() {
             let mut invalid_mods: Vec<String> = Vec::new();
             let mut installed_mod_jars: Vec<String> = Vec::new();
@@ -255,10 +545,7 @@ pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(),
             // matching jar filename in /mods.
             let mut profile_has_networking_v1_5_1_4 = false;
             let mut profile_has_fabric_api_base_1_0_5 = false;
-            let fabric_profile_path = paths
-                .instances
-                .join(&config.instance_id)
-                .join("fabric_profile.json");
+            let fabric_profile_path = instance_dir.join("fabric_profile.json");
             if fabric_profile_path.exists() {
                 let profile_str =
                     fs::read_to_string(&fabric_profile_path).map_err(|e| e.to_string())?;
@@ -439,10 +726,7 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
         .to_string();
 
     if loader_type == "fabric" {
-        let fabric_profile_path = paths
-            .instances
-            .join(&config.instance_id)
-            .join("fabric_profile.json");
+        let fabric_profile_path = instance_dir.join("fabric_profile.json");
         if fabric_profile_path.exists() {
             let fabric_json_str =
                 fs::read_to_string(&fabric_profile_path).map_err(|e| e.to_string())?;
@@ -718,13 +1002,7 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     args.push("--version".to_string());
     args.push(mc_version.to_string());
     args.push("--gameDir".to_string());
-    args.push(
-        paths
-            .instances
-            .join(&config.instance_id)
-            .to_string_lossy()
-            .to_string(),
-    );
+    args.push(instance_dir.to_string_lossy().to_string());
     args.push("--assetsDir".to_string());
     args.push(paths.runtimes.join("assets").to_string_lossy().to_string());
     args.push("--assetIndex".to_string());
@@ -746,7 +1024,7 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
         .logs
         .join(format!("launch-{}-{}.log", config.instance_id, ts));
 
-    let working_dir = paths.instances.join(&config.instance_id);
+    let working_dir = instance_dir;
     let launch_candidates = build_java_launch_candidates(&config.java_path);
     println!("Launching with Java candidates: {:?}", launch_candidates);
     // println!("Args: {:?}", args);
