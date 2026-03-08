@@ -11,6 +11,16 @@ pub struct LaunchConfig {
     pub access_token: String,
 }
 
+fn push_unique_case_insensitive(values: &mut Vec<String>, candidate: String) {
+    if values
+        .iter()
+        .any(|existing| existing.eq_ignore_ascii_case(&candidate))
+    {
+        return;
+    }
+    values.push(candidate);
+}
+
 fn detect_java_major(java_path: &str) -> Option<u32> {
     use std::process::Command;
 
@@ -26,6 +36,135 @@ fn detect_java_major(java_path: &str) -> Option<u32> {
     }
 
     quoted.split('.').next()?.parse::<u32>().ok()
+}
+
+fn discover_windows_java_binaries() -> Vec<String> {
+    use std::env;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn collect_from_root(root: &Path, out: &mut Vec<String>) {
+        let direct_bin = root.join("bin");
+        for exe in ["javaw.exe", "java.exe"] {
+            let candidate = direct_bin.join(exe);
+            if candidate.is_file() {
+                push_unique_case_insensitive(out, candidate.to_string_lossy().to_string());
+            }
+        }
+
+        let entries = match fs::read_dir(root) {
+            Ok(entries) => entries,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let bin = path.join("bin");
+            for exe in ["javaw.exe", "java.exe"] {
+                let candidate = bin.join(exe);
+                if candidate.is_file() {
+                    push_unique_case_insensitive(out, candidate.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(home) = env::var_os("JAVA_HOME") {
+        roots.push(PathBuf::from(home));
+    }
+
+    if let Some(program_files) = env::var_os("ProgramFiles") {
+        let base = PathBuf::from(program_files);
+        for vendor in [
+            "Eclipse Adoptium",
+            "Java",
+            "Microsoft",
+            "BellSoft",
+            "Zulu",
+            "Amazon Corretto",
+            "AdoptOpenJDK",
+        ] {
+            roots.push(base.join(vendor));
+        }
+    }
+
+    let mut out = Vec::new();
+    for root in roots {
+        collect_from_root(&root, &mut out);
+    }
+    out
+}
+
+fn build_java_launch_candidates(requested: &str) -> Vec<String> {
+    use std::path::Path;
+
+    let requested_trimmed = requested.trim();
+    let mut out = Vec::new();
+
+    if requested_trimmed.is_empty() {
+        push_unique_case_insensitive(&mut out, "javaw".to_string());
+        push_unique_case_insensitive(&mut out, "java".to_string());
+        return out;
+    }
+
+    let requested_path = Path::new(requested_trimmed);
+    if requested_path.components().count() > 1 {
+        push_unique_case_insensitive(&mut out, requested_trimmed.to_string());
+        if cfg!(target_os = "windows") {
+            let sibling = if requested_trimmed.to_ascii_lowercase().ends_with("java.exe") {
+                requested_trimmed[..requested_trimmed.len() - "java.exe".len()].to_string() + "javaw.exe"
+            } else if requested_trimmed
+                .to_ascii_lowercase()
+                .ends_with("javaw.exe")
+            {
+                requested_trimmed[..requested_trimmed.len() - "javaw.exe".len()].to_string() + "java.exe"
+            } else {
+                String::new()
+            };
+            if !sibling.is_empty() {
+                push_unique_case_insensitive(&mut out, sibling);
+            }
+        }
+        return out;
+    }
+
+    if cfg!(target_os = "windows") {
+        let discovered = discover_windows_java_binaries();
+        if requested_trimmed.eq_ignore_ascii_case("java17") {
+            for candidate in &discovered {
+                if detect_java_major(candidate).unwrap_or(0) == 17 {
+                    push_unique_case_insensitive(&mut out, candidate.clone());
+                }
+            }
+            for candidate in &discovered {
+                push_unique_case_insensitive(&mut out, candidate.clone());
+            }
+            push_unique_case_insensitive(&mut out, "javaw".to_string());
+            push_unique_case_insensitive(&mut out, "java".to_string());
+            return out;
+        }
+
+        if requested_trimmed.eq_ignore_ascii_case("java")
+            || requested_trimmed.eq_ignore_ascii_case("javaw")
+        {
+            for candidate in &discovered {
+                push_unique_case_insensitive(&mut out, candidate.clone());
+            }
+            push_unique_case_insensitive(&mut out, "javaw".to_string());
+            push_unique_case_insensitive(&mut out, "java".to_string());
+            return out;
+        }
+    }
+
+    push_unique_case_insensitive(&mut out, requested_trimmed.to_string());
+    if cfg!(target_os = "windows") {
+        push_unique_case_insensitive(&mut out, "javaw".to_string());
+        push_unique_case_insensitive(&mut out, "java".to_string());
+    }
+    out
 }
 
 #[tauri::command]
@@ -599,14 +738,6 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     args.push("--versionType".to_string());
     args.push("release".to_string());
 
-    // Prefer javaw on Windows when using default java launcher to avoid flashing a console.
-    let launch_java =
-        if cfg!(target_os = "windows") && config.java_path.trim().eq_ignore_ascii_case("java") {
-            "javaw".to_string()
-        } else {
-            config.java_path.clone()
-        };
-
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -615,26 +746,10 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
         .logs
         .join(format!("launch-{}-{}.log", config.instance_id, ts));
 
-    println!("Launching with Java: {}", launch_java);
-    // println!("Args: {:?}", args);
-
-    // 6. Spawn process
     let working_dir = paths.instances.join(&config.instance_id);
-    let mut launch_candidates = vec![launch_java.clone()];
-    if cfg!(target_os = "windows") {
-        if !launch_candidates
-            .iter()
-            .any(|c| c.eq_ignore_ascii_case("javaw"))
-        {
-            launch_candidates.push("javaw".to_string());
-        }
-        if !launch_candidates
-            .iter()
-            .any(|c| c.eq_ignore_ascii_case("java"))
-        {
-            launch_candidates.push("java".to_string());
-        }
-    }
+    let launch_candidates = build_java_launch_candidates(&config.java_path);
+    println!("Launching with Java candidates: {:?}", launch_candidates);
+    // println!("Args: {:?}", args);
 
     let mut last_err: Option<String> = None;
     let mut spawned_child: Option<std::process::Child> = None;

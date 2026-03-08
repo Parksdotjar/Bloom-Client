@@ -1,7 +1,7 @@
 {
   "name": "bloom-client",
   "private": true,
-  "version": "0.2.13",
+  "version": "0.2.14",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -36,5 +36,6 @@
     "vite": "^7.0.4"
   }
 }
+
 
 

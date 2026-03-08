@@ -287,7 +287,7 @@ async fn install_modrinth_mrpack_contents(
     instance_dir: &Path,
     mrpack_bytes: &[u8],
     client: &reqwest::Client,
-) -> Result<(Option<String>, usize, usize), String> {
+) -> Result<(Option<String>, Option<String>, usize, usize), String> {
     let (index, override_files) = {
         let cursor = Cursor::new(mrpack_bytes);
         let mut archive =
@@ -380,8 +380,17 @@ async fn install_modrinth_mrpack_contents(
         .dependencies
         .as_ref()
         .and_then(|deps| deps.get("fabric-loader").cloned());
+    let minecraft_version = index
+        .dependencies
+        .as_ref()
+        .and_then(|deps| deps.get("minecraft").cloned());
 
-    Ok((fabric_loader_version, downloaded_files, override_files))
+    Ok((
+        fabric_loader_version,
+        minecraft_version,
+        downloaded_files,
+        override_files,
+    ))
 }
 
 fn build_import_instance_name(file_path: &Path, override_name: Option<String>) -> String {
@@ -1626,10 +1635,13 @@ pub async fn marketplace_install_modpack_instance(
 
     let lower_file_name = pack_file_name.to_ascii_lowercase();
     let install_report = if source_mode == "modrinth" && lower_file_name.ends_with(".mrpack") {
-        let (fabric_loader, downloaded_count, override_count) =
+        let (fabric_loader, minecraft_version, downloaded_count, override_count) =
             install_modrinth_mrpack_contents(&instance_dir, &pack_bytes, &client).await?;
         if fabric_loader.is_some() {
             instance.fabric_loader_version = fabric_loader;
+        }
+        if let Some(version) = minecraft_version {
+            instance.mc_version = version;
         }
         format!(
             "mrpack install completed\ndownloaded_files={}\noverrides_extracted={}\n",
@@ -1703,10 +1715,13 @@ pub async fn import_local_modpack_instance(
 
     let lower_file_name = safe_name.to_ascii_lowercase();
     let install_report = if lower_file_name.ends_with(".mrpack") {
-        let (fabric_loader, downloaded_count, override_count) =
+        let (fabric_loader, minecraft_version, downloaded_count, override_count) =
             install_modrinth_mrpack_contents(&instance_dir, &pack_bytes, &client).await?;
         if fabric_loader.is_some() {
             instance.fabric_loader_version = fabric_loader;
+        }
+        if let Some(version) = minecraft_version {
+            instance.mc_version = version;
         }
         format!(
             "local mrpack import completed\ndownloaded_files={}\noverrides_extracted={}\n",
