@@ -10,6 +10,7 @@ const Settings = lazy(() => import('./pages/Settings').then((module) => ({ defau
 const Widgets = lazy(() => import('./pages/Widgets').then((module) => ({ default: module.Widgets })));
 const InstanceEditor = lazy(() => import('./pages/InstanceEditor').then((module) => ({ default: module.InstanceEditor })));
 const Marketplace = lazy(() => import('./pages/Marketplace').then((module) => ({ default: module.Marketplace })));
+const Help = lazy(() => import('./pages/Help').then((module) => ({ default: module.Help })));
 
 function App() {
   return (
@@ -28,6 +29,7 @@ function App() {
             <Route path="/downloads" element={<Navigate to="/importer" replace />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/widgets" element={<Widgets />} />
+            <Route path="/help" element={<Help />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>

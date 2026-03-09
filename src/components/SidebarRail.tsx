@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { FolderUp, Gamepad2, LayoutDashboard, Layers3, LogIn, Plus, Settings, User } from 'lucide-react';
+import { CircleHelp, FolderUp, Gamepad2, LayoutDashboard, Layers3, LogIn, Plus, Settings, User } from 'lucide-react';
 import { animate, remove, set } from 'animejs';
 import { clsx } from 'clsx';
 import logo from '../assets/logo.png';
@@ -110,6 +111,7 @@ export function SidebarRail(props: SidebarProps) {
     { icon: Layers3, path: '/marketplace', label: 'Market' },
     { icon: FolderUp, path: '/importer', label: 'Importer' },
     { icon: LayoutDashboard, path: '/widgets', label: 'Widgets' },
+    { icon: CircleHelp, path: '/help', label: 'Help' },
     { icon: Settings, path: '/settings', label: 'Settings' }
   ];
 
@@ -424,9 +426,9 @@ export function SidebarRail(props: SidebarProps) {
         <Plus size={18} strokeWidth={iconStrokeWidth} />
       </NavLink>
 
-      {sidebarContextMenu && (
+      {sidebarContextMenu && createPortal(
         <div
-          className="g-context-menu fixed z-[2147483000] min-w-[170px] rounded-xl p-1.5 shadow-2xl"
+          className="g-context-menu fixed z-[2147483647] min-w-[170px] rounded-xl p-1.5 shadow-2xl"
           style={{ left: `${sidebarContextMenu.x}px`, top: `${sidebarContextMenu.y}px` }}
           onMouseDown={(event) => event.stopPropagation()}
         >
@@ -475,7 +477,8 @@ export function SidebarRail(props: SidebarProps) {
           >
             Widgets
           </button>
-        </div>
+        </div>,
+        document.body
       )}
     </aside>
   );

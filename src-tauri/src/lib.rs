@@ -1,4 +1,5 @@
 mod auth;
+mod bloom_mod;
 mod discord_presence;
 mod downloader;
 mod external_updater;

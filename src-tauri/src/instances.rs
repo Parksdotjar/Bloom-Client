@@ -1,4 +1,5 @@
 use crate::paths::paths_get;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
@@ -63,6 +64,13 @@ pub struct InstanceModFile {
     pub enabled: bool,
     pub size_bytes: u64,
     pub updated_at: i64,
+    pub icon_url: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct InstalledModMeta {
+    icon_url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -805,12 +813,17 @@ pub fn instance_list_mods(
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
+        let icon_url = read_installed_mod_meta(&mods_dir, &display_name)
+            .and_then(|meta| meta.icon_url)
+            .or_else(|| extract_mod_icon_data_url(&path));
+
         mods.push(InstanceModFile {
             file_name,
             display_name,
             enabled: is_enabled,
             size_bytes: meta.len(),
             updated_at,
+            icon_url,
         });
     }
 
@@ -846,6 +859,80 @@ pub fn instance_list_shaderpacks(
     list_instance_content_files(&instance_dir, "shaderpacks", &[".zip", ".jar"])
 }
 
+fn installed_mod_meta_path(mods_dir: &Path, file_name: &str) -> PathBuf {
+    mods_dir.join(format!("{}.bloommeta.json", file_name))
+}
+
+fn read_installed_mod_meta(mods_dir: &Path, file_name: &str) -> Option<InstalledModMeta> {
+    let path = installed_mod_meta_path(mods_dir, file_name);
+    let raw = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn write_installed_mod_meta(mods_dir: &Path, file_name: &str, meta: &InstalledModMeta) -> Result<(), String> {
+    let path = installed_mod_meta_path(mods_dir, file_name);
+    let raw = serde_json::to_string(meta).map_err(|e| e.to_string())?;
+    fs::write(path, raw).map_err(|e| e.to_string())
+}
+
+fn maybe_move_installed_mod_meta(mods_dir: &Path, from_name: &str, to_name: &str) -> Result<(), String> {
+    let current = installed_mod_meta_path(mods_dir, from_name);
+    if !current.exists() {
+        return Ok(());
+    }
+    let next = installed_mod_meta_path(mods_dir, to_name);
+    fs::rename(current, next).map_err(|e| e.to_string())
+}
+
+fn maybe_delete_installed_mod_meta(mods_dir: &Path, file_name: &str) -> Result<(), String> {
+    let path = installed_mod_meta_path(mods_dir, file_name);
+    if path.exists() {
+        fs::remove_file(path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn extract_mod_icon_data_url(path: &Path) -> Option<String> {
+    let bytes = fs::read(path).ok()?;
+    let cursor = Cursor::new(bytes);
+    let mut zip = zip::ZipArchive::new(cursor).ok()?;
+    let mut fabric_meta = zip.by_name("fabric.mod.json").ok()?;
+    let mut raw = String::new();
+    fabric_meta.read_to_string(&mut raw).ok()?;
+    drop(fabric_meta);
+
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let icon_path = json
+        .get("icon")
+        .and_then(|value| value.as_str().map(str::to_string))
+        .or_else(|| {
+            json.get("icon")
+                .and_then(|value| value.as_object())
+                .and_then(|map| {
+                    map.get("128")
+                        .or_else(|| map.get("64"))
+                        .or_else(|| map.values().next())
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                })
+        })?;
+
+    let mut icon_file = zip.by_name(&icon_path).ok()?;
+    let mut image = Vec::new();
+    icon_file.read_to_end(&mut image).ok()?;
+
+    let mime = if icon_path.to_ascii_lowercase().ends_with(".png") {
+        "image/png"
+    } else if icon_path.to_ascii_lowercase().ends_with(".jpg") || icon_path.to_ascii_lowercase().ends_with(".jpeg") {
+        "image/jpeg"
+    } else {
+        "image/png"
+    };
+
+    let encoded = base64::engine::general_purpose::STANDARD.encode(image);
+    Some(format!("data:{};base64,{}", mime, encoded))
+}
+
 #[tauri::command]
 pub fn instance_toggle_mod(
     app: AppHandle,
@@ -877,6 +964,7 @@ pub fn instance_toggle_mod(
 
     let next_path = mods_dir.join(&next_name);
     fs::rename(&current, &next_path).map_err(|e| e.to_string())?;
+    maybe_move_installed_mod_meta(&mods_dir, &file_name, &next_name)?;
     Ok(next_name)
 }
 
@@ -923,6 +1011,7 @@ pub fn instance_disable_incompatible_mods(
         let new_name = format!("{}.disabled", file_name);
         let new_path = mods_dir.join(&new_name);
         fs::rename(&path, &new_path).map_err(|e| e.to_string())?;
+        maybe_move_installed_mod_meta(&mods_dir, &file_name, &new_name)?;
         disabled.push(file_name);
     }
 
@@ -948,6 +1037,7 @@ pub fn instance_delete_mod(
     }
 
     fs::remove_file(target).map_err(|e| e.to_string())?;
+    maybe_delete_installed_mod_meta(&mods_dir, &file_name)?;
     Ok(())
 }
 
@@ -1200,6 +1290,21 @@ pub async fn marketplace_install_mod(
 
         let target = mods_dir.join(&file.filename);
         fs::write(&target, bytes).map_err(|e| e.to_string())?;
+        let project_info: serde_json::Value = client
+            .get(format!("https://api.modrinth.com/v2/project/{}", project_id))
+            .header("User-Agent", "BloomClient/0.1.0")
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+        let meta = InstalledModMeta {
+            icon_url: project_info.get("icon_url").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        };
+        let _ = write_installed_mod_meta(&mods_dir, &file.filename, &meta);
         return Ok(file.filename.clone());
     }
 
@@ -1270,6 +1375,28 @@ pub async fn marketplace_install_mod(
 
         let target = mods_dir.join(&file_name);
         fs::write(&target, bytes).map_err(|e| e.to_string())?;
+        let mod_info: serde_json::Value = client
+            .get(format!("https://api.curseforge.com/v1/mods/{}", project_id))
+            .header("x-api-key", env::var("CURSEFORGE_API_KEY").map_err(|_| {
+                "CurseForge API key missing. Set CURSEFORGE_API_KEY in your environment.".to_string()
+            })?)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+        let meta = InstalledModMeta {
+            icon_url: mod_info
+                .get("data")
+                .and_then(|v| v.get("logo"))
+                .and_then(|v| v.get("url"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+        };
+        let _ = write_installed_mod_meta(&mods_dir, &file_name, &meta);
         return Ok(file_name);
     }
 

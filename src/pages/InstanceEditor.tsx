@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEventHandler, type DragEventHandler, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Download, FolderOpen, ImageIcon, RefreshCcw, Save, Search, ShieldPlus, Sparkles, Trash2, UploadCloud } from 'lucide-react';
+import { ArrowLeft, Download, FolderOpen, ImageIcon, Package2, RefreshCcw, Save, Search, ShieldPlus, Sparkles, Trash2, UploadCloud } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useInstances } from '../hooks/useInstances';
 import { TauriApi, type InstanceContentFile, type InstanceModFile, type MarketplaceMod, type MarketplacePack, type ModInstallResult } from '../services/tauri';
@@ -14,6 +14,28 @@ function humanSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function cleanFileLabel(fileName: string) {
+  return fileName
+    .replace(/\.(jar|zip)$/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildInstalledDescription(title: string, row: InstanceContentFile | InstanceModFile) {
+  const size = humanSize(row.sizeBytes);
+  if ('enabled' in row) {
+    return `${row.enabled ? 'Enabled' : 'Disabled'} mod file · ${size}`;
+  }
+  const kind = title === 'Shaders' ? 'Shader pack' : 'Resource pack';
+  return `${kind} file · ${size}`;
+}
+
+function getInstalledIcon(title: string, row: InstanceContentFile | InstanceModFile) {
+  if ('enabled' in row) return Sparkles;
+  return title === 'Shaders' ? Sparkles : title === 'Resource Packs' ? ImageIcon : Package2;
 }
 
 function EmptyState({ message }: { message: string }) {
@@ -32,7 +54,7 @@ export function InstanceEditor() {
         ? 'shaders'
         : 'mods';
 
-  const { instances, updateInstance, loading } = useInstances();
+  const { instances, updateInstance, loading, loadInstances } = useInstances();
 
   const instance = useMemo(() => {
     if (!instanceId) return null;
@@ -104,6 +126,11 @@ export function InstanceEditor() {
       setShadersView('installed');
     }
   }, [instance]);
+
+  useEffect(() => {
+    if (!instanceId || instance || loading) return;
+    void loadInstances();
+  }, [instanceId, instance, loading, loadInstances]);
 
   const goBack = () => navigate('/instances');
 
@@ -465,38 +492,83 @@ export function InstanceEditor() {
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h2 className="text-lg font-black text-slate-900 dark:text-white">{title}</h2>
         <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={onRefresh} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5"><RefreshCcw size={13} /> Refresh</button>
+          <button onClick={onRefresh} className="g-btn h-10 px-3 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5"><RefreshCcw size={13} /> Refresh</button>
           {extraAction}
-          <button onClick={onFolderOpen} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5"><FolderOpen size={13} /> Folder</button>
-          <button onClick={onSwitch} className="g-btn-accent px-3 py-2 text-xs font-black tracking-[0.14em] uppercase">Open Install View</button>
+          <button onClick={onFolderOpen} className="g-btn h-10 px-3 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5"><FolderOpen size={13} /> Folder</button>
+          <button onClick={onSwitch} className="g-btn-accent h-10 px-3 text-xs font-black tracking-[0.14em] uppercase">Open Install View</button>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-300/80 dark:border-white/12 overflow-hidden">
+      <div className="space-y-3">
         {loadingState ? (
-          <div className="p-6 text-center text-xs font-black tracking-[0.16em] uppercase text-slate-500 dark:text-white/55">Loading...</div>
+          <div className="rounded-2xl border border-slate-300/80 dark:border-white/12 p-6 text-center text-xs font-black tracking-[0.16em] uppercase text-slate-500 dark:text-white/55">Loading...</div>
         ) : rows.length === 0 ? (
           <EmptyState message={`No ${title.toLowerCase()} installed.`} />
         ) : (
           rows.map((row) => {
             const modRow = 'enabled' in row ? row : null;
+            const CardIcon = getInstalledIcon(title, row);
+            const displayTitle = row.displayName?.trim() ? row.displayName : cleanFileLabel(row.fileName);
+            const description = buildInstalledDescription(title, row);
             return (
-              <div key={row.fileName} className="px-3 py-2.5 border-b border-slate-200 dark:border-white/10 last:border-b-0 bg-white/80 dark:bg-white/[0.02] flex items-center gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-black text-slate-900 dark:text-white truncate">{row.displayName}</p>
-                  <p className="text-xs font-semibold text-slate-500 dark:text-white/55">{humanSize(row.sizeBytes)}</p>
+              <article
+                key={row.fileName}
+                className="grid grid-cols-[64px_1fr_auto] items-center gap-4 border px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                style={{
+                  borderRadius: 'calc(22px * var(--g-roundness-mult))',
+                  borderColor: 'color-mix(in srgb, var(--g-border) 82%, transparent)',
+                  background: 'linear-gradient(180deg, color-mix(in srgb, var(--g-surface-strong) 82%, transparent), color-mix(in srgb, var(--g-shell-strong) 88%, #000 12%))'
+                }}
+              >
+                <div
+                  className="flex h-14 w-14 items-center justify-center overflow-hidden border"
+                  style={{
+                    borderRadius: 'calc(16px * var(--g-roundness-mult))',
+                    borderColor: 'var(--g-border)',
+                    background: 'color-mix(in srgb, var(--g-soft) 82%, #000 18%)'
+                  }}
+                >
+                  {'iconUrl' in row && row.iconUrl ? <img src={row.iconUrl} alt={displayTitle} className="h-full w-full object-cover" /> : <CardIcon size={18} className="text-white/70" />}
                 </div>
-                {modRow && onToggle ? (
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="truncate text-lg font-black text-slate-900 dark:text-white">{displayTitle}</h3>
+                    {'enabled' in row ? (
+                      <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-600 dark:text-white/72">
+                        {row.enabled ? 'Enabled' : 'Disabled'}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 text-sm text-slate-600 dark:text-white/62">{description}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-600 dark:text-white/72">
+                      {row.fileName}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {modRow && onToggle ? (
+                    <button
+                      onClick={() => onToggle(modRow)}
+                      data-on={modRow.enabled}
+                      className="g-switch"
+                      aria-label={`Toggle ${displayTitle}`}
+                      aria-pressed={modRow.enabled}
+                    />
+                  ) : null}
                   <button
-                    onClick={() => onToggle(modRow)}
-                    data-on={modRow.enabled}
-                    className="g-switch"
-                    aria-label={`Toggle ${modRow.displayName}`}
-                    aria-pressed={modRow.enabled}
-                  />
-                ) : null}
-                <button onClick={() => onDelete(row)} className="h-8 w-8 rounded-lg border border-red-300/70 dark:border-red-500/35 text-red-600 dark:text-red-300 inline-flex items-center justify-center"><Trash2 size={13} /></button>
-              </div>
+                    onClick={() => onDelete(row)}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl border"
+                    style={{
+                      borderColor: 'color-mix(in srgb, var(--g-danger) 40%, transparent)',
+                      background: 'color-mix(in srgb, var(--g-danger) 14%, transparent)',
+                      color: 'color-mix(in srgb, var(--g-danger) 68%, #ffffff 32%)'
+                    }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </article>
             );
           })
         )}
@@ -521,17 +593,17 @@ export function InstanceEditor() {
     icon: 'mod' | 'pack' | 'shader'
   ) => (
     <section className="g-panel p-6 space-y-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h2 className="text-lg font-black text-slate-900 dark:text-white">{title}</h2>
-        <button onClick={() => {
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h2 className="text-lg font-black text-slate-900 dark:text-white">{title}</h2>
+          <button onClick={() => {
           if (title === 'Mods Marketplace') setModsView('installed');
           if (title === 'Resource Packs Marketplace') setResourcepacksView('installed');
           if (title === 'Shaders Marketplace') setShadersView('installed');
-        }} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase">Back To Installed</button>
+        }} className="g-btn h-10 px-3 text-xs font-black tracking-[0.14em] uppercase">Back To Installed</button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_120px] gap-2">
-        <div className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 h-11 flex items-center gap-2">
+        <div className="g-select-trigger h-11 px-3 flex items-center gap-2">
           <Search size={14} className="text-slate-500 dark:text-white/60" />
           <input
             value={query}
@@ -543,35 +615,43 @@ export function InstanceEditor() {
             className="w-full bg-transparent text-sm font-semibold outline-none text-slate-900 dark:text-white"
           />
         </div>
-        <select value={source} onChange={(event) => setSource(event.target.value as SourceFilter)} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 h-11 text-sm font-bold text-slate-900 dark:text-white">
+        <select value={source} onChange={(event) => setSource(event.target.value as SourceFilter)} className="g-select-trigger h-11 px-3 text-sm font-bold text-slate-900 dark:text-white">
           <option value="all">All Sources</option>
           <option value="modrinth">Modrinth</option>
           <option value="curseforge">CurseForge</option>
         </select>
-        <button onClick={onSearch} disabled={searchingState} className={`rounded-xl border h-11 text-xs font-black tracking-[0.14em] uppercase disabled:opacity-45 ${accentClasses}`}>
+        <button onClick={onSearch} disabled={searchingState} className={`rounded-xl border h-11 text-xs font-black tracking-[0.14em] uppercase disabled:opacity-45 ${accentClasses}`} style={{ background: 'var(--g-accent-gradient)' }}>
           {searchingState ? 'Searching...' : 'Search'}
         </button>
       </div>
 
-      <div className="rounded-2xl border border-slate-300/80 dark:border-white/12 overflow-hidden">
+      <div className="space-y-3">
         {rows.length === 0 ? (
           <EmptyState message={emptyMessage} />
         ) : (
           rows.map((row) => {
             const rowId = `${row.source}:${row.id}`;
             return (
-              <div key={rowId} className="px-3 py-2.5 border-b border-slate-200 dark:border-white/10 last:border-b-0 bg-white/80 dark:bg-white/[0.02] flex items-center gap-2">
-                <div className="w-10 h-10 rounded-lg border border-slate-300 dark:border-white/15 bg-slate-200 dark:bg-white/10 overflow-hidden flex items-center justify-center">
+              <article
+                key={rowId}
+                className="grid grid-cols-[64px_1fr_auto] items-center gap-4 border px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                style={{
+                  borderRadius: 'calc(22px * var(--g-roundness-mult))',
+                  borderColor: 'color-mix(in srgb, var(--g-border) 82%, transparent)',
+                  background: 'linear-gradient(180deg, color-mix(in srgb, var(--g-surface-strong) 82%, transparent), color-mix(in srgb, var(--g-shell-strong) 88%, #000 12%))'
+                }}
+              >
+                <div className="w-14 h-14 rounded-xl border border-slate-300 dark:border-white/15 bg-slate-200 dark:bg-white/10 overflow-hidden flex items-center justify-center">
                   {row.iconUrl ? <img src={row.iconUrl} alt={row.title} className="w-full h-full object-cover" /> : icon === 'mod' || icon === 'shader' ? <Sparkles size={14} className="text-slate-500 dark:text-white/55" /> : <ImageIcon size={14} className="text-slate-500 dark:text-white/55" />}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-black text-slate-900 dark:text-white truncate">{row.title}</p>
-                  <p className="text-xs font-semibold text-slate-500 dark:text-white/55 truncate">{row.description}</p>
+                  <p className="text-lg font-black text-slate-900 dark:text-white truncate">{row.title}</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-500 dark:text-white/55 truncate">{row.description}</p>
                 </div>
                 <button onClick={() => onInstall(row)} disabled={installingId === rowId} className={`rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5 disabled:opacity-45 ${accentClasses}`}>
                   <Download size={12} /> {installingId === rowId ? 'Installing...' : 'Install'}
                 </button>
-              </div>
+              </article>
             );
           })
         )}
@@ -593,45 +673,87 @@ export function InstanceEditor() {
   }
 
   return (
-    <div className="min-h-full w-full max-w-6xl mx-auto p-4 md:p-6 space-y-4">
+    <div className="min-h-full w-full max-w-[1360px] mx-auto p-4 md:p-6 space-y-4">
       <section className="g-panel-strong p-6">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3">
-            <div className="w-14 h-14 rounded-xl border border-slate-300 dark:border-white/15 bg-slate-200 dark:bg-white/10 overflow-hidden flex items-center justify-center">
+            <div
+              className="w-14 h-14 overflow-hidden flex items-center justify-center"
+              style={{
+                borderRadius: 'calc(16px * var(--g-roundness-mult))',
+                border: '1px solid var(--g-border)',
+                background: 'color-mix(in srgb, var(--g-soft) 80%, transparent)'
+              }}
+            >
               {iconDataUrl ? <img src={iconDataUrl} alt={`${instance.name} icon`} className="w-full h-full object-cover" /> : <span className="font-black text-slate-700 dark:text-white/80">{instance.name.slice(0, 1).toUpperCase()}</span>}
             </div>
             <div>
-              <p className="text-[10px] font-black tracking-[0.22em] uppercase text-slate-500 dark:text-white/45">Instance Editor</p>
+              <p className="text-[10px] font-black tracking-[0.22em] uppercase g-accent-text">Instance Editor</p>
               <h1 className="text-4xl font-black mt-1 text-slate-900 dark:text-white">{instance.name}</h1>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <button onClick={goBack} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-4 py-2.5 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-2">
+            <button onClick={goBack} className="g-btn h-11 px-4 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-2">
               <ArrowLeft size={14} /> Back
             </button>
-            <button onClick={saveSettings} disabled={saving} className="g-btn-accent px-5 py-3 text-xs font-black tracking-[0.14em] uppercase disabled:opacity-45 inline-flex items-center gap-2">
+            <button onClick={saveSettings} disabled={saving} className="g-btn-accent h-11 px-5 text-xs font-black tracking-[0.14em] uppercase disabled:opacity-45 inline-flex items-center gap-2">
               <Save size={14} /> {saving ? 'Saving...' : 'Save'}
             </button>
           </div>
         </div>
 
-        <div className="mt-4 inline-flex rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 p-1 flex-wrap">
-          <button onClick={() => setActiveTab('mods')} className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", activeTab === 'mods' ? 'bg-emerald-500/20 border border-emerald-500/45 text-emerald-700 dark:text-emerald-300' : 'text-slate-600 dark:text-white/60'].join(' ')}>Mods</button>
-          <button onClick={() => setActiveTab('resourcepacks')} className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", activeTab === 'resourcepacks' ? 'bg-cyan-500/20 border border-cyan-500/45 text-cyan-700 dark:text-cyan-300' : 'text-slate-600 dark:text-white/60'].join(' ')}>Resource Packs</button>
-          <button onClick={() => setActiveTab('shaders')} className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", activeTab === 'shaders' ? 'bg-fuchsia-500/20 border border-fuchsia-500/45 text-fuchsia-700 dark:text-fuchsia-300' : 'text-slate-600 dark:text-white/60'].join(' ')}>Shaders</button>
-          <button onClick={() => setActiveTab('settings')} className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", activeTab === 'settings' ? 'g-btn-accent' : 'text-slate-600 dark:text-white/60'].join(' ')}>Settings</button>
+        <div
+          className="mt-4 inline-grid grid-cols-2 md:grid-cols-4 gap-2 border p-2"
+          style={{
+            borderRadius: 'calc(22px * var(--g-roundness-mult))',
+            borderColor: 'var(--g-border)',
+            background: 'color-mix(in srgb, var(--g-surface) 84%, transparent)'
+          }}
+        >
+          {([
+            ['mods', 'Mods'],
+            ['resourcepacks', 'Resource Packs'],
+            ['shaders', 'Shaders'],
+            ['settings', 'Settings']
+          ] as const).map(([tab, label]) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className="px-4 py-3 text-xs font-black tracking-[0.18em] uppercase transition"
+              style={{
+                borderRadius: 'calc(14px * var(--g-roundness-mult))',
+                background: activeTab === tab ? 'var(--g-accent-gradient)' : 'transparent',
+                color: activeTab === tab ? 'white' : 'color-mix(in srgb, var(--g-text) 54%, transparent)',
+                boxShadow: activeTab === tab ? '0 10px 24px color-mix(in srgb, var(--g-accent) 24%, transparent)' : 'none'
+              }}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
         {activeTab !== 'settings' && (
-          <div className="mt-4 inline-flex rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 p-1">
+          <div
+            className="mt-4 inline-grid grid-cols-2 gap-2 border p-2"
+            style={{
+              borderRadius: 'calc(18px * var(--g-roundness-mult))',
+              borderColor: 'var(--g-border)',
+              background: 'color-mix(in srgb, var(--g-soft) 72%, transparent)'
+            }}
+          >
             <button
               onClick={() => {
                 if (activeTab === 'mods') setModsView('installed');
                 if (activeTab === 'resourcepacks') setResourcepacksView('installed');
                 if (activeTab === 'shaders') setShadersView('installed');
               }}
-              className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", (activeTab === 'mods' ? modsView : activeTab === 'resourcepacks' ? resourcepacksView : shadersView) === 'installed' ? 'g-btn-accent' : 'text-slate-600 dark:text-white/60'].join(' ')}
+              className="px-4 py-2 text-xs font-black tracking-[0.16em] uppercase"
+              style={{
+                borderRadius: 'calc(12px * var(--g-roundness-mult))',
+                background: (activeTab === 'mods' ? modsView : activeTab === 'resourcepacks' ? resourcepacksView : shadersView) === 'installed' ? 'var(--g-accent-gradient)' : 'transparent',
+                color: (activeTab === 'mods' ? modsView : activeTab === 'resourcepacks' ? resourcepacksView : shadersView) === 'installed' ? 'white' : 'color-mix(in srgb, var(--g-text) 54%, transparent)'
+              }}
             >
               Installed
             </button>
@@ -641,7 +763,12 @@ export function InstanceEditor() {
                 if (activeTab === 'resourcepacks') setResourcepacksView('install');
                 if (activeTab === 'shaders') setShadersView('install');
               }}
-              className={["px-3 py-1.5 rounded-lg text-xs font-black tracking-[0.14em] uppercase", (activeTab === 'mods' ? modsView : activeTab === 'resourcepacks' ? resourcepacksView : shadersView) === 'install' ? 'g-btn-accent' : 'text-slate-600 dark:text-white/60'].join(' ')}
+              className="px-4 py-2 text-xs font-black tracking-[0.16em] uppercase"
+              style={{
+                borderRadius: 'calc(12px * var(--g-roundness-mult))',
+                background: (activeTab === 'mods' ? modsView : activeTab === 'resourcepacks' ? resourcepacksView : shadersView) === 'install' ? 'var(--g-accent-gradient)' : 'transparent',
+                color: (activeTab === 'mods' ? modsView : activeTab === 'resourcepacks' ? resourcepacksView : shadersView) === 'install' ? 'white' : 'color-mix(in srgb, var(--g-text) 54%, transparent)'
+              }}
             >
               Install
             </button>

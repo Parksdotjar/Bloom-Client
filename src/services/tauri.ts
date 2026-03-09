@@ -34,6 +34,7 @@ export interface InstanceModFile {
     enabled: boolean;
     sizeBytes: number;
     updatedAt: number;
+    iconUrl?: string;
 }
 
 export interface InstanceContentFile {

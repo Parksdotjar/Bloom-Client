@@ -300,7 +300,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [skinStatus, setSkinStatus] = useState<string | null>(null);
   const [quickLaunchInstanceId, setQuickLaunchInstanceId] = useState<string>(() => localStorage.getItem(ACCOUNT_LAUNCH_INSTANCE_KEY) || '');
   const [onboardingOpen, setOnboardingOpen] = useState(false);
-  const [onboardingStep, setOnboardingStep] = useState<0 | 1 | 2 | 3>(0);
+  const [onboardingStep, setOnboardingStep] = useState<0 | 1 | 2 | 3 | 4>(0);
+  const [onboardingCompleted, setOnboardingCompleted] = useState(false);
   const [onboardingExitActive, setOnboardingExitActive] = useState(false);
   const [appBlackoutPhase, setAppBlackoutPhase] = useState<'idle' | 'fade-in' | 'hold' | 'fade-out'>('idle');
   const [appRevealActive, setAppRevealActive] = useState(false);
@@ -330,6 +331,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     cancelLogin,
     dismissAuthOverlay,
     clearError,
+    logout,
     setProfileAvatar,
     clearProfileAvatar
   } = useAuth();
@@ -383,20 +385,46 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, [instances, quickLaunchInstanceId]);
 
   useEffect(() => {
-    if (!authState || !onboardingDoneKey) {
-      setOnboardingOpen(false);
-      setAppBlackoutPhase('idle');
-      return;
-    }
-    const completed = localStorage.getItem(onboardingDoneKey) === 'true';
-    if (!completed) {
+    if (!authState) {
+      setOnboardingCompleted(false);
       setOnboardingOpen(true);
       setOnboardingExitActive(false);
       setAppBlackoutPhase('idle');
       setAppRevealActive(false);
       setOnboardingStep(0);
+      return;
     }
+
+    if (!onboardingDoneKey) {
+      setOnboardingCompleted(false);
+      setOnboardingOpen(true);
+      setOnboardingStep(1);
+      return;
+    }
+
+    const completed = localStorage.getItem(onboardingDoneKey) === 'true';
+    setOnboardingCompleted(completed);
+
+    if (!completed) {
+      setOnboardingOpen(true);
+      setOnboardingExitActive(false);
+      setAppBlackoutPhase('idle');
+      setAppRevealActive(false);
+      setOnboardingStep(1);
+      return;
+    }
+
+    setOnboardingOpen(false);
+    setOnboardingStep(1);
+    setOnboardingExitActive(false);
+    setAppBlackoutPhase('idle');
   }, [authState?.profile.id, onboardingDoneKey]);
+
+  useEffect(() => {
+    if (authState && onboardingOpen && onboardingStep === 0) {
+      setOnboardingStep(1);
+    }
+  }, [authState, onboardingOpen, onboardingStep]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', themeMode);
@@ -835,9 +863,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
     const onKeyDown = (event: KeyboardEvent) => {
       const activeShortcut = normalizeShortcut(eventToShortcut(event));
-      const isSecretOnboardingCombo = Boolean(
-        authState
-        && event.ctrlKey
+      const isOnboardingToggleCombo = Boolean(
+        event.ctrlKey
         && event.shiftKey
         && !event.altKey
         && !event.metaKey
@@ -874,13 +901,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      if (isSecretOnboardingCombo) {
+      if (isOnboardingToggleCombo) {
         event.preventDefault();
-        setOnboardingOpen(true);
-        setOnboardingExitActive(false);
-        setAppBlackoutPhase('idle');
-        setAppRevealActive(false);
-        setOnboardingStep(0);
+        toggleOnboardingPreview();
         return;
       }
 
@@ -920,7 +943,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       window.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('keydown', onKeyDown, true);
     };
-  }, [navigate, startupSceneSoundProfile, authState]);
+  }, [navigate, startupSceneSoundProfile, authState, onboardingOpen, onboardingCompleted]);
 
   useEffect(() => {
     const onExtraChange = (event: Event) => {
@@ -1143,10 +1166,38 @@ export function Layout({ children }: { children: React.ReactNode }) {
     navigate('/mods');
   };
 
+  const runSignOut = () => {
+    if (authState?.profile.id) {
+      localStorage.removeItem(`${ONBOARDING_DONE_PREFIX}${authState.profile.id}`);
+    }
+    setAccountOpen(false);
+    setAvatarContextMenu(null);
+    logout();
+  };
+
+  const openOnboarding = (step?: 0 | 1 | 2 | 3 | 4) => {
+    setOnboardingOpen(true);
+    setOnboardingExitActive(false);
+    setAppBlackoutPhase('idle');
+    setAppRevealActive(false);
+    setOnboardingStep(step ?? (authState ? 1 : 0));
+  };
+
+  const toggleOnboardingPreview = () => {
+    if (onboardingOpen && authState && onboardingCompleted) {
+      setOnboardingOpen(false);
+      setOnboardingExitActive(false);
+      setAppBlackoutPhase('idle');
+      return;
+    }
+    openOnboarding(authState ? 1 : 0);
+  };
+
   const completeOnboarding = () => {
     if (onboardingDoneKey) {
       localStorage.setItem(onboardingDoneKey, 'true');
     }
+    setOnboardingCompleted(true);
     appBlackoutTimersRef.current.forEach((timer) => clearTimeout(timer));
     appBlackoutTimersRef.current = [];
     setOnboardingExitActive(true);
@@ -1183,6 +1234,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const density = DENSITY_MAP[densityMode] || DENSITY_MAP.cozy;
   const isHorizontalSidebar = sidebarPosition === 'top' || sidebarPosition === 'bottom';
   const isRightSidebar = sidebarPosition === 'right';
+  const showClientShell = Boolean(authState && onboardingCompleted);
+  const showOnboardingGate = onboardingOpen || !showClientShell;
   const sidebarRail = (
     <SidebarRail
       className="js-giga-reveal shrink-0"
@@ -1214,9 +1267,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
       {backgroundMode === 'scanlines' && <div className="pointer-events-none absolute inset-0 g-bg-scanlines" />}
       {backgroundMode === 'nebula' && <div className="pointer-events-none absolute inset-0 g-bg-nebula" />}
 
-      {sidebarPosition === 'left' && sidebarRail}
-      {sidebarPosition === 'top' && sidebarRail}
+      {showClientShell && sidebarPosition === 'left' && sidebarRail}
+      {showClientShell && sidebarPosition === 'top' && sidebarRail}
 
+      {showClientShell && (
       <div className={clsx('flex-1 min-w-0 flex flex-col relative', isHorizontalSidebar ? 'min-h-0' : 'h-full')}>
         <header
           data-tauri-drag-region
@@ -1354,6 +1408,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
                         </div>
                         {skinStatus && <p className="text-xs text-white/60 mt-2">{skinStatus}</p>}
                       </div>
+
+                      <button
+                        onClick={runSignOut}
+                        className="mt-3 w-full h-10 g-btn text-xs font-extrabold tracking-[0.12em] uppercase text-red-200 border-red-300/35"
+                      >
+                        Sign Out
+                      </button>
                     </>
                   )}
                 </div>
@@ -1392,9 +1453,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <div className="min-h-full">{children}</div>
         </main>
       </div>
+      )}
 
-      {isRightSidebar && sidebarRail}
-      {sidebarPosition === 'bottom' && sidebarRail}
+      {showClientShell && isRightSidebar && sidebarRail}
+      {showClientShell && sidebarPosition === 'bottom' && sidebarRail}
 
       {startupSceneVisible && (
         <div
@@ -1409,7 +1471,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <div className="startup-black-hold app-region-no-drag" />
       )}
 
-      {onboardingOpen && authState && (
+      {showOnboardingGate && (
         <div className={clsx('absolute inset-0 z-[340] flex items-center justify-center p-4 app-region-no-drag onboarding-space-solid', onboardingExitActive && 'onboarding-exit-active')}>
           <div className="pointer-events-none absolute inset-0 onboarding-stars-far" />
           <div className="pointer-events-none absolute inset-0 onboarding-stars-near" />
@@ -1418,13 +1480,41 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <div className="relative w-full max-w-6xl onboarding-shell">
             <div className="mx-auto max-w-[680px]">
               {onboardingStep === 0 && (
+                <div className="mt-10 mx-auto max-w-[520px] rounded-[28px] border border-white/12 bg-[#070a11]/92 px-8 py-10 text-center shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
+                  <p className="text-[10px] uppercase tracking-[0.24em] font-extrabold text-white/45">First Launch</p>
+                  <h2 className="mt-3 text-4xl md:text-5xl font-extrabold text-white">Sign in with Microsoft</h2>
+                  <p className="mt-3 text-sm md:text-base text-white/62">Bloom stays hidden until your account is connected and setup is finished.</p>
+
+                  {!authFlowActive ? (
+                    <button
+                      onClick={() => { void startLogin(); }}
+                      className="mt-8 h-14 px-8 rounded-xl border border-white/20 bg-white text-black text-base font-extrabold inline-flex items-center gap-2"
+                    >
+                      <Send size={18} /> Continue with Microsoft
+                    </button>
+                  ) : (
+                    <div className="mt-8 rounded-2xl border border-white/12 bg-white/[0.04] p-5 text-left">
+                      <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/45">Code</p>
+                      <p className="mt-2 text-4xl font-extrabold tracking-[0.22em] g-accent-text">{authCode || '--------'}</p>
+                      <p className="mt-2 text-xs text-white/55 break-all">{authLink}</p>
+                      <div className="mt-4 grid grid-cols-3 gap-2">
+                        <button onClick={() => { void openLoginInBrowser(); }} className="g-btn-accent h-11 text-xs font-extrabold uppercase tracking-[0.12em] inline-flex items-center justify-center gap-1"><Send size={12} /> Open</button>
+                        <button onClick={() => navigator.clipboard.writeText(authCode || '')} className="g-btn h-11 text-xs font-extrabold uppercase tracking-[0.12em]">Copy</button>
+                        <button onClick={() => { cancelLogin(); dismissAuthOverlay(); }} className="g-btn h-11 text-xs font-extrabold uppercase tracking-[0.12em]">Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {onboardingStep === 1 && authState && (
                 <div className="mt-10 flex items-center justify-center gap-3">
                   <p className="text-5xl md:text-6xl font-extrabold text-white">Hi,</p>
                   <div className="text-5xl md:text-6xl font-extrabold text-white border-b border-white/60 px-2 pb-2 leading-none">
                     {authState.profile.name}
                   </div>
                   <button
-                    onClick={() => setOnboardingStep(1)}
+                    onClick={() => setOnboardingStep(2)}
                     className="h-14 px-6 rounded-xl border border-white/20 bg-white text-black text-2xl font-extrabold inline-flex items-center gap-2"
                   >
                     Enter
@@ -1432,7 +1522,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 </div>
               )}
 
-              {onboardingStep === 1 && (
+              {onboardingStep === 2 && authState && (
                 <>
                   <input ref={onboardingProfileUploadRef} type="file" accept="image/*" className="hidden" onChange={onProfileInputChange} />
                   <div className="mt-10 mx-auto max-w-[480px] rounded-2xl border border-white/15 bg-[#0a0f19]/88 p-8 flex flex-col items-center gap-6">
@@ -1448,7 +1538,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                       <button onClick={() => onboardingProfileUploadRef.current?.click()} className="h-12 px-6 rounded-xl border border-white/22 bg-[#0b101a]/92 hover:bg-[#11182a] transition-colors inline-flex items-center gap-2 text-white font-bold">
                         <Camera size={18} /> Upload
                       </button>
-                      <button onClick={() => setOnboardingStep(2)} className="h-12 px-6 rounded-xl border border-white/20 bg-white text-black transition-colors inline-flex items-center gap-2 font-extrabold">
+                      <button onClick={() => setOnboardingStep(3)} className="h-12 px-6 rounded-xl border border-white/20 bg-white text-black transition-colors inline-flex items-center gap-2 font-extrabold">
                         <Sparkles size={18} /> Enter
                       </button>
                     </div>
@@ -1459,14 +1549,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 </>
               )}
 
-              {onboardingStep === 2 && (
+              {onboardingStep === 3 && (
                 <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {ONBOARDING_THEME_OPTIONS.map((theme) => (
                     <button
                       key={theme.id}
                       onClick={() => {
                         setThemeMode(theme.id);
-                        setOnboardingStep(3);
+                        setOnboardingStep(4);
                       }}
                       className={clsx(
                         'h-40 rounded-2xl border bg-[#0b101a]/92 hover:bg-[#11182a] transition-colors flex flex-col items-center justify-center gap-2 text-white',
@@ -1481,7 +1571,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 </div>
               )}
 
-              {onboardingStep === 3 && (
+              {onboardingStep === 4 && (
                 <div className="mt-8 grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {ONBOARDING_ACCENT_OPTIONS.map((accent) => (
                     <button
@@ -1504,11 +1594,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
               )}
 
               <div className="mt-6 flex justify-center items-center gap-2">
-                {[0, 1, 2, 3].map((step) => (
+                {[0, 1, 2, 3, 4].map((step) => (
                   <button
                     key={step}
-                    onClick={() => setOnboardingStep(step as 0 | 1 | 2 | 3)}
-                    className={clsx('h-2.5 rounded-full transition-all', onboardingStep === step ? 'w-8 bg-white/90' : 'w-2.5 bg-white/45')}
+                    onClick={() => {
+                      if (step > 0 && !authState) return;
+                      setOnboardingStep(step as 0 | 1 | 2 | 3 | 4);
+                    }}
+                    className={clsx('h-2.5 rounded-full transition-all', onboardingStep === step ? 'w-8 bg-white/90' : 'w-2.5 bg-white/45', step > 0 && !authState && 'opacity-35')}
                     aria-label={`Go to step ${step + 1}`}
                   />
                 ))}
@@ -1525,7 +1618,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      {authFlowActive && (
+      {authFlowActive && showClientShell && (
         <div className="absolute inset-0 z-[301] bg-black/65 backdrop-blur-sm flex items-center justify-center p-4 app-region-no-drag">
           <div className="w-full max-w-xl g-panel-strong p-6 border-white/15">
             <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] g-accent-text">Microsoft Login</p>

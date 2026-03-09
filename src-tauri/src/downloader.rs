@@ -121,9 +121,10 @@ pub async fn download_version_json(
 
 #[tauri::command]
 pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Result<(), String> {
+    use crate::bloom_mod::ensure_bloom_menu_mod;
     use crate::paths::{paths_get, AppPaths};
     use futures::future::join_all;
-    use tauri::{Emitter, Manager};
+    use tauri::Emitter;
 
     // 1. Get paths
     let paths: AppPaths = paths_get(app.clone())?;
@@ -145,6 +146,7 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
         .as_str()
         .ok_or("Missing mcVersion")?;
     let loader_type = instance_json["loader"].as_str().unwrap_or("vanilla");
+    let instance_dir = paths.instances.join(&instance_id);
     let loader_version = instance_json
         .get("fabricLoaderVersion")
         .and_then(|v| v.as_str())
@@ -559,6 +561,8 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
             speed: "".to_string(),
         },
     );
+
+    ensure_bloom_menu_mod(&instance_dir, loader_type, mc_version)?;
 
     Ok(())
 }

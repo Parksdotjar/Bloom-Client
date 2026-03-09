@@ -67,7 +67,7 @@ export function Instances() {
                     <button
                       onClick={(event) => { event.stopPropagation(); void startDownload(inst, authState); }}
                       disabled={installing}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity g-btn-accent h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] inline-flex items-center gap-1 disabled:opacity-50"
+                      className="g-btn-accent h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] inline-flex items-center gap-1 disabled:opacity-50"
                     >
                       <Play size={12} /> {installing ? 'Running' : 'Launch'}
                     </button>

@@ -1391,7 +1391,9 @@ html[data-button-theme='arcade'] {
 }
 
 .onboarding-space-solid {
-  background: #02050b;
+  background:
+    radial-gradient(1200px 700px at 50% -10%, rgba(56, 63, 76, 0.12), transparent 56%),
+    linear-gradient(180deg, #111318 0%, #0c0e12 52%, #08090c 100%);
   overflow: hidden;
 }
 

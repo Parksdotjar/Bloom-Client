@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "bloommenu",
+  "version": "${version}",
+  "name": "Bloom Menu",
+  "description": "Bloom-themed in-game mod menu and cosmetics hub.",
+  "authors": [
+    "Parks",
+    "Codex"
+  ],
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "icon": "assets/bloommenu/textures/gui/bloom_logo.png",
+  "environment": "client",
+  "entrypoints": {
+    "main": [
+      "com.bloomunit.bloommenu.BloomMenuMod"
+    ],
+    "client": [
+      "com.bloomunit.bloommenu.client.BloomMenuClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.18.3",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

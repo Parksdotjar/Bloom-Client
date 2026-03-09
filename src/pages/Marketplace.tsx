@@ -24,7 +24,7 @@ function compactDownloads(value: number): string {
 export function Marketplace() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { instances } = useInstances();
+  const { instances, loadInstances } = useInstances();
   const initialTab = searchParams.get('tab');
   const [activeTab, setActiveTab] = useState<MarketTab>(initialTab === 'modpacks' || initialTab === 'resourcepacks' || initialTab === 'shaders' ? initialTab : 'mods');
   const [source, setSource] = useState<SourceFilter>('all');
@@ -171,6 +171,7 @@ export function Marketplace() {
     setStatus(`Installing ${versionModalFor.title} for ${selectedVersion}...`);
     try {
       const instance = await TauriApi.marketplaceInstallModpackInstance(versionModalFor.source, versionModalFor.id, selectedVersion);
+      await loadInstances();
       setStatus(`Created instance "${instance.name}".`);
       setVersionModalFor(null);
       navigate(`/instance-editor?id=${encodeURIComponent(instance.id)}`);
