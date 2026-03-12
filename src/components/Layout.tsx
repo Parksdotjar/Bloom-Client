@@ -37,6 +37,7 @@ type FontPackMode = 'manrope' | 'space-grotesk' | 'sora';
 type SidebarMode = 'rail' | 'classic' | 'expanded';
 type SidebarPosition = 'left' | 'right' | 'top' | 'bottom';
 type CardStyleMode = 'glass' | 'solid' | 'outline';
+type TaskbarLogoBackgroundMode = 'default' | 'discord' | 'accent' | 'glass' | 'none';
 type ButtonThemeMode = 'default' | 'simple' | 'cartoon' | 'glass' | 'neon' | 'pixel' | 'brutalist' | 'pill' | 'terminal' | 'arcade';
 type MotionMode = 'off' | 'subtle' | 'standard' | 'cinematic';
 type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
@@ -68,6 +69,8 @@ const SIDEBAR_POSITION_STORAGE_KEY = 'bloom_sidebar_position';
 const SIDEBAR_POSITION_CHANGE_EVENT = 'bloom-sidebar-position-change';
 const CARD_STYLE_STORAGE_KEY = 'bloom_card_style';
 const CARD_STYLE_CHANGE_EVENT = 'bloom-card-style-change';
+const TASKBAR_LOGO_BACKGROUND_KEY = 'bloom_taskbar_logo_background';
+const TASKBAR_LOGO_BACKGROUND_CHANGE_EVENT = 'bloom-taskbar-logo-background-change';
 const BUTTON_THEME_STORAGE_KEY = 'bloom_button_theme';
 const BUTTON_THEME_CHANGE_EVENT = 'bloom-button-theme-change';
 const MOTION_STORAGE_KEY = 'bloom_motion_mode';
@@ -220,6 +223,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [cardStyleMode, setCardStyleMode] = useState<CardStyleMode>(() => {
     const stored = localStorage.getItem(CARD_STYLE_STORAGE_KEY);
     return stored === 'glass' || stored === 'solid' || stored === 'outline' ? stored : 'glass';
+  });
+  const [taskbarLogoBackgroundMode, setTaskbarLogoBackgroundMode] = useState<TaskbarLogoBackgroundMode>(() => {
+    const stored = localStorage.getItem(TASKBAR_LOGO_BACKGROUND_KEY);
+    return stored === 'default' || stored === 'discord' || stored === 'accent' || stored === 'glass' || stored === 'none' ? stored : 'default';
   });
   const [buttonTheme, setButtonTheme] = useState<ButtonThemeMode>(() => {
     const stored = localStorage.getItem(BUTTON_THEME_STORAGE_KEY);
@@ -507,6 +514,44 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, [cardStyleMode]);
 
   useEffect(() => {
+    const root = document.documentElement;
+    const styles =
+      taskbarLogoBackgroundMode === 'discord'
+        ? {
+            background: 'linear-gradient(180deg, rgba(47,49,54,0.98), rgba(32,34,37,0.98))',
+            border: 'rgba(255,255,255,0.06)',
+            shadow: '0 10px 26px rgba(0,0,0,0.35)'
+          }
+        : taskbarLogoBackgroundMode === 'accent'
+          ? {
+              background: 'var(--g-accent-gradient)',
+              border: 'color-mix(in srgb, var(--g-accent) 62%, white 18%)',
+              shadow: '0 10px 24px color-mix(in srgb, var(--g-accent) 28%, transparent)'
+            }
+          : taskbarLogoBackgroundMode === 'glass'
+            ? {
+                background: 'linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.05))',
+                border: 'rgba(255,255,255,0.18)',
+                shadow: '0 8px 22px rgba(0,0,0,0.22)'
+              }
+            : taskbarLogoBackgroundMode === 'none'
+              ? {
+                  background: 'transparent',
+                  border: 'transparent',
+                  shadow: 'none'
+                }
+              : {
+                  background: 'color-mix(in srgb, white 5%, transparent)',
+                  border: 'rgba(255,255,255,0.15)',
+                  shadow: 'none'
+                };
+    root.style.setProperty('--g-taskbar-logo-bg', styles.background);
+    root.style.setProperty('--g-taskbar-logo-border', styles.border);
+    root.style.setProperty('--g-taskbar-logo-shadow', styles.shadow);
+    localStorage.setItem(TASKBAR_LOGO_BACKGROUND_KEY, taskbarLogoBackgroundMode);
+  }, [taskbarLogoBackgroundMode]);
+
+  useEffect(() => {
     document.documentElement.setAttribute('data-button-theme', buttonTheme);
     localStorage.setItem(BUTTON_THEME_STORAGE_KEY, buttonTheme);
   }, [buttonTheme]);
@@ -728,6 +773,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
     };
     window.addEventListener(CARD_STYLE_CHANGE_EVENT, onCardStyleChange as EventListener);
     return () => window.removeEventListener(CARD_STYLE_CHANGE_EVENT, onCardStyleChange as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const onTaskbarLogoBackgroundChange = (event: Event) => {
+      const custom = event as CustomEvent<{ background?: TaskbarLogoBackgroundMode }>;
+      const requestedBackground = custom.detail?.background;
+      if (requestedBackground === 'default' || requestedBackground === 'discord' || requestedBackground === 'accent' || requestedBackground === 'glass' || requestedBackground === 'none') {
+        setTaskbarLogoBackgroundMode(requestedBackground);
+      }
+    };
+    window.addEventListener(TASKBAR_LOGO_BACKGROUND_CHANGE_EVENT, onTaskbarLogoBackgroundChange as EventListener);
+    return () => window.removeEventListener(TASKBAR_LOGO_BACKGROUND_CHANGE_EVENT, onTaskbarLogoBackgroundChange as EventListener);
   }, []);
 
   useEffect(() => {

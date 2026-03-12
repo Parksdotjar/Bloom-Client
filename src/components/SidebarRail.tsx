@@ -368,7 +368,14 @@ export function SidebarRail(props: SidebarProps) {
           : undefined
       }}
     >
-      <div className="js-side-item w-14 h-14 rounded-2xl border border-white/15 bg-white/5 flex items-center justify-center overflow-hidden">
+      <div
+        className="js-side-item w-14 h-14 rounded-2xl border flex items-center justify-center overflow-hidden"
+        style={{
+          background: 'var(--g-taskbar-logo-bg, color-mix(in srgb, white 5%, transparent))',
+          borderColor: 'var(--g-taskbar-logo-border, rgba(255,255,255,0.15))',
+          boxShadow: 'var(--g-taskbar-logo-shadow, none)'
+        }}
+      >
         <img src={logo} alt="Bloom" className="w-10 h-10 object-contain" style={{ transform: 'scale(2.4)' }} />
       </div>
 

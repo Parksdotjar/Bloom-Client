@@ -10,6 +10,7 @@ type FontPackMode = 'manrope' | 'space-grotesk' | 'sora';
 type SidebarMode = 'rail' | 'classic' | 'expanded';
 type SidebarPosition = 'left' | 'right' | 'top' | 'bottom';
 type CardStyleMode = 'glass' | 'solid' | 'outline';
+type TaskbarLogoBackgroundMode = 'default' | 'discord' | 'accent' | 'glass' | 'none';
 type ButtonThemeMode = 'default' | 'simple' | 'cartoon' | 'glass' | 'neon' | 'pixel' | 'brutalist' | 'pill' | 'terminal' | 'arcade';
 type MotionMode = 'off' | 'subtle' | 'standard' | 'cinematic';
 type MotionEasingPreset = 'out-quad' | 'out-cubic' | 'in-out-cubic' | 'out-back' | 'out-elastic' | 'linear' | 'custom';
@@ -36,6 +37,8 @@ const SIDEBAR_POSITION_STORAGE_KEY = 'bloom_sidebar_position';
 const SIDEBAR_POSITION_CHANGE_EVENT = 'bloom-sidebar-position-change';
 const CARD_STYLE_STORAGE_KEY = 'bloom_card_style';
 const CARD_STYLE_CHANGE_EVENT = 'bloom-card-style-change';
+const TASKBAR_LOGO_BACKGROUND_KEY = 'bloom_taskbar_logo_background';
+const TASKBAR_LOGO_BACKGROUND_CHANGE_EVENT = 'bloom-taskbar-logo-background-change';
 const BUTTON_THEME_STORAGE_KEY = 'bloom_button_theme';
 const BUTTON_THEME_CHANGE_EVENT = 'bloom-button-theme-change';
 const MOTION_STORAGE_KEY = 'bloom_motion_mode';
@@ -112,6 +115,14 @@ const ICON_PACKS: { id: IconPackMode; label: string; description: string }[] = [
   { id: 'bold', label: 'Bold', description: 'Thicker, stronger strokes.' },
   { id: 'rounded', label: 'Rounded', description: 'Soft modern icon finish.' },
   { id: 'pixel', label: 'Pixel', description: 'Sharper Minecraft-like look.' }
+];
+
+const TASKBAR_LOGO_BACKGROUNDS: { id: TaskbarLogoBackgroundMode; label: string; description: string; preview: string }[] = [
+  { id: 'default', label: 'Default', description: 'Matches the current dock tile.', preview: 'color-mix(in srgb, white 5%, transparent)' },
+  { id: 'discord', label: 'Discord', description: 'Dense charcoal block like Discord.', preview: 'linear-gradient(180deg, rgba(47,49,54,0.98), rgba(32,34,37,0.98))' },
+  { id: 'accent', label: 'Accent', description: 'Use your launcher accent gradient.', preview: 'var(--g-accent-gradient)' },
+  { id: 'glass', label: 'Glass', description: 'Transparent frosted tile.', preview: 'linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.05))' },
+  { id: 'none', label: 'None', description: 'Show just the Bloom logo.', preview: 'linear-gradient(135deg, transparent 0 40%, rgba(255,255,255,0.12) 40% 60%, transparent 60% 100%)' }
 ];
 
 const BUTTON_THEMES: { id: ButtonThemeMode; label: string; description: string }[] = [
@@ -360,6 +371,10 @@ export function Settings() {
     const stored = localStorage.getItem(CARD_STYLE_STORAGE_KEY);
     return stored === 'glass' || stored === 'solid' || stored === 'outline' ? stored : 'glass';
   });
+  const [taskbarLogoBackgroundMode, setTaskbarLogoBackgroundMode] = useState<TaskbarLogoBackgroundMode>(() => {
+    const stored = localStorage.getItem(TASKBAR_LOGO_BACKGROUND_KEY);
+    return stored === 'default' || stored === 'discord' || stored === 'accent' || stored === 'glass' || stored === 'none' ? stored : 'default';
+  });
   const [buttonTheme, setButtonTheme] = useState<ButtonThemeMode>(() => {
     const stored = localStorage.getItem(BUTTON_THEME_STORAGE_KEY);
     return stored === 'default' || stored === 'simple' || stored === 'cartoon' || stored === 'glass' || stored === 'neon' || stored === 'pixel' || stored === 'brutalist' || stored === 'pill' || stored === 'terminal' || stored === 'arcade'
@@ -443,6 +458,12 @@ export function Settings() {
     setIconPackMode(next);
     localStorage.setItem(ICON_PACK_KEY, next);
     window.dispatchEvent(new CustomEvent(ICON_PACK_CHANGE_EVENT, { detail: { iconPack: next } }));
+  };
+
+  const applyTaskbarLogoBackground = (next: TaskbarLogoBackgroundMode) => {
+    setTaskbarLogoBackgroundMode(next);
+    localStorage.setItem(TASKBAR_LOGO_BACKGROUND_KEY, next);
+    window.dispatchEvent(new CustomEvent(TASKBAR_LOGO_BACKGROUND_CHANGE_EVENT, { detail: { background: next } }));
   };
 
   const applyRoundness = (next: number) => {
@@ -853,6 +874,22 @@ export function Settings() {
                 <button key={pack.id} onClick={() => applyIconPack(pack.id)} className={clsx('rounded-xl border p-3 text-left', iconPackMode === pack.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}>
                   <p className="text-sm font-extrabold text-white">{pack.label}</p>
                   <p className="text-xs g-muted mt-1">{pack.description}</p>
+                </button>
+              ))}
+            </div>
+          </AppearanceDropdown>
+
+          <AppearanceDropdown title="Taskbar Logo Background" description="Change the tile behind the Bloom logo in the sidebar dock.">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+              {TASKBAR_LOGO_BACKGROUNDS.map((background) => (
+                <button
+                  key={background.id}
+                  onClick={() => applyTaskbarLogoBackground(background.id)}
+                  className={clsx('rounded-xl border p-3 text-left', taskbarLogoBackgroundMode === background.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}
+                >
+                  <div className="h-12 rounded-lg border border-white/10" style={{ background: background.preview }} />
+                  <p className="mt-3 text-sm font-extrabold text-white">{background.label}</p>
+                  <p className="text-xs g-muted mt-1">{background.description}</p>
                 </button>
               ))}
             </div>
