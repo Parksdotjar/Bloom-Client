@@ -99,6 +99,8 @@ export const TauriApi = {
         invoke<InstanceContentFile[]>('instance_list_shaderpacks', { instanceId }),
     instanceDeleteShaderpack: (instanceId: string, fileName: string) =>
         invoke<void>('instance_delete_shaderpack', { instanceId, fileName }),
+    instanceCopyGameOptions: (sourceInstanceId: string, targetInstanceId: string) =>
+        invoke<string>('instance_copy_game_options', { sourceInstanceId, targetInstanceId }),
     openShaderpacksFolder: (id: string) => invoke<void>('open_shaderpacks_folder', { id }),
     marketplaceSearchMods: (query: string, source?: 'all' | 'modrinth' | 'curseforge', loader?: string, gameVersion?: string) =>
         invoke<MarketplaceMod[]>('marketplace_search_mods', { query, source, loader, gameVersion }),

@@ -7,6 +7,8 @@ import { useDownloader } from '../hooks/useDownloader';
 import { useAuth } from '../hooks/useAuth';
 import { PageWidgets, type PageWidget } from '../components/PageWidgets';
 
+const KEYBIND_ACTION_EVENT = 'bloom-keybind-action';
+
 export function Instances() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -19,6 +21,20 @@ export function Instances() {
     const params = new URLSearchParams(location.search);
     if (params.get('action') === 'create') setIsCreateOpen(true);
   }, [location.search]);
+
+  useEffect(() => {
+    const onKeybindAction = (event: Event) => {
+      const custom = event as CustomEvent<{ action?: string }>;
+      if (custom.detail?.action === 'refresh-active-page') {
+        void loadInstances();
+      }
+      if (custom.detail?.action === 'quick-launch-selected' && instances.length > 0) {
+        void startDownload(instances[0], authState);
+      }
+    };
+    window.addEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
+    return () => window.removeEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
+  }, [instances, loadInstances, startDownload, authState]);
 
   const headerWidget = (
     <section className="g-panel-strong p-6">

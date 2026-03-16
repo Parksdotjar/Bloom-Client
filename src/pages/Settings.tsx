@@ -19,7 +19,7 @@ type SoundPackMode = 'off' | 'soft' | 'arcade' | 'retro';
 type StartupSceneTheme = 'nova' | 'horizon' | 'matrix';
 type StartupSceneSoundProfile = 'off' | 'shimmer' | 'impact';
 
-type SettingsTab = 'general' | 'appearance' | 'widgets' | 'extra';
+type SettingsTab = 'general' | 'appearance' | 'keybinds' | 'widgets' | 'extra';
 
 const THEME_STORAGE_KEY = 'bloom_theme_mode';
 const THEME_CHANGE_EVENT = 'bloom-theme-change';
@@ -78,6 +78,7 @@ const SHORTCUT_CREATE_INSTANCE_KEY = 'bloom_shortcut_create_instance';
 const SHORTCUT_SETTINGS_KEY = 'bloom_shortcut_settings';
 const SHORTCUT_REPLAY_STARTUP_SCENE_KEY = 'bloom_shortcut_replay_startup_scene';
 const SHORTCUTS_CHANGE_EVENT = 'bloom-shortcuts-change';
+const EXTRA_KEYBINDS_STORAGE_KEY = 'bloom_extra_keybinds';
 const SOUND_PACK_KEY = 'bloom_sound_pack';
 const SOUND_CLICKS_KEY = 'bloom_sound_clicks_enabled';
 const SOUND_HOVERS_KEY = 'bloom_sound_hovers_enabled';
@@ -150,6 +151,43 @@ const STARTUP_SCENE_THEMES: { id: StartupSceneTheme; label: string; description:
   { id: 'horizon', label: 'Horizon', description: 'Sunrise gradient flow.' },
   { id: 'matrix', label: 'Matrix', description: 'Grid pulse style.' }
 ];
+
+const KEYBIND_GROUPS = [
+  {
+    title: 'Global',
+    bindings: [
+      { id: 'search', label: 'Open Search', description: 'Focus the launcher search overlay.', defaultValue: 'Ctrl+K', wired: true },
+      { id: 'create', label: 'Create Instance', description: 'Jump straight into the instance create flow.', defaultValue: 'Ctrl+N', wired: true },
+      { id: 'settings', label: 'Open Settings', description: 'Open the main settings page.', defaultValue: 'Ctrl+,', wired: true },
+      { id: 'replay-startup-scene', label: 'Replay Startup Scene', description: 'Replay the Bloom intro scene.', defaultValue: 'Ctrl+Shift+J', wired: true },
+      { id: 'open-help', label: 'Open Help', description: 'Open the help page.', defaultValue: '', wired: true },
+      { id: 'open-marketplace', label: 'Open Marketplace', description: 'Jump to the marketplace page.', defaultValue: '', wired: true }
+    ]
+  },
+  {
+    title: 'Instance Editor',
+    bindings: [
+      { id: 'save-instance-settings', label: 'Save Instance Settings', description: 'Save the active instance editor form.', defaultValue: '', wired: true },
+      { id: 'next-instance-tab', label: 'Next Instance Tab', description: 'Move between Mods, Resource Packs, Shaders, and Settings.', defaultValue: '', wired: true },
+      { id: 'previous-instance-tab', label: 'Previous Instance Tab', description: 'Move back across the editor tabs.', defaultValue: '', wired: true },
+      { id: 'switch-installed-view', label: 'Switch To Installed Tab', description: 'Switch to the Installed library view.', defaultValue: '', wired: true },
+      { id: 'switch-install-view', label: 'Switch To Install Tab', description: 'Switch to the Install library view.', defaultValue: '', wired: true },
+      { id: 'copy-instance-options', label: 'Copy Instance Options', description: 'Copy the current instance option files.', defaultValue: '', wired: true },
+      { id: 'paste-instance-options', label: 'Paste Instance Options', description: 'Apply copied options to the current instance.', defaultValue: '', wired: true }
+    ]
+  },
+  {
+    title: 'Library and Widgets',
+    bindings: [
+      { id: 'refresh-active-page', label: 'Refresh Active Page', description: 'Reload the active page data.', defaultValue: '', wired: true },
+      { id: 'open-active-folder', label: 'Open Active Folder', description: 'Open the current mods/resourcepacks/shaders folder.', defaultValue: '', wired: true },
+      { id: 'toggle-widget-docker', label: 'Toggle Widget Docker', description: 'Show or hide the widget docker.', defaultValue: '', wired: true },
+      { id: 'focus-page-search', label: 'Focus Page Search', description: 'Focus search inputs inside supported pages.', defaultValue: '', wired: true },
+      { id: 'quick-launch-selected', label: 'Quick Launch Selected', description: 'Launch the first visible instance on the library page.', defaultValue: '', wired: true },
+      { id: 'open-downloads', label: 'Open Downloads', description: 'Open the downloads/import page.', defaultValue: '', wired: true }
+    ]
+  }
+] as const;
 
 const STARTUP_SCENE_SOUND_PROFILES: { id: StartupSceneSoundProfile; label: string; description: string }[] = [
   { id: 'off', label: 'Off', description: 'Silent startup.' },
@@ -261,6 +299,10 @@ function clampMotionTuning(input: Partial<typeof MOTION_TUNING_DEFAULTS>) {
   };
 }
 
+function serializeKeybindMap(map: Record<string, string>) {
+  return JSON.stringify(Object.entries(map).sort(([left], [right]) => left.localeCompare(right)));
+}
+
 export function Settings() {
   const [tab, setTab] = useState<SettingsTab>('general');
   const [showWidgetDocker, setShowWidgetDocker] = useState<boolean>(() => localStorage.getItem(SHOW_WIDGET_DOCKER_KEY) === 'true');
@@ -310,7 +352,30 @@ export function Settings() {
   const [shortcutCreateInstance, setShortcutCreateInstance] = useState<string>(() => localStorage.getItem(SHORTCUT_CREATE_INSTANCE_KEY) || 'Ctrl+N');
   const [shortcutSettings, setShortcutSettings] = useState<string>(() => localStorage.getItem(SHORTCUT_SETTINGS_KEY) || 'Ctrl+,');
   const [shortcutReplayStartupScene, setShortcutReplayStartupScene] = useState<string>(() => localStorage.getItem(SHORTCUT_REPLAY_STARTUP_SCENE_KEY) || 'Ctrl+Shift+J');
-  const [capturingShortcut, setCapturingShortcut] = useState<'search' | 'create' | 'settings' | 'replay-startup-scene' | null>(null);
+  const [draftShortcutSearch, setDraftShortcutSearch] = useState<string>(() => localStorage.getItem(SHORTCUT_SEARCH_KEY) || 'Ctrl+K');
+  const [draftShortcutCreateInstance, setDraftShortcutCreateInstance] = useState<string>(() => localStorage.getItem(SHORTCUT_CREATE_INSTANCE_KEY) || 'Ctrl+N');
+  const [draftShortcutSettings, setDraftShortcutSettings] = useState<string>(() => localStorage.getItem(SHORTCUT_SETTINGS_KEY) || 'Ctrl+,');
+  const [draftShortcutReplayStartupScene, setDraftShortcutReplayStartupScene] = useState<string>(() => localStorage.getItem(SHORTCUT_REPLAY_STARTUP_SCENE_KEY) || 'Ctrl+Shift+J');
+  const [extraKeybinds, setExtraKeybinds] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem(EXTRA_KEYBINDS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) as Record<string, string> : {};
+      return typeof parsed === 'object' && parsed ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
+  const [draftExtraKeybinds, setDraftExtraKeybinds] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem(EXTRA_KEYBINDS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) as Record<string, string> : {};
+      return typeof parsed === 'object' && parsed ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
+  const [capturingShortcut, setCapturingShortcut] = useState<string | null>(null);
+  const [keybindSaveState, setKeybindSaveState] = useState<'idle' | 'saved'>('idle');
   const [soundPack, setSoundPack] = useState<SoundPackMode>(() => {
     const stored = localStorage.getItem(SOUND_PACK_KEY);
     return stored === 'off' || stored === 'soft' || stored === 'arcade' || stored === 'retro' ? stored : 'soft';
@@ -441,6 +506,12 @@ export function Settings() {
     if (Number.isFinite(stored)) return clampMotionTuning({ easingY2: stored }).easingY2;
     return MOTION_TUNING_DEFAULTS.easingY2;
   });
+  const keybindsDirty =
+    draftShortcutSearch !== shortcutSearch
+    || draftShortcutCreateInstance !== shortcutCreateInstance
+    || draftShortcutSettings !== shortcutSettings
+    || draftShortcutReplayStartupScene !== shortcutReplayStartupScene
+    || serializeKeybindMap(draftExtraKeybinds) !== serializeKeybindMap(extraKeybinds);
   const applyTheme = (next: LauncherTheme) => {
     setThemeMode(next);
     localStorage.setItem(THEME_STORAGE_KEY, next);
@@ -488,19 +559,47 @@ export function Settings() {
   };
 
   const applyShortcuts = (partial: { search?: string; create?: string; settings?: string; replayStartupScene?: string }) => {
-    const nextSearch = partial.search ?? shortcutSearch;
-    const nextCreate = partial.create ?? shortcutCreateInstance;
-    const nextSettings = partial.settings ?? shortcutSettings;
-    const nextReplayStartupScene = partial.replayStartupScene ?? shortcutReplayStartupScene;
-    setShortcutSearch(nextSearch);
-    setShortcutCreateInstance(nextCreate);
-    setShortcutSettings(nextSettings);
-    setShortcutReplayStartupScene(nextReplayStartupScene);
-    localStorage.setItem(SHORTCUT_SEARCH_KEY, nextSearch);
-    localStorage.setItem(SHORTCUT_CREATE_INSTANCE_KEY, nextCreate);
-    localStorage.setItem(SHORTCUT_SETTINGS_KEY, nextSettings);
-    localStorage.setItem(SHORTCUT_REPLAY_STARTUP_SCENE_KEY, nextReplayStartupScene);
-    window.dispatchEvent(new CustomEvent(SHORTCUTS_CHANGE_EVENT, { detail: { search: nextSearch, create: nextCreate, settings: nextSettings, replayStartupScene: nextReplayStartupScene } }));
+    setDraftShortcutSearch(partial.search ?? draftShortcutSearch);
+    setDraftShortcutCreateInstance(partial.create ?? draftShortcutCreateInstance);
+    setDraftShortcutSettings(partial.settings ?? draftShortcutSettings);
+    setDraftShortcutReplayStartupScene(partial.replayStartupScene ?? draftShortcutReplayStartupScene);
+    setKeybindSaveState('idle');
+  };
+
+  const applyExtraKeybind = (id: string, value: string) => {
+    setDraftExtraKeybinds((current) => ({ ...current, [id]: value }));
+    setKeybindSaveState('idle');
+  };
+
+  const clearShortcut = (id: string) => {
+    if (id === 'search') applyShortcuts({ search: '' });
+    else if (id === 'create') applyShortcuts({ create: '' });
+    else if (id === 'settings') applyShortcuts({ settings: '' });
+    else if (id === 'replay-startup-scene') applyShortcuts({ replayStartupScene: '' });
+    else applyExtraKeybind(id, '');
+  };
+
+  const saveKeybinds = () => {
+    setShortcutSearch(draftShortcutSearch);
+    setShortcutCreateInstance(draftShortcutCreateInstance);
+    setShortcutSettings(draftShortcutSettings);
+    setShortcutReplayStartupScene(draftShortcutReplayStartupScene);
+    setExtraKeybinds(draftExtraKeybinds);
+    localStorage.setItem(SHORTCUT_SEARCH_KEY, draftShortcutSearch);
+    localStorage.setItem(SHORTCUT_CREATE_INSTANCE_KEY, draftShortcutCreateInstance);
+    localStorage.setItem(SHORTCUT_SETTINGS_KEY, draftShortcutSettings);
+    localStorage.setItem(SHORTCUT_REPLAY_STARTUP_SCENE_KEY, draftShortcutReplayStartupScene);
+    localStorage.setItem(EXTRA_KEYBINDS_STORAGE_KEY, JSON.stringify(draftExtraKeybinds));
+    window.dispatchEvent(new CustomEvent(SHORTCUTS_CHANGE_EVENT, {
+      detail: {
+        search: draftShortcutSearch,
+        create: draftShortcutCreateInstance,
+        settings: draftShortcutSettings,
+        replayStartupScene: draftShortcutReplayStartupScene,
+        extras: draftExtraKeybinds
+      }
+    }));
+    setKeybindSaveState('saved');
   };
 
   const applySound = (partial: {
@@ -581,17 +680,22 @@ export function Settings() {
     const onKeyDown = (event: KeyboardEvent) => {
       event.preventDefault();
       event.stopPropagation();
+      if (event.key === 'Escape') {
+        setCapturingShortcut(null);
+        return;
+      }
       const shortcut = eventToShortcut(event);
       if (!shortcut) return;
       if (capturingShortcut === 'search') applyShortcuts({ search: shortcut });
-      if (capturingShortcut === 'create') applyShortcuts({ create: shortcut });
-      if (capturingShortcut === 'settings') applyShortcuts({ settings: shortcut });
-      if (capturingShortcut === 'replay-startup-scene') applyShortcuts({ replayStartupScene: shortcut });
+      else if (capturingShortcut === 'create') applyShortcuts({ create: shortcut });
+      else if (capturingShortcut === 'settings') applyShortcuts({ settings: shortcut });
+      else if (capturingShortcut === 'replay-startup-scene') applyShortcuts({ replayStartupScene: shortcut });
+      else applyExtraKeybind(capturingShortcut, shortcut);
       setCapturingShortcut(null);
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [capturingShortcut, shortcutSearch, shortcutCreateInstance, shortcutSettings, shortcutReplayStartupScene]);
+  }, [capturingShortcut, shortcutSearch, shortcutCreateInstance, shortcutSettings, shortcutReplayStartupScene, extraKeybinds]);
 
   const applyAccent = (next: AccentMode) => {
     setAccentMode(next);
@@ -784,6 +888,7 @@ export function Settings() {
       <section className="g-panel p-1 inline-flex">
         <button onClick={() => setTab('general')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'general' ? 'bg-white/15 text-white' : 'text-white/55')}>General</button>
         <button onClick={() => setTab('appearance')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'appearance' ? 'bg-white/15 text-white' : 'text-white/55')}>Appearance</button>
+        <button onClick={() => setTab('keybinds')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'keybinds' ? 'bg-white/15 text-white' : 'text-white/55')}>Keybinds</button>
         <button onClick={() => setTab('widgets')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'widgets' ? 'bg-white/15 text-white' : 'text-white/55')}>Widgets</button>
         <button onClick={() => setTab('extra')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'extra' ? 'bg-white/15 text-white' : 'text-white/55')}>Extra</button>
       </section>
@@ -799,31 +904,6 @@ export function Settings() {
             <input defaultValue="-XX:+UseG1GC" className="w-full mt-2 h-10 rounded-lg border border-white/10 bg-white/[0.03] px-3 text-sm font-semibold text-white outline-none" />
           </div>
 
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Keyboard Shortcuts</p>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                <p className="text-xs font-extrabold text-white/70 uppercase tracking-[0.12em]">Search</p>
-                <p className="text-[11px] g-muted mt-1">Open launcher search</p>
-                <button onClick={() => setCapturingShortcut('search')} className="mt-2 g-btn h-9 w-full text-xs font-extrabold">{capturingShortcut === 'search' ? 'Press keys...' : shortcutSearch}</button>
-              </div>
-              <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                <p className="text-xs font-extrabold text-white/70 uppercase tracking-[0.12em]">Create Instance</p>
-                <p className="text-[11px] g-muted mt-1">Open create flow directly</p>
-                <button onClick={() => setCapturingShortcut('create')} className="mt-2 g-btn h-9 w-full text-xs font-extrabold">{capturingShortcut === 'create' ? 'Press keys...' : shortcutCreateInstance}</button>
-              </div>
-              <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                <p className="text-xs font-extrabold text-white/70 uppercase tracking-[0.12em]">Settings</p>
-                <p className="text-[11px] g-muted mt-1">Jump to settings page</p>
-                <button onClick={() => setCapturingShortcut('settings')} className="mt-2 g-btn h-9 w-full text-xs font-extrabold">{capturingShortcut === 'settings' ? 'Press keys...' : shortcutSettings}</button>
-              </div>
-              <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                <p className="text-xs font-extrabold text-white/70 uppercase tracking-[0.12em]">Replay Startup Scene</p>
-                <p className="text-[11px] g-muted mt-1">Play splash intro again</p>
-                <button onClick={() => setCapturingShortcut('replay-startup-scene')} className="mt-2 g-btn h-9 w-full text-xs font-extrabold">{capturingShortcut === 'replay-startup-scene' ? 'Press keys...' : shortcutReplayStartupScene}</button>
-              </div>
-            </div>
-          </div>
         </section>
       ) : tab === 'appearance' ? (
         <section className="g-panel p-6 space-y-6">
@@ -1181,6 +1261,97 @@ export function Settings() {
               <input type="range" min={-70} max={70} step={1} value={motionOffsetY} onChange={(event) => applyMotionTuning({ offsetY: Number(event.target.value) })} className="w-full mt-1 g-range" />
             </div>
           </AppearanceDropdown>
+        </section>
+      ) : tab === 'keybinds' ? (
+        <section className="g-panel p-6 space-y-4">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Keybinds</p>
+            <p className="text-xs g-muted mt-2">
+              Bind launcher actions here. The global shortcuts are live now. The extra editor and page shortcuts are stored and ready for the next round of wiring.
+            </p>
+            <p className="text-[11px] text-white/40 mt-2">Press `Escape` while capturing to cancel. Use `Clear` to set a shortcut back to `Unbound`.</p>
+          </div>
+
+          {KEYBIND_GROUPS.map((group) => (
+            <div key={group.title} className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">{group.title}</p>
+                <p className="text-[11px] g-muted mt-1">
+                  {group.title === 'Global'
+                    ? 'Primary launcher actions.'
+                    : group.title === 'Instance Editor'
+                      ? 'Shortcuts for moving around and acting inside instance editor pages.'
+                      : 'Reserved slots for library, widgets, and quick page actions.'}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                {group.bindings.map((binding) => {
+                  const currentValue =
+                    binding.id === 'search'
+                      ? draftShortcutSearch
+                      : binding.id === 'create'
+                        ? draftShortcutCreateInstance
+                        : binding.id === 'settings'
+                          ? draftShortcutSettings
+                          : binding.id === 'replay-startup-scene'
+                            ? draftShortcutReplayStartupScene
+                            : draftExtraKeybinds[binding.id] ?? binding.defaultValue;
+                  const displayValue = currentValue && currentValue.trim() ? currentValue : 'Unbound';
+                  return (
+                    <div key={binding.id} className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-extrabold text-white/78 uppercase tracking-[0.12em]">{binding.label}</p>
+                          <p className="text-[11px] g-muted mt-1">{binding.description}</p>
+                        </div>
+                        <span className={clsx('rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em]', binding.wired ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200' : 'border-white/10 bg-white/[0.03] text-white/45')}>
+                          {binding.wired ? 'Live' : 'Stored'}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex gap-2">
+                        <button onClick={() => setCapturingShortcut(binding.id)} className="g-btn h-9 flex-1 text-xs font-extrabold">
+                          {capturingShortcut === binding.id ? 'Press keys...' : displayValue}
+                        </button>
+                        <button onClick={() => clearShortcut(binding.id)} className="rounded-lg border border-white/10 bg-white/[0.04] px-3 text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/70">
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+
+          {(keybindsDirty || keybindSaveState === 'saved') && (
+            <div
+              className="sticky bottom-4 rounded-2xl border p-4 flex flex-wrap items-center justify-between gap-3"
+              style={{
+                borderColor: keybindsDirty ? 'rgba(248, 113, 113, 0.35)' : 'rgba(74, 222, 128, 0.35)',
+                background: keybindsDirty ? 'rgba(127, 29, 29, 0.22)' : 'rgba(20, 83, 45, 0.22)'
+              }}
+            >
+              <div>
+                <p className={clsx('text-xs font-extrabold uppercase tracking-[0.14em]', keybindsDirty ? 'text-red-200' : 'text-emerald-200')}>
+                  {keybindsDirty ? 'Unsaved Keybind Changes' : 'Keybinds Saved'}
+                </p>
+                <p className="text-xs text-white/62 mt-1">
+                  {keybindsDirty ? 'These bindings will not go live until you save them.' : 'Current non-unbound bindings are now live.'}
+                </p>
+              </div>
+              <button
+                onClick={saveKeybinds}
+                disabled={!keybindsDirty}
+                className={clsx(
+                  'h-11 px-5 rounded-xl text-xs font-extrabold uppercase tracking-[0.14em] transition',
+                  keybindsDirty ? 'bg-red-500 text-white hover:bg-red-400' : 'bg-emerald-500 text-white'
+                )}
+              >
+                {keybindsDirty ? 'Save Keybinds' : 'Saved'}
+              </button>
+            </div>
+          )}
         </section>
       ) : tab === 'widgets' ? (
         <section className="g-panel p-6 space-y-4">

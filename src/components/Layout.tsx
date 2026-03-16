@@ -92,6 +92,9 @@ const SHORTCUT_SEARCH_KEY = 'bloom_shortcut_search';
 const SHORTCUT_CREATE_INSTANCE_KEY = 'bloom_shortcut_create_instance';
 const SHORTCUT_SETTINGS_KEY = 'bloom_shortcut_settings';
 const SHORTCUT_REPLAY_STARTUP_SCENE_KEY = 'bloom_shortcut_replay_startup_scene';
+const EXTRA_KEYBINDS_STORAGE_KEY = 'bloom_extra_keybinds';
+const KEYBIND_ACTION_EVENT = 'bloom-keybind-action';
+const SHOW_WIDGET_DOCKER_KEY = 'bloom_show_widget_docker';
 const SOUND_PACK_KEY = 'bloom_sound_pack';
 const SOUND_CLICKS_KEY = 'bloom_sound_clicks_enabled';
 const SOUND_HOVERS_KEY = 'bloom_sound_hovers_enabled';
@@ -931,6 +934,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
       const createShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_CREATE_INSTANCE_KEY) || 'Ctrl+N');
       const settingsShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_SETTINGS_KEY) || 'Ctrl+,');
       const replayStartupSceneShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_REPLAY_STARTUP_SCENE_KEY) || 'Ctrl+Shift+J');
+      const extraBindings = (() => {
+        try {
+          const raw = localStorage.getItem(EXTRA_KEYBINDS_STORAGE_KEY);
+          const parsed = raw ? JSON.parse(raw) as Record<string, string> : {};
+          return typeof parsed === 'object' && parsed ? parsed : {};
+        } catch {
+          return {} as Record<string, string>;
+        }
+      })();
+      const matchesExtra = (id: string) => {
+        const shortcut = normalizeShortcut(extraBindings[id] || '');
+        return Boolean(activeShortcut && shortcut && activeShortcut === shortcut);
+      };
       const blockedBrowserShortcuts = new Set([
         'ctrl+j',
         'ctrl+h',
@@ -986,6 +1002,48 @@ export function Layout({ children }: { children: React.ReactNode }) {
         event.preventDefault();
         triggerStartupScene();
         return;
+      }
+      if (matchesExtra('open-help')) {
+        event.preventDefault();
+        navigate('/help');
+        return;
+      }
+      if (matchesExtra('open-marketplace')) {
+        event.preventDefault();
+        navigate('/marketplace');
+        return;
+      }
+      if (matchesExtra('open-downloads')) {
+        event.preventDefault();
+        navigate('/importer');
+        return;
+      }
+      if (matchesExtra('toggle-widget-docker')) {
+        event.preventDefault();
+        const next = localStorage.getItem(SHOW_WIDGET_DOCKER_KEY) !== 'true';
+        localStorage.setItem(SHOW_WIDGET_DOCKER_KEY, next ? 'true' : 'false');
+        window.dispatchEvent(new CustomEvent('bloom-extra-change', { detail: { showWidgetDocker: next } }));
+        return;
+      }
+      const pageActions = [
+        'save-instance-settings',
+        'next-instance-tab',
+        'previous-instance-tab',
+        'switch-installed-view',
+        'switch-install-view',
+        'copy-instance-options',
+        'paste-instance-options',
+        'refresh-active-page',
+        'open-active-folder',
+        'focus-page-search',
+        'quick-launch-selected'
+      ];
+      for (const action of pageActions) {
+        if (matchesExtra(action)) {
+          event.preventDefault();
+          window.dispatchEvent(new CustomEvent(KEYBIND_ACTION_EVENT, { detail: { action } }));
+          return;
+        }
       }
       if (event.key === 'Escape') {
         setSearchOpen(false);
@@ -1293,6 +1351,24 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isRightSidebar = sidebarPosition === 'right';
   const showClientShell = Boolean(authState && onboardingCompleted);
   const showOnboardingGate = onboardingOpen || !showClientShell;
+  const onboardingStepTitle =
+    onboardingStep === 0 ? 'Sign in with Microsoft'
+      : onboardingStep === 1 ? `Hi, ${authState?.profile.name ?? 'there'}`
+      : onboardingStep === 2 ? 'Choose profile picture'
+      : onboardingStep === 3 ? 'Choose launcher theme'
+      : 'Choose accent color';
+  const onboardingStepBody =
+    onboardingStep === 0 ? 'Bloom stays hidden until your account is connected and first-run setup is finished.'
+      : onboardingStep === 1 ? 'You are connected. Continue into your launcher setup.'
+      : onboardingStep === 2 ? 'Upload a custom avatar or keep the current Minecraft one.'
+      : onboardingStep === 3 ? 'Pick the overall launcher mood before you enter the app.'
+      : 'Choose the accent color that will drive Bloom highlights and focus states.';
+  const onboardingStepIcon =
+    onboardingStep === 0 ? <Send size={28} className="text-[#c7ccd4]" />
+      : onboardingStep === 1 ? <Sparkles size={28} className="text-[#c7ccd4]" />
+      : onboardingStep === 2 ? <Camera size={28} className="text-[#c7ccd4]" />
+      : onboardingStep === 3 ? <Layers size={28} className="text-[#c7ccd4]" />
+      : <Palette size={28} className="text-[#c7ccd4]" />;
   const sidebarRail = (
     <SidebarRail
       className="js-giga-reveal shrink-0"
@@ -1529,139 +1605,206 @@ export function Layout({ children }: { children: React.ReactNode }) {
       )}
 
       {showOnboardingGate && (
-        <div className={clsx('absolute inset-0 z-[340] flex items-center justify-center p-4 app-region-no-drag onboarding-space-solid', onboardingExitActive && 'onboarding-exit-active')}>
-          <div className="pointer-events-none absolute inset-0 onboarding-stars-far" />
-          <div className="pointer-events-none absolute inset-0 onboarding-stars-near" />
-          <div className="pointer-events-none absolute inset-0 onboarding-stars-glow" />
+        <div className={clsx('fixed inset-0 z-[340] flex items-center justify-center overflow-hidden p-4 app-region-no-drag', onboardingExitActive && 'onboarding-exit-active')}>
+          <div className="pointer-events-none absolute inset-0 bg-[#020202]" />
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.32),transparent_18%),radial-gradient(circle_at_28%_58%,rgba(201,206,214,0.08),transparent_32%),linear-gradient(180deg,rgba(255,255,255,0.04),transparent_24%)]" />
+          <div className="pointer-events-none absolute left-[-12%] top-[-20%] h-[52rem] w-[32rem] rotate-[28deg] bg-[linear-gradient(180deg,rgba(255,255,255,0.34),rgba(255,255,255,0.04),transparent)] blur-[26px] opacity-75" />
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_22%,rgba(255,255,255,0.04),transparent_24%)]" />
 
-          <div className="relative w-full max-w-6xl onboarding-shell">
-            <div className="mx-auto max-w-[680px]">
-              {onboardingStep === 0 && (
-                <div className="mt-10 mx-auto max-w-[520px] rounded-[28px] border border-white/12 bg-[#070a11]/92 px-8 py-10 text-center shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
-                  <p className="text-[10px] uppercase tracking-[0.24em] font-extrabold text-white/45">First Launch</p>
-                  <h2 className="mt-3 text-4xl md:text-5xl font-extrabold text-white">Sign in with Microsoft</h2>
-                  <p className="mt-3 text-sm md:text-base text-white/62">Bloom stays hidden until your account is connected and setup is finished.</p>
-
-                  {!authFlowActive ? (
+          <div className={clsx('relative w-full', onboardingStep === 4 ? 'max-w-[860px]' : 'max-w-[640px]')}>
+            <div className="rounded-[40px] border border-white/10 bg-[rgba(10,10,10,0.9)] px-5 py-5 shadow-[0_40px_120px_rgba(0,0,0,0.65)] md:px-8 md:py-7">
+              <div className="absolute inset-0 rounded-[40px] bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_38%),radial-gradient(circle_at_18%_56%,rgba(201,206,214,0.1),transparent_30%),radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.06)_1px,transparent_1px)] [background-size:auto,auto,14px_14px] opacity-80" />
+              <div className="relative">
+                <div className="mb-7 flex items-center justify-center gap-2.5">
+                  {[0, 1, 2, 3, 4].map((step) => (
                     <button
-                      onClick={() => { void startLogin(); }}
-                      className="mt-8 h-14 px-8 rounded-xl border border-white/20 bg-white text-black text-base font-extrabold inline-flex items-center gap-2"
-                    >
-                      <Send size={18} /> Continue with Microsoft
-                    </button>
-                  ) : (
-                    <div className="mt-8 rounded-2xl border border-white/12 bg-white/[0.04] p-5 text-left">
-                      <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/45">Code</p>
-                      <p className="mt-2 text-4xl font-extrabold tracking-[0.22em] g-accent-text">{authCode || '--------'}</p>
-                      <p className="mt-2 text-xs text-white/55 break-all">{authLink}</p>
-                      <div className="mt-4 grid grid-cols-3 gap-2">
-                        <button onClick={() => { void openLoginInBrowser(); }} className="g-btn-accent h-11 text-xs font-extrabold uppercase tracking-[0.12em] inline-flex items-center justify-center gap-1"><Send size={12} /> Open</button>
-                        <button onClick={() => navigator.clipboard.writeText(authCode || '')} className="g-btn h-11 text-xs font-extrabold uppercase tracking-[0.12em]">Copy</button>
-                        <button onClick={() => { cancelLogin(); dismissAuthOverlay(); }} className="g-btn h-11 text-xs font-extrabold uppercase tracking-[0.12em]">Cancel</button>
+                      key={step}
+                      onClick={() => {
+                        if (step > 0 && !authState) return;
+                        setOnboardingStep(step as 0 | 1 | 2 | 3 | 4);
+                      }}
+                      className={clsx(
+                        'h-1.5 rounded-full transition-all duration-300',
+                        onboardingStep === step ? 'w-9 bg-[#c7ccd4] shadow-[0_0_18px_rgba(199,204,212,0.4)]' : 'w-7 bg-white/30 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)] hover:bg-white/38',
+                        step > 0 && !authState && 'opacity-35'
+                      )}
+                      aria-label={`Go to step ${step + 1}`}
+                    />
+                  ))}
+                </div>
+
+                <div className={clsx('mx-auto flex flex-col items-center text-center', onboardingStep === 4 ? 'max-w-[560px]' : 'max-w-[420px]')}>
+                  <div className={clsx('mb-6 flex items-center justify-center rounded-[30px] border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.15),rgba(255,255,255,0.02))] shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_18px_50px_rgba(0,0,0,0.36)]', onboardingStep === 4 ? 'h-24 w-24' : 'h-28 w-28')}>
+                    <div className={clsx('flex items-center justify-center rounded-[24px] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.22),rgba(255,255,255,0.04)_45%,rgba(0,0,0,0.55)_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]', onboardingStep === 4 ? 'h-16 w-16' : 'h-20 w-20')}>
+                      {onboardingStepIcon}
+                    </div>
+                  </div>
+                  <h2 className={clsx('font-extrabold text-white', onboardingStep === 4 ? 'text-3xl md:text-4xl' : 'text-4xl md:text-5xl')}>{onboardingStepTitle}</h2>
+                  <p className={clsx('mt-3 text-white/55', onboardingStep === 4 ? 'text-sm leading-6' : 'text-base leading-7')}>{onboardingStepBody}</p>
+                </div>
+
+                <div className={clsx('mx-auto mt-8', onboardingStep === 4 ? 'max-w-[760px]' : 'max-w-[520px]')}>
+                  {onboardingStep === 0 && (
+                    <div className="space-y-4">
+                      {!authFlowActive ? (
+                        <button
+                          onClick={() => { void startLogin(); }}
+                          className="group flex w-full items-center gap-4 rounded-[24px] border border-white/10 bg-white/[0.03] px-5 py-5 text-left transition hover:bg-white/[0.06]"
+                        >
+                          <div className="flex h-14 w-14 items-center justify-center rounded-[18px] border border-white/12 bg-[rgba(201,206,214,0.12)]">
+                            <Send size={18} className="text-[#c7ccd4]" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xl font-extrabold text-white">Continue with Microsoft</p>
+                            <p className="mt-1 text-sm text-white/54">Secure device-code login using your Microsoft and Minecraft account.</p>
+                          </div>
+                          <div className="flex h-12 w-12 items-center justify-center rounded-[16px] border border-white/10 bg-white/[0.03] text-white/72 transition group-hover:translate-x-0.5">
+                            <span className="text-xl">→</span>
+                          </div>
+                        </button>
+                      ) : (
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
+                          <p className="text-[10px] uppercase tracking-[0.18em] font-extrabold text-white/42">Your login code</p>
+                          <p className="mt-3 text-4xl font-extrabold tracking-[0.22em] text-[#c7ccd4]">{authCode || '--------'}</p>
+                          <p className="mt-2 break-all text-xs text-white/50">{authLink}</p>
+                          <div className="mt-4 grid grid-cols-3 gap-2">
+                            <button onClick={() => { void openLoginInBrowser(); }} className="rounded-[16px] border border-[#c7ccd4]/30 bg-[rgba(201,206,214,0.14)] px-3 py-3 text-xs font-extrabold uppercase tracking-[0.12em] text-white">Open</button>
+                            <button onClick={() => navigator.clipboard.writeText(authCode || '')} className="rounded-[16px] border border-white/10 bg-white/[0.03] px-3 py-3 text-xs font-extrabold uppercase tracking-[0.12em] text-white/85">Copy</button>
+                            <button onClick={() => { cancelLogin(); dismissAuthOverlay(); }} className="rounded-[16px] border border-white/10 bg-white/[0.03] px-3 py-3 text-xs font-extrabold uppercase tracking-[0.12em] text-white/85">Cancel</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {onboardingStep === 1 && authState && (
+                    <div className="space-y-4">
+                      <button
+                        onClick={() => setOnboardingStep(2)}
+                        className="group flex w-full items-center gap-4 rounded-[24px] border border-white/10 bg-white/[0.03] px-5 py-5 text-left transition hover:bg-white/[0.06]"
+                      >
+                        <div className="flex h-14 w-14 items-center justify-center rounded-[18px] border border-white/12 bg-[rgba(201,206,214,0.12)]">
+                          <User size={18} className="text-[#c7ccd4]" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xl font-extrabold text-white">Use {authState.profile.name}</p>
+                          <p className="mt-1 text-sm text-white/54">Move into profile setup and finish your first-run launcher style.</p>
+                        </div>
+                        <div className="flex h-12 w-12 items-center justify-center rounded-[16px] border border-white/10 bg-white/[0.03] text-white/72 transition group-hover:translate-x-0.5">
+                          <span className="text-xl">→</span>
+                        </div>
+                      </button>
+                    </div>
+                  )}
+
+                  {onboardingStep === 2 && authState && (
+                    <>
+                      <input ref={onboardingProfileUploadRef} type="file" accept="image/*" className="hidden" onChange={onProfileInputChange} />
+                      <div className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
+                        <div className="flex flex-col items-center gap-5 text-center">
+                          <div className="h-32 w-32 overflow-hidden rounded-full border border-white/15 bg-black/30">
+                            <img
+                              src={displayAvatar || `https://crafatar.com/avatars/${authState.profile.id}?size=112&default=MHF_Steve`}
+                              alt="Profile preview"
+                              className="h-full w-full object-cover"
+                            />
+                          </div>
+                          <div className="flex w-full flex-col gap-3 sm:flex-row">
+                            <button onClick={() => onboardingProfileUploadRef.current?.click()} className="flex-1 rounded-[18px] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-bold text-white transition hover:bg-white/[0.06]">
+                              Upload picture
+                            </button>
+                            <button onClick={() => setOnboardingStep(3)} className="flex-1 rounded-[18px] border border-[#c7ccd4]/30 bg-[rgba(201,206,214,0.14)] px-4 py-3 text-sm font-extrabold text-white transition hover:bg-[rgba(201,206,214,0.2)]">
+                              Continue
+                            </button>
+                          </div>
+                          <button onClick={clearProfileAvatar} className="text-xs font-extrabold uppercase tracking-[0.16em] text-white/52 transition hover:text-white/78">
+                            Reset picture
+                          </button>
+                        </div>
                       </div>
+                    </>
+                  )}
+
+                  {onboardingStep === 3 && (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      {ONBOARDING_THEME_OPTIONS.map((theme) => (
+                        <button
+                          key={theme.id}
+                          onClick={() => {
+                            setThemeMode(theme.id);
+                            setOnboardingStep(4);
+                          }}
+                          className={clsx(
+                            'group flex w-full items-center gap-3 rounded-[22px] border px-4 py-4 text-left transition',
+                            themeMode === theme.id
+                              ? 'border-[#c7ccd4]/30 bg-[rgba(201,206,214,0.12)]'
+                              : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06]'
+                          )}
+                        >
+                          <div className="flex h-14 w-14 items-center justify-center rounded-[18px] border border-white/12 bg-[rgba(201,206,214,0.12)]">
+                            {theme.id === 'gray' ? <Layers size={18} className="text-[#c7ccd4]" /> : theme.id === 'ocean' ? <Waves size={18} className="text-[#c7ccd4]" /> : <Gift size={18} className="text-[#c7ccd4]" />}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xl font-extrabold text-white">{theme.label}</p>
+                            <p className="mt-1 text-sm text-white/54">{theme.hint}</p>
+                          </div>
+                          <div className="flex h-12 w-12 items-center justify-center rounded-[16px] border border-white/10 bg-white/[0.03] text-white/72 transition group-hover:translate-x-0.5">
+                            <span className="text-xl">→</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {onboardingStep === 4 && (
+                    <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
+                      {ONBOARDING_ACCENT_OPTIONS.map((accent) => (
+                        <button
+                          key={accent.id}
+                          onClick={() => {
+                            setAccentMode(accent.id);
+                            completeOnboarding();
+                          }}
+                          className={clsx(
+                            'group flex w-full items-center gap-4 rounded-[24px] border px-5 py-5 text-left transition',
+                            accentMode === accent.id
+                              ? 'border-[#c7ccd4]/30 bg-[rgba(201,206,214,0.12)]'
+                              : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06]'
+                          )}
+                        >
+                          <div className="flex h-12 w-12 items-center justify-center rounded-[16px] border border-white/12 bg-[rgba(201,206,214,0.12)]">
+                            <Palette size={16} className="text-[#c7ccd4]" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-base font-extrabold text-white">{accent.label}</p>
+                            <div className="mt-2 h-4 w-24 rounded-md border border-white/12" style={{ background: accent.swatch }} />
+                          </div>
+                          <div className="flex h-10 w-10 items-center justify-center rounded-[14px] border border-white/10 bg-white/[0.03] text-white/72 transition group-hover:translate-x-0.5">
+                            <span className="text-xl">→</span>
+                          </div>
+                        </button>
+                      ))}
                     </div>
                   )}
                 </div>
-              )}
 
-              {onboardingStep === 1 && authState && (
-                <div className="mt-10 flex items-center justify-center gap-3">
-                  <p className="text-5xl md:text-6xl font-extrabold text-white">Hi,</p>
-                  <div className="text-5xl md:text-6xl font-extrabold text-white border-b border-white/60 px-2 pb-2 leading-none">
-                    {authState.profile.name}
-                  </div>
+                <div className="mx-auto mt-8 flex max-w-[520px] items-center justify-between gap-3">
                   <button
-                    onClick={() => setOnboardingStep(2)}
-                    className="h-14 px-6 rounded-xl border border-white/20 bg-white text-black text-2xl font-extrabold inline-flex items-center gap-2"
+                    onClick={() => setOnboardingStep(onboardingStep === 0 ? 0 : onboardingStep === 1 ? 0 : onboardingStep === 2 ? 1 : onboardingStep === 3 ? 2 : 3)}
+                    disabled={onboardingStep === 0}
+                    className="rounded-[18px] border border-white/10 bg-white/[0.03] px-5 py-3 text-sm font-semibold text-white/74 transition hover:bg-white/[0.06] disabled:opacity-40"
                   >
-                    Enter
+                    Back
                   </button>
-                </div>
-              )}
-
-              {onboardingStep === 2 && authState && (
-                <>
-                  <input ref={onboardingProfileUploadRef} type="file" accept="image/*" className="hidden" onChange={onProfileInputChange} />
-                  <div className="mt-10 mx-auto max-w-[480px] rounded-2xl border border-white/15 bg-[#0a0f19]/88 p-8 flex flex-col items-center gap-6">
-                    <p className="text-xl md:text-2xl font-bold text-white">Upload Profile Picture</p>
-                    <div className="w-32 h-32 rounded-full border border-white/25 bg-[#0b101a]/92 overflow-hidden flex items-center justify-center">
-                      <img
-                        src={displayAvatar || `https://crafatar.com/avatars/${authState.profile.id}?size=112&default=MHF_Steve`}
-                        alt="Profile preview"
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                    <div className="flex flex-wrap items-center justify-center gap-3">
-                      <button onClick={() => onboardingProfileUploadRef.current?.click()} className="h-12 px-6 rounded-xl border border-white/22 bg-[#0b101a]/92 hover:bg-[#11182a] transition-colors inline-flex items-center gap-2 text-white font-bold">
-                        <Camera size={18} /> Upload
-                      </button>
-                      <button onClick={() => setOnboardingStep(3)} className="h-12 px-6 rounded-xl border border-white/20 bg-white text-black transition-colors inline-flex items-center gap-2 font-extrabold">
-                        <Sparkles size={18} /> Enter
-                      </button>
-                    </div>
-                    <button onClick={clearProfileAvatar} className="text-xs uppercase tracking-[0.16em] font-extrabold text-white/55 hover:text-white/80 transition-colors">
-                      Reset picture
-                    </button>
-                  </div>
-                </>
-              )}
-
-              {onboardingStep === 3 && (
-                <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {ONBOARDING_THEME_OPTIONS.map((theme) => (
+                  {onboardingStep > 0 && onboardingStep < 4 && (
                     <button
-                      key={theme.id}
-                      onClick={() => {
-                        setThemeMode(theme.id);
-                        setOnboardingStep(4);
-                      }}
-                      className={clsx(
-                        'h-40 rounded-2xl border bg-[#0b101a]/92 hover:bg-[#11182a] transition-colors flex flex-col items-center justify-center gap-2 text-white',
-                        themeMode === theme.id ? 'border-[var(--g-accent)] shadow-[0_0_0_1px_var(--g-accent-soft)]' : 'border-white/12'
-                      )}
+                      onClick={() => setOnboardingStep(onboardingStep === 0 ? 1 : onboardingStep === 1 ? 2 : onboardingStep === 2 ? 3 : 4)}
+                      className="rounded-[18px] border border-white/10 bg-white/[0.03] px-5 py-3 text-sm font-semibold text-white/74 transition hover:bg-white/[0.06]"
                     >
-                      {theme.id === 'gray' ? <Layers size={22} /> : theme.id === 'ocean' ? <Waves size={22} /> : <Gift size={22} />}
-                      <span className="text-xl font-bold">{theme.label}</span>
-                      <span className="text-xs text-white/55">{theme.hint}</span>
+                      Skip
                     </button>
-                  ))}
+                  )}
                 </div>
-              )}
-
-              {onboardingStep === 4 && (
-                <div className="mt-8 grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {ONBOARDING_ACCENT_OPTIONS.map((accent) => (
-                    <button
-                      key={accent.id}
-                      onClick={() => {
-                        setAccentMode(accent.id);
-                        completeOnboarding();
-                      }}
-                      className={clsx(
-                        'h-40 rounded-2xl border bg-[#0b101a]/92 hover:bg-[#11182a] transition-colors flex flex-col items-center justify-center gap-3 text-white',
-                        accentMode === accent.id ? 'border-[var(--g-accent)] shadow-[0_0_0_1px_var(--g-accent-soft)]' : 'border-white/12'
-                      )}
-                    >
-                      <Palette size={22} />
-                      <div className="h-6 w-24 rounded-md border border-white/15" style={{ background: accent.swatch }} />
-                      <span className="text-lg font-bold">{accent.label}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              <div className="mt-6 flex justify-center items-center gap-2">
-                {[0, 1, 2, 3, 4].map((step) => (
-                  <button
-                    key={step}
-                    onClick={() => {
-                      if (step > 0 && !authState) return;
-                      setOnboardingStep(step as 0 | 1 | 2 | 3 | 4);
-                    }}
-                    className={clsx('h-2.5 rounded-full transition-all', onboardingStep === step ? 'w-8 bg-white/90' : 'w-2.5 bg-white/45', step > 0 && !authState && 'opacity-35')}
-                    aria-label={`Go to step ${step + 1}`}
-                  />
-                ))}
               </div>
             </div>
           </div>

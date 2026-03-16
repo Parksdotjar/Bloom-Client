@@ -46,6 +46,7 @@ pub fn run() {
             instances::instance_delete_mod,
             instances::instance_delete_resourcepack,
             instances::instance_delete_shaderpack,
+            instances::instance_copy_game_options,
             instances::marketplace_search_mods,
             instances::marketplace_install_mod,
             instances::marketplace_search_modpacks,

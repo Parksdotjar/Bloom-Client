@@ -648,8 +648,45 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     let classpath = cp_entries.join(";"); // Windows separator
 
     // 4. Setup natives
-    let natives_dir = paths.instances.join(&config.instance_id).join("natives");
+    let natives_root_dir = paths.instances.join(&config.instance_id).join("natives");
+    fs::create_dir_all(&natives_root_dir).map_err(|e| e.to_string())?;
+
+    // Use a fresh natives directory per launch so Windows DLL locks from prior runs
+    // do not block the next launch.
+    let launch_nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| Duration::from_secs(0))
+        .as_millis();
+    let natives_dir = natives_root_dir.join(format!("launch-{}", launch_nonce));
     fs::create_dir_all(&natives_dir).map_err(|e| e.to_string())?;
+
+    let stale_cutoff = Duration::from_secs(60 * 60 * 24);
+    if let Ok(entries) = fs::read_dir(&natives_root_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if !name.starts_with("launch-") || path == natives_dir {
+                continue;
+            }
+
+            let is_stale = entry
+                .metadata()
+                .ok()
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+                .map(|age| age >= stale_cutoff)
+                .unwrap_or(false);
+
+            if is_stale {
+                let _ = fs::remove_dir_all(&path);
+            }
+        }
+    }
 
     // Extract Windows native libraries (LWJGL/OpenAL/etc.) from native classifier jars.
     let mut native_jars: Vec<(std::path::PathBuf, Option<String>)> = Vec::new();

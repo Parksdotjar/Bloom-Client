@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEventHandler, type DragEventHandler, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Download, FolderOpen, ImageIcon, Package2, RefreshCcw, Save, Search, ShieldPlus, Sparkles, Trash2, UploadCloud } from 'lucide-react';
+import { ArrowLeft, Copy, Download, FolderOpen, ImageIcon, Package2, RefreshCcw, Save, Search, ShieldPlus, Sparkles, Trash2, UploadCloud } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useInstances } from '../hooks/useInstances';
 import { TauriApi, type InstanceContentFile, type InstanceModFile, type MarketplaceMod, type MarketplacePack, type ModInstallResult } from '../services/tauri';
 
 type EditorTab = 'mods' | 'resourcepacks' | 'shaders' | 'settings';
+type SettingsSubTab = 'profile' | 'launch';
 type SourceFilter = 'all' | 'modrinth' | 'curseforge';
 type LibraryView = 'installed' | 'install';
 type NativeFile = File & { path?: string };
+
+const INSTANCE_OPTIONS_CLIPBOARD_KEY = 'bloom_instance_options_clipboard';
+const KEYBIND_ACTION_EVENT = 'bloom-keybind-action';
 
 function humanSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -65,6 +69,7 @@ export function InstanceEditor() {
   const [modsView, setModsView] = useState<LibraryView>('installed');
   const [resourcepacksView, setResourcepacksView] = useState<LibraryView>('installed');
   const [shadersView, setShadersView] = useState<LibraryView>('installed');
+  const [settingsSubTab, setSettingsSubTab] = useState<SettingsSubTab>('profile');
   const [name, setName] = useState('');
   const [memoryMb, setMemoryMb] = useState(4096);
   const [jvmArgs, setJvmArgs] = useState('');
@@ -75,6 +80,17 @@ export function InstanceEditor() {
   const [colorTag, setColorTag] = useState('#9a65ff');
   const [iconFrame, setIconFrame] = useState<'square' | 'rounded' | 'diamond'>('rounded');
   const [saving, setSaving] = useState(false);
+  const [optionsClipboard, setOptionsClipboard] = useState<{ instanceId: string; instanceName: string } | null>(() => {
+    try {
+      const raw = localStorage.getItem(INSTANCE_OPTIONS_CLIPBOARD_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { instanceId?: string; instanceName?: string };
+      return parsed.instanceId && parsed.instanceName ? { instanceId: parsed.instanceId, instanceName: parsed.instanceName } : null;
+    } catch {
+      return null;
+    }
+  });
+  const [pastingOptions, setPastingOptions] = useState(false);
 
   const [mods, setMods] = useState<InstanceModFile[]>([]);
   const [resourcepacks, setResourcepacks] = useState<InstanceContentFile[]>([]);
@@ -203,6 +219,95 @@ export function InstanceEditor() {
       setSaving(false);
     }
   };
+
+  const copyOptionsSetup = () => {
+    if (!instance) return;
+    const payload = { instanceId: instance.id, instanceName: instance.name };
+    localStorage.setItem(INSTANCE_OPTIONS_CLIPBOARD_KEY, JSON.stringify(payload));
+    setOptionsClipboard(payload);
+    setStatusMessage(`Copied ${instance.name} option profile. Open another instance and press Paste Options.`);
+  };
+
+  const pasteOptionsSetup = async () => {
+    if (!instance || !optionsClipboard) return;
+    setPastingOptions(true);
+    try {
+      const result = await TauriApi.instanceCopyGameOptions(optionsClipboard.instanceId, instance.id);
+      setStatusMessage(`${result} Applied to ${instance.name}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Options paste failed: ${message}`);
+    } finally {
+      setPastingOptions(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!instance) return;
+    const onKeybindAction = (event: Event) => {
+      const custom = event as CustomEvent<{ action?: string }>;
+      const action = custom.detail?.action;
+      if (!action) return;
+
+      if (action === 'save-instance-settings') {
+        void saveSettings();
+        return;
+      }
+      if (action === 'next-instance-tab') {
+        const tabs: EditorTab[] = ['mods', 'resourcepacks', 'shaders', 'settings'];
+        const currentIndex = tabs.indexOf(activeTab);
+        setActiveTab(tabs[(currentIndex + 1) % tabs.length]);
+        return;
+      }
+      if (action === 'previous-instance-tab') {
+        const tabs: EditorTab[] = ['mods', 'resourcepacks', 'shaders', 'settings'];
+        const currentIndex = tabs.indexOf(activeTab);
+        setActiveTab(tabs[(currentIndex - 1 + tabs.length) % tabs.length]);
+        return;
+      }
+      if (action === 'switch-installed-view' && activeTab !== 'settings') {
+        if (activeTab === 'mods') setModsView('installed');
+        if (activeTab === 'resourcepacks') setResourcepacksView('installed');
+        if (activeTab === 'shaders') setShadersView('installed');
+        return;
+      }
+      if (action === 'switch-install-view' && activeTab !== 'settings') {
+        if (activeTab === 'mods') setModsView('install');
+        if (activeTab === 'resourcepacks') setResourcepacksView('install');
+        if (activeTab === 'shaders') setShadersView('install');
+        return;
+      }
+      if (action === 'copy-instance-options') {
+        copyOptionsSetup();
+        return;
+      }
+      if (action === 'paste-instance-options') {
+        void pasteOptionsSetup();
+        return;
+      }
+      if (action === 'refresh-active-page') {
+        void reloadMods();
+        void reloadResourcepacks();
+        void reloadShaderpacks();
+        return;
+      }
+      if (action === 'open-active-folder') {
+        if (activeTab === 'mods') {
+          void TauriApi.openModsFolder(instance.id);
+          return;
+        }
+        if (activeTab === 'resourcepacks') {
+          void TauriApi.openResourcepacksFolder(instance.id);
+          return;
+        }
+        if (activeTab === 'shaders') {
+          void TauriApi.openShaderpacksFolder(instance.id);
+        }
+      }
+    };
+    window.addEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
+    return () => window.removeEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
+  }, [instance, activeTab, optionsClipboard, saveSettings, pasteOptionsSetup]);
 
   const handleIconFile: ChangeEventHandler<HTMLInputElement> = (event) => {
     const file = event.target.files?.[0];
@@ -776,89 +881,212 @@ export function InstanceEditor() {
         )}
       </section>
       {activeTab === 'settings' ? (
-        <section className="g-panel p-6 space-y-4">
-          <h2 className="text-lg font-black text-slate-900 dark:text-white">Instance Settings</h2>
-
-          <div>
-            <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Profile Picture</label>
-            <div className="flex items-center gap-3">
-              <div className="w-16 h-16 rounded-xl border border-slate-300 dark:border-white/15 bg-slate-200 dark:bg-white/10 overflow-hidden flex items-center justify-center">
-                {iconDataUrl ? <img src={iconDataUrl} alt="Instance icon" className="w-full h-full object-cover" /> : <span className="font-black text-slate-700 dark:text-white/80">{name.slice(0, 1).toUpperCase() || 'I'}</span>}
-              </div>
-              <div className="flex gap-2">
-                <input ref={iconInputRef} type="file" accept="image/*" className="hidden" onChange={handleIconFile} />
-                <button onClick={() => iconInputRef.current?.click()} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase">Upload</button>
-                <button onClick={() => setIconDataUrl(undefined)} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase">Remove</button>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Cover Image</label>
-            <div className="rounded-xl border border-slate-300 dark:border-white/15 bg-slate-200 dark:bg-white/10 overflow-hidden h-32">
-              {coverDataUrl ? <img src={coverDataUrl} alt="Instance cover" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs font-black text-slate-500 dark:text-white/50">No cover selected</div>}
-            </div>
-            <div className="flex gap-2 mt-2">
-              <input ref={coverInputRef} type="file" accept="image/*" className="hidden" onChange={handleCoverFile} />
-              <button onClick={() => coverInputRef.current?.click()} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase">Upload Cover</button>
-              <button onClick={() => setCoverDataUrl(undefined)} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase">Remove</button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Accent Tag</label>
-              <div className="flex items-center gap-2">
-                <input type="color" value={colorTag} onChange={(event) => setColorTag(event.target.value)} className="h-10 w-12 rounded-lg border border-slate-300 dark:border-white/15 bg-white dark:bg-black/20 p-1" />
-                <input value={colorTag} onChange={(event) => setColorTag(event.target.value)} className="flex-1 rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 py-2 text-sm font-semibold text-slate-900 dark:text-white focus:outline-none" />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Icon Frame</label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['square', 'rounded', 'diamond'] as const).map((frame) => (
-                  <button key={frame} onClick={() => setIconFrame(frame)} className={['rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase', iconFrame === frame ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'].join(' ')}>
-                    {frame}
+        <section className="g-panel overflow-hidden">
+          <div className="grid xl:grid-cols-[260px_minmax(0,1fr)]">
+            <aside className="border-b xl:border-b-0 xl:border-r border-slate-300/80 dark:border-white/10 bg-slate-100/60 dark:bg-black/20 p-5 space-y-4">
+              <div className="rounded-3xl border border-slate-300/80 dark:border-white/12 bg-white/80 dark:bg-white/[0.03] p-4">
+                <div className="mx-auto w-24 h-24 rounded-3xl overflow-hidden border border-slate-300 dark:border-white/15 bg-slate-200 dark:bg-white/10 flex items-center justify-center">
+                  {iconDataUrl ? <img src={iconDataUrl} alt="Instance icon" className="w-full h-full object-cover" /> : <span className="text-3xl font-black text-slate-700 dark:text-white/80">{name.slice(0, 1).toUpperCase() || 'I'}</span>}
+                </div>
+                <div className="mt-4 text-center">
+                  <p className="text-lg font-black text-slate-900 dark:text-white">{name.trim() || instance.name}</p>
+                  <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-white/50">{instance.loader.toUpperCase()} • {instance.mcVersion}</p>
+                </div>
+                <div className="mt-4 rounded-2xl overflow-hidden border border-slate-300/80 dark:border-white/10 h-24 bg-slate-200 dark:bg-white/[0.04]">
+                  {coverDataUrl ? <img src={coverDataUrl} alt="Instance cover" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-[11px] font-black tracking-[0.16em] uppercase text-slate-500 dark:text-white/38">Banner Preview</div>}
+                </div>
+                <div className="mt-4 space-y-2">
+                  <button
+                    onClick={() => setSettingsSubTab('profile')}
+                    className="w-full px-3 py-2 text-xs font-black tracking-[0.16em] uppercase transition"
+                    style={{
+                      borderRadius: 'calc(14px * var(--g-roundness-mult))',
+                      background: settingsSubTab === 'profile' ? 'var(--g-accent-gradient)' : 'transparent',
+                      color: settingsSubTab === 'profile' ? 'white' : 'color-mix(in srgb, var(--g-text) 58%, transparent)'
+                    }}
+                  >
+                    Profile
                   </button>
-                ))}
+                  <button
+                    onClick={() => setSettingsSubTab('launch')}
+                    className="w-full px-3 py-2 text-xs font-black tracking-[0.16em] uppercase transition"
+                    style={{
+                      borderRadius: 'calc(14px * var(--g-roundness-mult))',
+                      background: settingsSubTab === 'launch' ? 'var(--g-accent-gradient)' : 'transparent',
+                      color: settingsSubTab === 'launch' ? 'white' : 'color-mix(in srgb, var(--g-text) 58%, transparent)'
+                    }}
+                  >
+                    Launch
+                  </button>
+                </div>
               </div>
-            </div>
-          </div>
+            </aside>
 
-          <div>
-            <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Name</label>
-            <input value={name} onChange={(event) => setName(event.target.value)} className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white focus:outline-none" />
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Memory (MB)</label>
-            <input type="range" min={1024} max={16384} step={1024} value={memoryMb} onChange={(event) => setMemoryMb(Number(event.target.value))} className="w-full g-range" />
-            <p className="text-xs font-semibold text-slate-600 dark:text-white/60 mt-1">{memoryMb} MB</p>
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">JVM Args</label>
-            <input value={jvmArgs} onChange={(event) => setJvmArgs(event.target.value)} placeholder="-XX:+UseG1GC" className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-white/35 focus:outline-none" />
-          </div>
-
-          <div className="rounded-xl border border-slate-300/80 dark:border-white/12 p-3 bg-white/70 dark:bg-white/[0.02] space-y-3">
-            <p className="text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45">Java Runtime</p>
-            {instance.mcVersion.startsWith('1.19') && (
-              <div className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs font-semibold text-amber-800 dark:text-amber-200">
-                Recommended: Java 17 for 1.19 packs.
-                <button onClick={() => { setJavaRuntime('java17'); setJavaPathOverride('java17'); }} className="ml-2 rounded-md border border-amber-500/50 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em]">
-                  Use Java 17
-                </button>
+            <div className="p-6 md:p-7 space-y-6">
+              <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-300/80 dark:border-white/10 pb-5">
+                <div>
+                  <p className="text-[10px] font-black tracking-[0.22em] uppercase g-accent-text">Instance Customization</p>
+                  <h2 className="mt-2 text-3xl font-black text-slate-900 dark:text-white">Instance settings</h2>
+                </div>
+                <div className="inline-grid grid-cols-2 gap-2 rounded-2xl border border-slate-300/80 dark:border-white/12 bg-white/70 dark:bg-white/[0.03] p-2">
+                  {([
+                    ['profile', 'Profile'],
+                    ['launch', 'Launch']
+                  ] as const).map(([tab, label]) => (
+                    <button
+                      key={tab}
+                      onClick={() => setSettingsSubTab(tab)}
+                      className="px-4 py-2 text-xs font-black tracking-[0.16em] uppercase transition"
+                      style={{
+                        borderRadius: 'calc(12px * var(--g-roundness-mult))',
+                        background: settingsSubTab === tab ? 'var(--g-accent-gradient)' : 'transparent',
+                        color: settingsSubTab === tab ? 'white' : 'color-mix(in srgb, var(--g-text) 58%, transparent)'
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            )}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              <button onClick={() => setJavaRuntime('system')} className={['rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase', javaRuntime === 'system' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'].join(' ')}>System Java</button>
-              <button onClick={() => { setJavaRuntime('java17'); setJavaPathOverride('java17'); }} className={['rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase', javaRuntime === 'java17' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'].join(' ')}>Java 17 Preset</button>
-              <button onClick={() => setJavaRuntime('custom')} className={['rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase', javaRuntime === 'custom' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'].join(' ')}>Custom Path</button>
+
+              {settingsSubTab === 'profile' ? (
+                <div className="space-y-6">
+                  <section className="space-y-4">
+                    <div>
+                      <p className="text-sm font-black text-slate-900 dark:text-white">Banner image</p>
+                      <p className="mt-1 text-sm text-slate-500 dark:text-white/52">This image appears across the top of the instance card and preview areas.</p>
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-[290px_minmax(0,1fr)]">
+                      <div className="rounded-2xl border border-slate-300 dark:border-white/12 bg-slate-200 dark:bg-white/[0.04] overflow-hidden h-40">
+                        {coverDataUrl ? <img src={coverDataUrl} alt="Instance cover" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs font-black tracking-[0.16em] uppercase text-slate-500 dark:text-white/40">No banner selected</div>}
+                      </div>
+                      <div className="flex flex-col justify-center gap-3">
+                        <p className="text-sm text-slate-600 dark:text-white/60">Wide images work best here so the instance has a strong identity in your library and editor.</p>
+                        <div className="flex gap-2 flex-wrap">
+                          <input ref={coverInputRef} type="file" accept="image/*" className="hidden" onChange={handleCoverFile} />
+                          <button onClick={() => coverInputRef.current?.click()} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-4 py-2 text-xs font-black tracking-[0.14em] uppercase">Change Banner</button>
+                          <button onClick={() => setCoverDataUrl(undefined)} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-4 py-2 text-xs font-black tracking-[0.14em] uppercase">Remove</button>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="space-y-4 border-t border-slate-300/80 dark:border-white/10 pt-6">
+                    <div>
+                      <p className="text-sm font-black text-slate-900 dark:text-white">Picture</p>
+                      <p className="mt-1 text-sm text-slate-500 dark:text-white/52">This icon shows in the instance list and editor header.</p>
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-[290px_minmax(0,1fr)]">
+                      <div className="rounded-2xl border border-slate-300 dark:border-white/12 bg-slate-100 dark:bg-white/[0.03] p-6 flex items-center justify-center">
+                        <div className="w-32 h-32 rounded-3xl overflow-hidden border border-slate-300 dark:border-white/15 bg-slate-200 dark:bg-white/10 flex items-center justify-center">
+                          {iconDataUrl ? <img src={iconDataUrl} alt="Instance icon" className="w-full h-full object-cover" /> : <span className="text-4xl font-black text-slate-700 dark:text-white/80">{name.slice(0, 1).toUpperCase() || 'I'}</span>}
+                        </div>
+                      </div>
+                      <div className="space-y-4">
+                        <div className="flex gap-2 flex-wrap">
+                          <input ref={iconInputRef} type="file" accept="image/*" className="hidden" onChange={handleIconFile} />
+                          <button onClick={() => iconInputRef.current?.click()} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-4 py-2 text-xs font-black tracking-[0.14em] uppercase">Change Picture</button>
+                          <button onClick={() => setIconDataUrl(undefined)} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-4 py-2 text-xs font-black tracking-[0.14em] uppercase">Remove</button>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Name</label>
+                          <input value={name} onChange={(event) => setName(event.target.value)} className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white focus:outline-none" />
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Accent Tag</label>
+                            <div className="flex items-center gap-2">
+                              <input type="color" value={colorTag} onChange={(event) => setColorTag(event.target.value)} className="h-10 w-12 rounded-lg border border-slate-300 dark:border-white/15 bg-white dark:bg-black/20 p-1" />
+                              <input value={colorTag} onChange={(event) => setColorTag(event.target.value)} className="flex-1 rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-3 py-2 text-sm font-semibold text-slate-900 dark:text-white focus:outline-none" />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Icon Frame</label>
+                            <div className="grid grid-cols-3 gap-2">
+                              {(['square', 'rounded', 'diamond'] as const).map((frame) => (
+                                <button key={frame} onClick={() => setIconFrame(frame)} className={['rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase', iconFrame === frame ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'].join(' ')}>
+                                  {frame}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  <div className="rounded-xl border border-slate-300/80 dark:border-white/12 p-4 bg-white/70 dark:bg-white/[0.02]">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45">Options Transfer</p>
+                        <p className="mt-2 text-sm font-semibold text-slate-700 dark:text-white/76">
+                          Copy keybinds, video settings, music volume, sensitivity, FOV, and other common option files from one instance into another.
+                        </p>
+                        <p className="mt-2 text-xs font-semibold text-slate-500 dark:text-white/55">
+                          Source: {optionsClipboard ? optionsClipboard.instanceName : 'Nothing copied yet'}
+                        </p>
+                      </div>
+                      <div className="flex gap-2 flex-wrap">
+                        <button onClick={copyOptionsSetup} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5">
+                          <Copy size={13} /> Copy Options
+                        </button>
+                        <button
+                          onClick={() => { void pasteOptionsSetup(); }}
+                          disabled={!optionsClipboard || optionsClipboard.instanceId === instance.id || pastingOptions}
+                          className="g-btn-accent px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5 disabled:opacity-45"
+                        >
+                          <Save size={13} /> {pastingOptions ? 'Pasting...' : 'Paste Options'}
+                        </button>
+                      </div>
+                    </div>
+                    {optionsClipboard?.instanceId === instance.id && (
+                      <p className="mt-3 text-xs font-semibold text-amber-700 dark:text-amber-300">
+                        Open a different instance before pressing Paste Options.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-xl border border-slate-300/80 dark:border-white/12 p-4 bg-white/70 dark:bg-white/[0.02]">
+                      <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Memory (MB)</label>
+                      <input type="range" min={1024} max={16384} step={1024} value={memoryMb} onChange={(event) => setMemoryMb(Number(event.target.value))} className="w-full g-range" />
+                      <p className="mt-2 text-sm font-bold text-slate-800 dark:text-white">{memoryMb} MB</p>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-300/80 dark:border-white/12 p-4 bg-white/70 dark:bg-white/[0.02]">
+                      <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">JVM Args</label>
+                      <input value={jvmArgs} onChange={(event) => setJvmArgs(event.target.value)} placeholder="-XX:+UseG1GC" className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-white/35 focus:outline-none" />
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-300/80 dark:border-white/12 p-4 bg-white/70 dark:bg-white/[0.02] space-y-3">
+                    <div>
+                      <p className="text-sm font-black text-slate-900 dark:text-white">Java Runtime</p>
+                      <p className="mt-1 text-sm text-slate-500 dark:text-white/52">This runtime is saved per instance and used when you launch from Bloom.</p>
+                    </div>
+                    {instance.mcVersion.startsWith('1.19') && (
+                      <div className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs font-semibold text-amber-800 dark:text-amber-200">
+                        Recommended: Java 17 for 1.19 packs.
+                        <button onClick={() => { setJavaRuntime('java17'); setJavaPathOverride('java17'); }} className="ml-2 rounded-md border border-amber-500/50 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em]">
+                          Use Java 17
+                        </button>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                      <button onClick={() => setJavaRuntime('system')} className={['rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase', javaRuntime === 'system' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'].join(' ')}>System Java</button>
+                      <button onClick={() => { setJavaRuntime('java17'); setJavaPathOverride('java17'); }} className={['rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase', javaRuntime === 'java17' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'].join(' ')}>Java 17 Preset</button>
+                      <button onClick={() => setJavaRuntime('custom')} className={['rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase', javaRuntime === 'custom' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'].join(' ')}>Custom Path</button>
+                    </div>
+                    <input value={javaPathOverride} onChange={(event) => setJavaPathOverride(event.target.value)} disabled={javaRuntime === 'system'} placeholder={javaRuntime === 'custom' ? 'C:\\Program Files\\Java\\jdk-17\\bin\\javaw.exe' : 'java'} className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-white/35 focus:outline-none disabled:opacity-50" />
+                  </div>
+                </div>
+              )}
             </div>
-            <input value={javaPathOverride} onChange={(event) => setJavaPathOverride(event.target.value)} disabled={javaRuntime === 'system'} placeholder={javaRuntime === 'custom' ? 'C:\\Program Files\\Java\\jdk-17\\bin\\javaw.exe' : 'java'} className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-white/35 focus:outline-none disabled:opacity-50" />
-            <p className="text-xs font-semibold text-slate-500 dark:text-white/55">This is saved per instance and used by Launch.</p>
           </div>
         </section>
       ) : activeTab === 'mods' ? (

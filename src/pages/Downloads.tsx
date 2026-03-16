@@ -1,12 +1,13 @@
 import { open } from '@tauri-apps/plugin-dialog';
 import { FolderUp, Package2, Search } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageWidgets, type PageWidget } from '../components/PageWidgets';
 import { TauriApi, type MarketplacePack } from '../services/tauri';
 import { useInstances } from '../hooks/useInstances';
 
 type SourceFilter = 'modrinth';
+const KEYBIND_ACTION_EVENT = 'bloom-keybind-action';
 
 function compactDownloads(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -25,6 +26,7 @@ export function Downloads() {
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [localImporting, setLocalImporting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const totalInstances = instances.length;
 
   const featuredTitle = useMemo(() => {
@@ -54,6 +56,20 @@ export function Downloads() {
       setSearching(false);
     }
   };
+
+  useEffect(() => {
+    const onKeybindAction = (event: Event) => {
+      const custom = event as CustomEvent<{ action?: string }>;
+      if (custom.detail?.action === 'focus-page-search') {
+        searchInputRef.current?.focus();
+      }
+      if (custom.detail?.action === 'refresh-active-page') {
+        void runSearch();
+      }
+    };
+    window.addEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
+    return () => window.removeEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
+  }, [query, gameVersion]);
 
   const installFromMarketplace = async (pack: MarketplacePack) => {
     const rowId = `${pack.source}:${pack.id}`;
@@ -119,6 +135,7 @@ export function Downloads() {
         <div className="flex h-12 items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4">
           <Search size={15} className="text-white/50" />
           <input
+            ref={searchInputRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {

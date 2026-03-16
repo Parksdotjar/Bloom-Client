@@ -7,6 +7,7 @@ import { TauriApi, type MarketplaceMod, type MarketplacePack } from '../services
 
 type SourceFilter = 'all' | 'modrinth' | 'curseforge';
 type MarketTab = 'modpacks' | 'mods' | 'resourcepacks' | 'shaders';
+const KEYBIND_ACTION_EVENT = 'bloom-keybind-action';
 
 const FEATURED_QUERIES: Record<MarketTab, string[]> = {
   modpacks: ['Fabulously Optimized', 'Adrenaline', 'Simply Optimized'],
@@ -59,6 +60,7 @@ export function Marketplace() {
   const sourceRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<HTMLDivElement | null>(null);
   const versionRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const selectedInstance = useMemo(() => instances.find((instance) => instance.id === selectedInstanceId) || null, [instances, selectedInstanceId]);
   const availableVersions = useMemo(() => {
     if (!versionModalFor) return [];
@@ -127,6 +129,20 @@ export function Marketplace() {
     if (loadedTabs[activeTab]) return;
     void runSearch(activeTab, FEATURED_QUERIES[activeTab][0]);
   }, [activeTab, loadedTabs]);
+
+  useEffect(() => {
+    const onKeybindAction = (event: Event) => {
+      const custom = event as CustomEvent<{ action?: string }>;
+      if (custom.detail?.action === 'focus-page-search') {
+        searchInputRef.current?.focus();
+      }
+      if (custom.detail?.action === 'refresh-active-page') {
+        void runSearch(activeTab);
+      }
+    };
+    window.addEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
+    return () => window.removeEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
+  }, [activeTab, source, selectedInstanceId]);
 
   const switchTab = (tab: MarketTab) => {
     setActiveTab(tab);
@@ -241,6 +257,7 @@ export function Marketplace() {
                     <div className="flex h-12 items-center gap-3 border px-4" style={{ borderRadius: 'calc(18px * var(--g-roundness-mult))', borderColor: 'color-mix(in srgb, var(--g-accent) 24%, var(--g-border))', background: 'color-mix(in srgb, var(--g-soft) 84%, #000 16%)' }}>
                       <Search size={15} className="text-white/55" />
                       <input
+                        ref={searchInputRef}
                         value={currentQuery}
                         onChange={(event) => setQueryByTab((prev) => ({ ...prev, [activeTab]: event.target.value }))}
                         onKeyDown={(event) => {
