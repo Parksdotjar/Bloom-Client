@@ -42,6 +42,7 @@ interface SidebarProps {
   themeMode: LauncherTheme;
   sidebarMode: SidebarMode;
   sidebarPosition: SidebarPosition;
+  surfaceOpacity: number;
   toggleTheme: () => void;
   onQuickLaunch?: () => void;
   onOpenLogs?: () => void;
@@ -49,7 +50,7 @@ interface SidebarProps {
 }
 
 export function SidebarRail(props: SidebarProps) {
-  const { className, themeMode, sidebarMode, sidebarPosition, onQuickLaunch, onOpenLogs, onRefreshMods } = props;
+  const { className, themeMode, sidebarMode, sidebarPosition, surfaceOpacity, onQuickLaunch, onOpenLogs, onRefreshMods } = props;
   const navigate = useNavigate();
   const location = useLocation();
   const railRef = useRef<HTMLDivElement | null>(null);
@@ -353,19 +354,16 @@ export function SidebarRail(props: SidebarProps) {
         !isHorizontal && sidebarMode === 'expanded' && 'px-1',
         !isHorizontal && sidebarMode === 'rail' && 'px-1',
         !isHorizontal && sidebarMode === 'classic' && 'px-0',
-        !isHorizontal && sidebarMode === 'expanded' && (isRight ? 'rounded-l-2xl' : 'rounded-r-2xl'),
         isHorizontal && 'gap-2',
         className
       )}
       style={{
         width: isHorizontal ? '100%' : `${sidebarWidth}px`,
         height: isHorizontal ? `${sidebarHeight}px` : '100%',
-        background: 'var(--g-sidebar)',
+        background: `color-mix(in srgb, var(--g-sidebar) ${surfaceOpacity}%, transparent)`,
         borderColor: 'var(--g-sidebar-border)',
         boxShadow: themeMode === 'true-dark' ? (isHorizontal ? 'inset 0 -1px 0 rgba(66,66,66,0.5)' : isRight ? 'inset 1px 0 0 rgba(66,66,66,0.5)' : 'inset -1px 0 0 rgba(66,66,66,0.5)') : undefined,
-        margin: sidebarMode === 'expanded'
-          ? (isHorizontal ? (isBottom ? '0 8px 8px 8px' : '8px 8px 0 8px') : (isRight ? '8px 8px 8px 0' : '8px 0 8px 8px'))
-          : undefined
+        margin: 0
       }}
     >
       <div

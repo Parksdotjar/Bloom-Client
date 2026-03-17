@@ -1,4 +1,5 @@
 mod auth;
+mod backgrounds;
 mod bloom_mod;
 mod discord_presence;
 mod downloader;
@@ -69,7 +70,10 @@ pub fn run() {
             external_updater::external_update_check,
             external_updater::external_update_install,
             discord_presence::discord_presence_set,
-            discord_presence::discord_presence_clear
+            discord_presence::discord_presence_clear,
+            backgrounds::launcher_background_save,
+            backgrounds::launcher_background_load,
+            backgrounds::launcher_background_clear
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

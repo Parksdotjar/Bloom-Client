@@ -119,5 +119,11 @@ export const TauriApi = {
     marketplaceSearchShaders: (query: string, source?: 'all' | 'modrinth' | 'curseforge', gameVersion?: string) =>
         invoke<MarketplacePack[]>('marketplace_search_shaders', { query, source, gameVersion }),
     marketplaceInstallShaderpack: (instanceId: string, source: 'modrinth' | 'curseforge', projectId: string, gameVersion?: string) =>
-        invoke<string>('marketplace_install_shaderpack', { instanceId, source, projectId, gameVersion })
+        invoke<string>('marketplace_install_shaderpack', { instanceId, source, projectId, gameVersion }),
+    launcherBackgroundSave: (data: number[]) =>
+        invoke<void>('launcher_background_save', { data }),
+    launcherBackgroundLoad: () =>
+        invoke<string | null>('launcher_background_load'),
+    launcherBackgroundClear: () =>
+        invoke<void>('launcher_background_clear')
 };

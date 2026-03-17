@@ -11,6 +11,15 @@ import { useInstances } from '../hooks/useInstances';
 import { useDownloader } from '../hooks/useDownloader';
 import { APP_VERSION } from '../constants/version';
 import { setDiscordPresence } from '../services/presence';
+import { TauriApi } from '../services/tauri';
+import {
+  checkForLauncherUpdate,
+  downloadAndInstallLauncherUpdate,
+  readUpdatePreferences,
+  UPDATE_SETTINGS_CHANGE_EVENT,
+  type ExternalUpdate,
+  type UpdatePreferences
+} from '../services/updater';
 import splashGif from '../assets/splash.gif';
 import {
   MOTION_ANIM_DURATION_KEY,
@@ -31,7 +40,7 @@ import {
 
 type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'rainbow';
-type BackgroundMode = 'none' | 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula';
+type BackgroundMode = 'none' | 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula' | 'custom';
 type DensityMode = 'compact' | 'cozy' | 'spacious';
 type FontPackMode = 'manrope' | 'space-grotesk' | 'sora';
 type SidebarMode = 'rail' | 'classic' | 'expanded';
@@ -59,6 +68,8 @@ const ACCENT_STORAGE_KEY = 'bloom_accent_mode';
 const ACCENT_CHANGE_EVENT = 'bloom-accent-change';
 const BACKGROUND_STORAGE_KEY = 'bloom_background_mode';
 const BACKGROUND_CHANGE_EVENT = 'bloom-background-change';
+const BACKGROUND_VISUAL_OPACITY_KEY = 'bloom_background_visual_opacity';
+const BACKGROUND_VISUAL_OPACITY_CHANGE_EVENT = 'bloom-background-visual-opacity-change';
 const DENSITY_STORAGE_KEY = 'bloom_density_mode';
 const DENSITY_CHANGE_EVENT = 'bloom-density-change';
 const FONT_STORAGE_KEY = 'bloom_font_pack';
@@ -71,6 +82,8 @@ const CARD_STYLE_STORAGE_KEY = 'bloom_card_style';
 const CARD_STYLE_CHANGE_EVENT = 'bloom-card-style-change';
 const TASKBAR_LOGO_BACKGROUND_KEY = 'bloom_taskbar_logo_background';
 const TASKBAR_LOGO_BACKGROUND_CHANGE_EVENT = 'bloom-taskbar-logo-background-change';
+const TASKBAR_SURFACE_OPACITY_KEY = 'bloom_taskbar_surface_opacity';
+const TASKBAR_SURFACE_OPACITY_CHANGE_EVENT = 'bloom-taskbar-surface-opacity-change';
 const BUTTON_THEME_STORAGE_KEY = 'bloom_button_theme';
 const BUTTON_THEME_CHANGE_EVENT = 'bloom-button-theme-change';
 const MOTION_STORAGE_KEY = 'bloom_motion_mode';
@@ -172,6 +185,10 @@ function eventToShortcut(event: KeyboardEvent): string {
   return parts.join('+');
 }
 
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
 function isTypingTarget(target: EventTarget | null): boolean {
   const node = target as HTMLElement | null;
   if (!node) return false;
@@ -203,9 +220,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
   });
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>(() => {
     const stored = localStorage.getItem(BACKGROUND_STORAGE_KEY);
-    return stored === 'none' || stored === 'plus' || stored === 'particles' || stored === 'aurora' || stored === 'scanlines' || stored === 'nebula'
+    return stored === 'none' || stored === 'plus' || stored === 'particles' || stored === 'aurora' || stored === 'scanlines' || stored === 'nebula' || stored === 'custom'
       ? stored
       : 'particles';
+  });
+  const [customBackgroundDataUrl, setCustomBackgroundDataUrl] = useState<string | null>(null);
+  const [backgroundVisualOpacity, setBackgroundVisualOpacity] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(BACKGROUND_VISUAL_OPACITY_KEY));
+    if (Number.isFinite(stored)) return clampPercent(stored);
+    return 100;
+  });
+  const [taskbarSurfaceOpacity, setTaskbarSurfaceOpacity] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(TASKBAR_SURFACE_OPACITY_KEY));
+    if (Number.isFinite(stored)) return clampPercent(stored);
+    return 92;
   });
   const [densityMode, setDensityMode] = useState<DensityMode>(() => {
     const stored = localStorage.getItem(DENSITY_STORAGE_KEY);
@@ -305,6 +333,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [updatePreferences, setUpdatePreferences] = useState<UpdatePreferences>(() => readUpdatePreferences());
+  const [availableLauncherUpdate, setAvailableLauncherUpdate] = useState<ExternalUpdate | null>(null);
+  const [updateNoticeVisible, setUpdateNoticeVisible] = useState(false);
+  const [updateStatusMessage, setUpdateStatusMessage] = useState<string | null>(null);
+  const [checkingLauncherUpdate, setCheckingLauncherUpdate] = useState(false);
+  const [installingLauncherUpdate, setInstallingLauncherUpdate] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [avatarContextMenu, setAvatarContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [skinStatus, setSkinStatus] = useState<string | null>(null);
@@ -695,16 +729,56 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const onBackgroundChange = (event: Event) => {
-      const custom = event as CustomEvent<{ background?: BackgroundMode }>;
+      const custom = event as CustomEvent<{ background?: BackgroundMode; previewDataUrl?: string | null }>;
       const requestedBackground = custom.detail?.background;
-      if (requestedBackground === 'none' || requestedBackground === 'plus' || requestedBackground === 'particles' || requestedBackground === 'aurora' || requestedBackground === 'scanlines' || requestedBackground === 'nebula') {
+      if (requestedBackground === 'none' || requestedBackground === 'plus' || requestedBackground === 'particles' || requestedBackground === 'aurora' || requestedBackground === 'scanlines' || requestedBackground === 'nebula' || requestedBackground === 'custom') {
         setBackgroundMode(requestedBackground);
+      }
+      if (typeof custom.detail?.previewDataUrl !== 'undefined') {
+        setCustomBackgroundDataUrl(custom.detail.previewDataUrl ?? null);
       }
     };
 
     window.addEventListener(BACKGROUND_CHANGE_EVENT, onBackgroundChange as EventListener);
     return () => window.removeEventListener(BACKGROUND_CHANGE_EVENT, onBackgroundChange as EventListener);
   }, []);
+
+  useEffect(() => {
+    const onBackgroundOpacityChange = (event: Event) => {
+      const custom = event as CustomEvent<{ value?: number }>;
+      if (Number.isFinite(custom.detail?.value)) {
+        setBackgroundVisualOpacity(clampPercent(Number(custom.detail?.value)));
+      }
+    };
+    window.addEventListener(BACKGROUND_VISUAL_OPACITY_CHANGE_EVENT, onBackgroundOpacityChange as EventListener);
+    return () => window.removeEventListener(BACKGROUND_VISUAL_OPACITY_CHANGE_EVENT, onBackgroundOpacityChange as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const onTaskbarSurfaceOpacityChange = (event: Event) => {
+      const custom = event as CustomEvent<{ value?: number }>;
+      if (Number.isFinite(custom.detail?.value)) {
+        setTaskbarSurfaceOpacity(clampPercent(Number(custom.detail?.value)));
+      }
+    };
+    window.addEventListener(TASKBAR_SURFACE_OPACITY_CHANGE_EVENT, onTaskbarSurfaceOpacityChange as EventListener);
+    return () => window.removeEventListener(TASKBAR_SURFACE_OPACITY_CHANGE_EVENT, onTaskbarSurfaceOpacityChange as EventListener);
+  }, []);
+
+  useEffect(() => {
+    if (backgroundMode !== 'custom') return;
+    let active = true;
+    void TauriApi.launcherBackgroundLoad()
+      .then((dataUrl) => {
+        if (active) setCustomBackgroundDataUrl(dataUrl);
+      })
+      .catch(() => {
+        if (active) setCustomBackgroundDataUrl(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [backgroundMode]);
 
   useEffect(() => {
     const onDensityChange = (event: Event) => {
@@ -1241,6 +1315,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
     playUiSound('notification');
   }, [notificationsOpen, soundNotificationsEnabled, soundPack]);
 
+  useEffect(() => {
+    const syncUpdatePreferences = (event: Event) => {
+      const detail = (event as CustomEvent<UpdatePreferences>).detail;
+      if (detail) setUpdatePreferences(detail);
+      else setUpdatePreferences(readUpdatePreferences());
+    };
+    window.addEventListener(UPDATE_SETTINGS_CHANGE_EVENT, syncUpdatePreferences as EventListener);
+    return () => window.removeEventListener(UPDATE_SETTINGS_CHANGE_EVENT, syncUpdatePreferences as EventListener);
+  }, []);
+
+  useEffect(() => {
+    if (!authState || !onboardingCompleted) return;
+    if (!updatePreferences.autoCheck) return;
+    void runLauncherUpdateCheck('auto');
+  }, [authState?.profile.id, onboardingCompleted, updatePreferences.autoCheck]);
+
   const runEntry = (entry: SearchEntry) => {
     if (entry.route) navigate(entry.route);
     if (entry.action === 'signin') void startLogin();
@@ -1341,6 +1431,57 @@ export function Layout({ children }: { children: React.ReactNode }) {
     appBlackoutTimersRef.current = [fadeToBlackDone, startReveal, finishReveal];
   };
 
+  const runLauncherUpdateCheck = async (source: 'auto' | 'manual' = 'auto') => {
+    setCheckingLauncherUpdate(true);
+    if (source === 'manual') {
+      setUpdateStatusMessage('Checking for launcher updates...');
+    }
+    try {
+      const { update, error } = await checkForLauncherUpdate();
+      if (error) {
+        setUpdateStatusMessage(`Update check failed: ${error}`);
+        if (source === 'manual') setNotificationsOpen(true);
+        return;
+      }
+      setAvailableLauncherUpdate(update);
+      if (!update) {
+        setUpdateNoticeVisible(false);
+        setUpdateStatusMessage(source === 'manual' ? 'You are up to date.' : null);
+        if (source === 'manual') setNotificationsOpen(true);
+        return;
+      }
+      setUpdateStatusMessage(`Update available: v${update.version}`);
+      if (updatePreferences.notifications || source === 'manual') {
+        setUpdateNoticeVisible(true);
+        setNotificationsOpen(true);
+      }
+    } finally {
+      setCheckingLauncherUpdate(false);
+    }
+  };
+
+  const runLauncherUpdateInstall = async () => {
+    if (!availableLauncherUpdate) return;
+    setInstallingLauncherUpdate(true);
+    setUpdateStatusMessage(`Downloading v${availableLauncherUpdate.version} installer...`);
+    try {
+      await downloadAndInstallLauncherUpdate(availableLauncherUpdate);
+      setUpdateStatusMessage('Installer launched. Bloom will close to finish the update.');
+    } catch (error) {
+      setUpdateStatusMessage(`Update install failed: ${error instanceof Error ? error.message : String(error)}`);
+      setNotificationsOpen(true);
+    } finally {
+      setInstallingLauncherUpdate(false);
+    }
+  };
+
+  const openUpdatesSettings = () => {
+    navigate('/settings');
+    setNotificationsOpen(false);
+    setUpdateNoticeVisible(false);
+    window.dispatchEvent(new CustomEvent('bloom-settings-open-tab', { detail: { tab: 'updates' } }));
+  };
+
   const openAvatarContextMenu = (event: React.MouseEvent) => {
     event.preventDefault();
     setAvatarContextMenu({ x: event.clientX, y: event.clientY });
@@ -1375,6 +1516,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       themeMode={themeMode}
       sidebarMode={sidebarMode}
       sidebarPosition={sidebarPosition}
+      surfaceOpacity={taskbarSurfaceOpacity}
       toggleTheme={() => {}}
       onQuickLaunch={runQuickLaunchLastInstance}
       onOpenLogs={runOpenLogs}
@@ -1394,11 +1536,24 @@ export function Layout({ children }: { children: React.ReactNode }) {
           )}
         />
       )}
-      {backgroundMode === 'particles' && <Particles />}
-      {backgroundMode === 'plus' && <div className="pointer-events-none absolute inset-0 g-bg-plus" />}
-      {backgroundMode === 'aurora' && <div className="pointer-events-none absolute inset-0 g-bg-aurora" />}
-      {backgroundMode === 'scanlines' && <div className="pointer-events-none absolute inset-0 g-bg-scanlines" />}
-      {backgroundMode === 'nebula' && <div className="pointer-events-none absolute inset-0 g-bg-nebula" />}
+      <div className="pointer-events-none absolute inset-0" style={{ opacity: backgroundVisualOpacity / 100 }}>
+        {backgroundMode === 'custom' && customBackgroundDataUrl && (
+          <div
+            className="absolute inset-0"
+            style={{
+              backgroundImage: `url(${customBackgroundDataUrl})`,
+              backgroundPosition: 'center',
+              backgroundSize: 'cover',
+              backgroundRepeat: 'no-repeat'
+            }}
+          />
+        )}
+        {backgroundMode === 'particles' && <Particles />}
+        {backgroundMode === 'plus' && <div className="absolute inset-0 g-bg-plus" />}
+        {backgroundMode === 'aurora' && <div className="absolute inset-0 g-bg-aurora" />}
+        {backgroundMode === 'scanlines' && <div className="absolute inset-0 g-bg-scanlines" />}
+        {backgroundMode === 'nebula' && <div className="absolute inset-0 g-bg-nebula" />}
+      </div>
 
       {showClientShell && sidebarPosition === 'left' && sidebarRail}
       {showClientShell && sidebarPosition === 'top' && sidebarRail}
@@ -1408,7 +1563,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <header
           data-tauri-drag-region
           className="js-giga-reveal app-region-drag border-b backdrop-blur-xl px-5 flex items-center gap-3 relative z-[120] overflow-visible"
-          style={{ background: 'var(--g-shell)', borderColor: 'var(--g-sidebar-border)', height: `${density.headerHeight}px` }}
+          style={{ background: `color-mix(in srgb, var(--g-shell) ${taskbarSurfaceOpacity}%, transparent)`, borderColor: 'var(--g-sidebar-border)', height: `${density.headerHeight}px` }}
         >
           <div ref={searchRef} className="app-region-no-drag relative flex-1">
             <div className="relative">
@@ -1447,18 +1602,47 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <div data-tauri-drag-region className="app-region-drag flex-1 h-full min-w-[40px]" />
 
           <div className="app-region-no-drag flex items-center gap-2 shrink-0">
-            <button onClick={() => setNotificationsOpen((v) => !v)} className="h-10 w-10 rounded-xl border border-white/12 bg-white/[0.04] text-white/75 inline-flex items-center justify-center">
+            <button onClick={() => setNotificationsOpen((v) => !v)} className="relative h-10 w-10 rounded-xl border border-white/12 bg-white/[0.04] text-white/75 inline-flex items-center justify-center">
               <Bell size={15} strokeWidth={iconStrokeWidth} />
+              {availableLauncherUpdate && (
+                <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-[var(--g-accent)] shadow-[0_0_10px_var(--g-accent)]" />
+              )}
             </button>
 
             <div ref={notifRef} className="relative">
               {notificationsOpen && (
                 <div className="absolute right-0 top-[44px] z-[260] w-[320px] g-panel-strong p-3">
                   <p className="text-[10px] tracking-[0.16em] uppercase font-extrabold g-accent-text">Notifications</p>
-                  <div className="mt-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                    <p className="text-xs font-extrabold text-white">Beta Test Enabled</p>
-                    <p className="text-xs text-white/60 mt-1">You are receiving preview updates.</p>
-                  </div>
+                  {availableLauncherUpdate ? (
+                    <div className="mt-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-extrabold text-white">Launcher update available</p>
+                          <p className="text-xs text-white/60 mt-1">Bloom v{availableLauncherUpdate.version} is ready to install.</p>
+                          <p className="text-[10px] text-white/40 mt-2">{availableLauncherUpdate.assetName}</p>
+                        </div>
+                        <span className="rounded-full border border-[var(--g-accent)]/30 bg-[var(--g-accent-soft)] px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.12em] text-white">
+                          New
+                        </span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <button onClick={openUpdatesSettings} className="g-btn h-9 text-[10px] font-extrabold uppercase tracking-[0.12em]">
+                          Open Updates
+                        </button>
+                        <button onClick={() => { void runLauncherUpdateInstall(); }} disabled={installingLauncherUpdate} className="g-btn-accent h-9 text-[10px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-50">
+                          {installingLauncherUpdate ? 'Installing...' : 'Install'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                      <p className="text-xs font-extrabold text-white">No new notifications</p>
+                      <p className="text-xs text-white/60 mt-1">{updateStatusMessage || 'Bloom will alert you here when a launcher update is found.'}</p>
+                      <button onClick={() => { void runLauncherUpdateCheck('manual'); }} className="mt-3 g-btn h-9 w-full text-[10px] font-extrabold uppercase tracking-[0.12em]">
+                        {checkingLauncherUpdate ? 'Checking...' : 'Check Now'}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1581,6 +1765,36 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         </header>
+
+        {availableLauncherUpdate && updateNoticeVisible && (
+          <div className="absolute right-5 z-[210] w-[360px] app-region-no-drag" style={{ top: `${density.headerHeight + 14}px` }}>
+            <div className="rounded-2xl border border-white/12 bg-[var(--g-panel)]/95 p-4 shadow-[0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] g-accent-text">Update Available</p>
+                  <h3 className="mt-1 text-lg font-extrabold text-white">Bloom v{availableLauncherUpdate.version}</h3>
+                  <p className="mt-1 text-sm text-white/62">A newer launcher build is available. Install it from inside Bloom.</p>
+                </div>
+                <button onClick={() => setUpdateNoticeVisible(false)} className="h-8 w-8 rounded-lg border border-white/10 bg-white/[0.03] text-white/60 inline-flex items-center justify-center">
+                  <X size={14} strokeWidth={iconStrokeWidth} />
+                </button>
+              </div>
+              <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/55">Installer Asset</p>
+                <p className="mt-1 text-xs text-white/68">{availableLauncherUpdate.assetName}</p>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button onClick={openUpdatesSettings} className="g-btn h-10 text-xs font-extrabold uppercase tracking-[0.12em]">
+                  Open Updates
+                </button>
+                <button onClick={() => { void runLauncherUpdateInstall(); }} disabled={installingLauncherUpdate} className="g-btn-accent h-10 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50">
+                  {installingLauncherUpdate ? 'Installing...' : 'Install Update'}
+                </button>
+              </div>
+              {updateStatusMessage && <p className="mt-2 text-[11px] text-white/50">{updateStatusMessage}</p>}
+            </div>
+          </div>
+        )}
 
         <main ref={mainRef} className="flex-1 min-h-0 overflow-y-auto app-region-no-drag" style={{ padding: density.mainPadding }}>
           <div className="min-h-full">{children}</div>

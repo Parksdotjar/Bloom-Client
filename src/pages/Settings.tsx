@@ -1,10 +1,18 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type PointerEventHandler, type ReactNode } from 'react';
 import { clsx } from 'clsx';
-import { checkForLauncherUpdate, downloadAndInstallLauncherUpdate, type ExternalUpdate } from '../services/updater';
+import { APP_VERSION } from '../constants/version';
+import { TauriApi } from '../services/tauri';
+import {
+  checkForLauncherUpdate,
+  downloadAndInstallLauncherUpdate,
+  readUpdatePreferences,
+  writeUpdatePreferences,
+  type ExternalUpdate
+} from '../services/updater';
 
 type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'rainbow';
-type BackgroundMode = 'none' | 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula';
+type BackgroundMode = 'none' | 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula' | 'custom';
 type DensityMode = 'compact' | 'cozy' | 'spacious';
 type FontPackMode = 'manrope' | 'space-grotesk' | 'sora';
 type SidebarMode = 'rail' | 'classic' | 'expanded';
@@ -19,7 +27,7 @@ type SoundPackMode = 'off' | 'soft' | 'arcade' | 'retro';
 type StartupSceneTheme = 'nova' | 'horizon' | 'matrix';
 type StartupSceneSoundProfile = 'off' | 'shimmer' | 'impact';
 
-type SettingsTab = 'general' | 'appearance' | 'keybinds' | 'widgets' | 'extra';
+type SettingsTab = 'general' | 'appearance' | 'keybinds' | 'widgets' | 'updates' | 'extra';
 
 const THEME_STORAGE_KEY = 'bloom_theme_mode';
 const THEME_CHANGE_EVENT = 'bloom-theme-change';
@@ -27,6 +35,8 @@ const ACCENT_STORAGE_KEY = 'bloom_accent_mode';
 const ACCENT_CHANGE_EVENT = 'bloom-accent-change';
 const BACKGROUND_STORAGE_KEY = 'bloom_background_mode';
 const BACKGROUND_CHANGE_EVENT = 'bloom-background-change';
+const BACKGROUND_VISUAL_OPACITY_KEY = 'bloom_background_visual_opacity';
+const BACKGROUND_VISUAL_OPACITY_CHANGE_EVENT = 'bloom-background-visual-opacity-change';
 const DENSITY_STORAGE_KEY = 'bloom_density_mode';
 const DENSITY_CHANGE_EVENT = 'bloom-density-change';
 const FONT_STORAGE_KEY = 'bloom_font_pack';
@@ -39,6 +49,8 @@ const CARD_STYLE_STORAGE_KEY = 'bloom_card_style';
 const CARD_STYLE_CHANGE_EVENT = 'bloom-card-style-change';
 const TASKBAR_LOGO_BACKGROUND_KEY = 'bloom_taskbar_logo_background';
 const TASKBAR_LOGO_BACKGROUND_CHANGE_EVENT = 'bloom-taskbar-logo-background-change';
+const TASKBAR_SURFACE_OPACITY_KEY = 'bloom_taskbar_surface_opacity';
+const TASKBAR_SURFACE_OPACITY_CHANGE_EVENT = 'bloom-taskbar-surface-opacity-change';
 const BUTTON_THEME_STORAGE_KEY = 'bloom_button_theme';
 const BUTTON_THEME_CHANGE_EVENT = 'bloom-button-theme-change';
 const MOTION_STORAGE_KEY = 'bloom_motion_mode';
@@ -195,6 +207,71 @@ const STARTUP_SCENE_SOUND_PROFILES: { id: StartupSceneSoundProfile; label: strin
   { id: 'impact', label: 'Impact', description: 'Punchier digital hit.' }
 ];
 
+type BackgroundTargetSize = { width: number; height: number };
+
+function resolveBackgroundTarget(width: number, height: number): BackgroundTargetSize {
+  if (width >= 3840 || height >= 2160) {
+    return { width: 3840, height: 2160 };
+  }
+  return { width: 1920, height: 1080 };
+}
+
+function clamp01(value: number) {
+  return Math.max(-1, Math.min(1, value));
+}
+
+function loadImageElement(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Failed to load image.'));
+    image.src = src;
+  });
+}
+
+async function fileToDataUrl(file: File) {
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Failed to read selected image.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function renderCustomBackgroundImage(
+  src: string,
+  target: BackgroundTargetSize,
+  zoom: number,
+  panX: number,
+  panY: number
+) {
+  const image = await loadImageElement(src);
+  const canvas = document.createElement('canvas');
+  canvas.width = target.width;
+  canvas.height = target.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Failed to prepare background canvas.');
+  const baseScale = Math.max(target.width / image.naturalWidth, target.height / image.naturalHeight);
+  const scaledWidth = image.naturalWidth * baseScale * zoom;
+  const scaledHeight = image.naturalHeight * baseScale * zoom;
+  const overflowX = Math.max(0, (scaledWidth - target.width) / 2);
+  const overflowY = Math.max(0, (scaledHeight - target.height) / 2);
+  const offsetX = target.width / 2 - scaledWidth / 2 - overflowX * clamp01(panX);
+  const offsetY = target.height / 2 - scaledHeight / 2 - overflowY * clamp01(panY);
+  ctx.drawImage(image, offsetX, offsetY, scaledWidth, scaledHeight);
+  return canvas.toDataURL('image/jpeg', 0.94);
+}
+
+function dataUrlToBytes(dataUrl: string) {
+  const [, payload = ''] = dataUrl.split(',');
+  const binary = atob(payload);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return Array.from(bytes);
+}
+
 function clampSidebarDockGrowSize(value: number) {
   return Math.max(0, Math.min(140, Math.round(value)));
 }
@@ -216,6 +293,10 @@ function clampRoundness(value: number) {
 }
 
 function clampGlassAmount(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
@@ -397,6 +478,8 @@ export function Settings() {
   const [updaterProgress, setUpdaterProgress] = useState<number | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [updateAutoCheckEnabled, setUpdateAutoCheckEnabled] = useState<boolean>(() => readUpdatePreferences().autoCheck);
+  const [updateNotificationsEnabled, setUpdateNotificationsEnabled] = useState<boolean>(() => readUpdatePreferences().notifications);
   const [themeMode, setThemeMode] = useState<LauncherTheme>(() => {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
     if (stored === 'light' || stored === 'light-gray') return 'true-dark';
@@ -412,9 +495,30 @@ export function Settings() {
   });
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>(() => {
     const stored = localStorage.getItem(BACKGROUND_STORAGE_KEY);
-    return stored === 'none' || stored === 'plus' || stored === 'particles' || stored === 'aurora' || stored === 'scanlines' || stored === 'nebula'
+    return stored === 'none' || stored === 'plus' || stored === 'particles' || stored === 'aurora' || stored === 'scanlines' || stored === 'nebula' || stored === 'custom'
       ? stored
       : 'particles';
+  });
+  const [customBackgroundSaved, setCustomBackgroundSaved] = useState<string | null>(null);
+  const [customBackgroundSource, setCustomBackgroundSource] = useState<string | null>(null);
+  const [customBackgroundRenderPreview, setCustomBackgroundRenderPreview] = useState<string | null>(null);
+  const [customBackgroundTarget, setCustomBackgroundTarget] = useState<BackgroundTargetSize>({ width: 1920, height: 1080 });
+  const [customBackgroundZoom, setCustomBackgroundZoom] = useState(1);
+  const [customBackgroundPanX, setCustomBackgroundPanX] = useState(0);
+  const [customBackgroundPanY, setCustomBackgroundPanY] = useState(0);
+  const [customBackgroundSaving, setCustomBackgroundSaving] = useState(false);
+  const [customBackgroundError, setCustomBackgroundError] = useState<string | null>(null);
+  const [draggingCustomBackground, setDraggingCustomBackground] = useState(false);
+  const customBackgroundPointerRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const [backgroundVisualOpacity, setBackgroundVisualOpacity] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(BACKGROUND_VISUAL_OPACITY_KEY));
+    if (Number.isFinite(stored)) return clampPercent(stored);
+    return 100;
+  });
+  const [taskbarSurfaceOpacity, setTaskbarSurfaceOpacity] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(TASKBAR_SURFACE_OPACITY_KEY));
+    if (Number.isFinite(stored)) return clampPercent(stored);
+    return 92;
   });
   const [densityMode, setDensityMode] = useState<DensityMode>(() => {
     const stored = localStorage.getItem(DENSITY_STORAGE_KEY);
@@ -638,6 +742,107 @@ export function Settings() {
     window.dispatchEvent(new CustomEvent(STARTUP_SCENE_CHANGE_EVENT, { detail: { enabled: nextEnabled, theme: nextTheme, soundProfile: nextSound } }));
   };
 
+  const applyUpdatePreferences = (partial: { autoCheck?: boolean; notifications?: boolean }) => {
+    const nextAutoCheck = partial.autoCheck ?? updateAutoCheckEnabled;
+    const nextNotifications = partial.notifications ?? updateNotificationsEnabled;
+    setUpdateAutoCheckEnabled(nextAutoCheck);
+    setUpdateNotificationsEnabled(nextNotifications);
+    writeUpdatePreferences({ autoCheck: nextAutoCheck, notifications: nextNotifications });
+  };
+
+  const loadSavedCustomBackground = async () => {
+    try {
+      const dataUrl = await TauriApi.launcherBackgroundLoad();
+      setCustomBackgroundSaved(dataUrl);
+      if (!customBackgroundSource && dataUrl) {
+        setCustomBackgroundSource(dataUrl);
+      }
+    } catch (error) {
+      setCustomBackgroundError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const onCustomBackgroundFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      setCustomBackgroundError(null);
+      const dataUrl = await fileToDataUrl(file);
+      const image = await loadImageElement(dataUrl);
+      setCustomBackgroundSource(dataUrl);
+      setCustomBackgroundTarget(resolveBackgroundTarget(image.naturalWidth, image.naturalHeight));
+      setCustomBackgroundZoom(1);
+      setCustomBackgroundPanX(0);
+      setCustomBackgroundPanY(0);
+    } catch (error) {
+      setCustomBackgroundError(error instanceof Error ? error.message : String(error));
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const saveCustomBackground = async () => {
+    if (!customBackgroundSource) return;
+    try {
+      setCustomBackgroundSaving(true);
+      setCustomBackgroundError(null);
+      const rendered = await renderCustomBackgroundImage(
+        customBackgroundSource,
+        customBackgroundTarget,
+        customBackgroundZoom,
+        customBackgroundPanX,
+        customBackgroundPanY
+      );
+      await TauriApi.launcherBackgroundSave(dataUrlToBytes(rendered));
+      setCustomBackgroundSaved(rendered);
+      applyBackground('custom');
+      window.dispatchEvent(new CustomEvent(BACKGROUND_CHANGE_EVENT, { detail: { background: 'custom', previewDataUrl: rendered } }));
+    } catch (error) {
+      setCustomBackgroundError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCustomBackgroundSaving(false);
+    }
+  };
+
+  const clearCustomBackground = async () => {
+    try {
+      await TauriApi.launcherBackgroundClear();
+      setCustomBackgroundSaved(null);
+      setCustomBackgroundSource(null);
+      setCustomBackgroundError(null);
+      if (backgroundMode === 'custom') {
+        applyBackground('particles');
+      }
+      window.dispatchEvent(new CustomEvent(BACKGROUND_CHANGE_EVENT, { detail: { background: 'particles', previewDataUrl: null } }));
+    } catch (error) {
+      setCustomBackgroundError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const onCustomBackgroundPointerDown: PointerEventHandler<HTMLDivElement> = (event) => {
+    if (!customBackgroundSource) return;
+    customBackgroundPointerRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      panX: customBackgroundPanX,
+      panY: customBackgroundPanY
+    };
+    setDraggingCustomBackground(true);
+  };
+
+  const onCustomBackgroundPointerMove: PointerEventHandler<HTMLDivElement> = (event) => {
+    if (!customBackgroundPointerRef.current) return;
+    const deltaX = event.clientX - customBackgroundPointerRef.current.x;
+    const deltaY = event.clientY - customBackgroundPointerRef.current.y;
+    setCustomBackgroundPanX(clamp01(customBackgroundPointerRef.current.panX + deltaX / 220));
+    setCustomBackgroundPanY(clamp01(customBackgroundPointerRef.current.panY + deltaY / 220));
+  };
+
+  const onCustomBackgroundPointerUp = () => {
+    customBackgroundPointerRef.current = null;
+    setDraggingCustomBackground(false);
+  };
+
   const runUpdateCheck = async () => {
     setCheckingUpdate(true);
     setUpdaterProgress(null);
@@ -697,6 +902,41 @@ export function Settings() {
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [capturingShortcut, shortcutSearch, shortcutCreateInstance, shortcutSettings, shortcutReplayStartupScene, extraKeybinds]);
 
+  useEffect(() => {
+    const handleSettingsTabOpen = (event: Event) => {
+      const detail = (event as CustomEvent<{ tab?: SettingsTab }>).detail;
+      if (detail?.tab) setTab(detail.tab);
+    };
+    window.addEventListener('bloom-settings-open-tab', handleSettingsTabOpen as EventListener);
+    return () => window.removeEventListener('bloom-settings-open-tab', handleSettingsTabOpen as EventListener);
+  }, []);
+
+  useEffect(() => {
+    void loadSavedCustomBackground();
+  }, []);
+
+  useEffect(() => {
+    if (!customBackgroundSource) {
+      setCustomBackgroundRenderPreview(customBackgroundSaved);
+      return;
+    }
+    let active = true;
+    void renderCustomBackgroundImage(
+      customBackgroundSource,
+      customBackgroundTarget,
+      customBackgroundZoom,
+      customBackgroundPanX,
+      customBackgroundPanY
+    ).then((dataUrl) => {
+      if (active) setCustomBackgroundRenderPreview(dataUrl);
+    }).catch(() => {
+      if (active) setCustomBackgroundRenderPreview(null);
+    });
+    return () => {
+      active = false;
+    };
+  }, [customBackgroundSource, customBackgroundSaved, customBackgroundTarget, customBackgroundZoom, customBackgroundPanX, customBackgroundPanY]);
+
   const applyAccent = (next: AccentMode) => {
     setAccentMode(next);
     localStorage.setItem(ACCENT_STORAGE_KEY, next);
@@ -707,6 +947,20 @@ export function Settings() {
     setBackgroundMode(next);
     localStorage.setItem(BACKGROUND_STORAGE_KEY, next);
     window.dispatchEvent(new CustomEvent(BACKGROUND_CHANGE_EVENT, { detail: { background: next } }));
+  };
+
+  const applyBackgroundVisualOpacity = (next: number) => {
+    const clamped = clampPercent(next);
+    setBackgroundVisualOpacity(clamped);
+    localStorage.setItem(BACKGROUND_VISUAL_OPACITY_KEY, String(clamped));
+    window.dispatchEvent(new CustomEvent(BACKGROUND_VISUAL_OPACITY_CHANGE_EVENT, { detail: { value: clamped } }));
+  };
+
+  const applyTaskbarSurfaceOpacity = (next: number) => {
+    const clamped = clampPercent(next);
+    setTaskbarSurfaceOpacity(clamped);
+    localStorage.setItem(TASKBAR_SURFACE_OPACITY_KEY, String(clamped));
+    window.dispatchEvent(new CustomEvent(TASKBAR_SURFACE_OPACITY_CHANGE_EVENT, { detail: { value: clamped } }));
   };
 
   const applyDensity = (next: DensityMode) => {
@@ -890,6 +1144,7 @@ export function Settings() {
         <button onClick={() => setTab('appearance')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'appearance' ? 'bg-white/15 text-white' : 'text-white/55')}>Appearance</button>
         <button onClick={() => setTab('keybinds')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'keybinds' ? 'bg-white/15 text-white' : 'text-white/55')}>Keybinds</button>
         <button onClick={() => setTab('widgets')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'widgets' ? 'bg-white/15 text-white' : 'text-white/55')}>Widgets</button>
+        <button onClick={() => setTab('updates')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'updates' ? 'bg-white/15 text-white' : 'text-white/55')}>Updates</button>
         <button onClick={() => setTab('extra')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'extra' ? 'bg-white/15 text-white' : 'text-white/55')}>Extra</button>
       </section>
 
@@ -1023,14 +1278,15 @@ export function Settings() {
           </AppearanceDropdown>
 
           <AppearanceDropdown title="Background" description="Pick animated/background texture style.">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              {([
+            <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
+              {([ 
                 { id: 'none', label: 'None', preview: 'var(--g-bg)', size: 'auto' },
                 { id: 'plus', label: 'Plus', preview: 'radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--g-accent) 34%, transparent) 1px, transparent 0)', size: '18px 18px' },
                 { id: 'particles', label: 'Particles', preview: 'radial-gradient(circle at 25% 35%, color-mix(in srgb, var(--g-accent) 60%, transparent), transparent 55%), radial-gradient(circle at 70% 60%, color-mix(in srgb, var(--g-accent) 42%, #ffffff 10%), transparent 58%)', size: 'auto' },
                 { id: 'aurora', label: 'Aurora', preview: 'radial-gradient(120% 100% at 20% 20%, color-mix(in srgb, var(--g-accent) 40%, transparent), transparent 62%), radial-gradient(120% 100% at 80% 80%, color-mix(in srgb, var(--g-accent) 24%, #39d682 26%), transparent 65%)', size: 'auto' },
                 { id: 'scanlines', label: 'Scanlines', preview: 'linear-gradient(to bottom, rgba(255,255,255,0.07) 1px, transparent 1px), linear-gradient(to right, color-mix(in srgb, var(--g-accent) 18%, transparent) 1px, transparent 1px)', size: '100% 4px, 18px 18px' },
-                { id: 'nebula', label: 'Nebula', preview: 'radial-gradient(100% 100% at 20% 70%, color-mix(in srgb, var(--g-accent) 45%, transparent), transparent 70%), radial-gradient(80% 80% at 70% 30%, color-mix(in srgb, var(--g-accent) 35%, #ffffff 8%), transparent 72%)', size: 'auto' }
+                { id: 'nebula', label: 'Nebula', preview: 'radial-gradient(100% 100% at 20% 70%, color-mix(in srgb, var(--g-accent) 45%, transparent), transparent 70%), radial-gradient(80% 80% at 70% 30%, color-mix(in srgb, var(--g-accent) 35%, #ffffff 8%), transparent 72%)', size: 'auto' },
+                { id: 'custom', label: 'Custom', preview: customBackgroundRenderPreview ? `url(${customBackgroundRenderPreview}) center/cover no-repeat` : 'linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.02))', size: 'cover' }
               ] as { id: BackgroundMode; label: string; preview: string; size: string }[]).map((bg) => (
                 <button
                   key={bg.id}
@@ -1041,6 +1297,109 @@ export function Settings() {
                   <p className="mt-2 text-sm font-extrabold text-white">{bg.label}</p>
                 </button>
               ))}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Background Opacity</p>
+                  <span className="text-sm font-extrabold text-white">{backgroundVisualOpacity}%</span>
+                </div>
+                <p className="text-xs g-muted mt-1">Lower values darken the launcher background more.</p>
+                <input type="range" min={0} max={100} step={1} value={backgroundVisualOpacity} onChange={(event) => applyBackgroundVisualOpacity(Number(event.target.value))} className="mt-3 w-full g-range" />
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Taskbar and Top Bar Opacity</p>
+                  <span className="text-sm font-extrabold text-white">{taskbarSurfaceOpacity}%</span>
+                </div>
+                <p className="text-xs g-muted mt-1">Controls how solid the sidebar dock and top shell are over the background.</p>
+                <input type="range" min={0} max={100} step={1} value={taskbarSurfaceOpacity} onChange={(event) => applyTaskbarSurfaceOpacity(Number(event.target.value))} className="mt-3 w-full g-range" />
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Custom Background</p>
+                  <p className="text-xs g-muted mt-1">Bloom outputs a 16:9 render. Images under 4K are rendered at 1920x1080. 4K sources render at 3840x2160.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <label className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] inline-flex items-center justify-center cursor-pointer">
+                    Upload Image
+                    <input type="file" accept="image/*" onChange={(event) => { void onCustomBackgroundFile(event); }} className="hidden" />
+                  </label>
+                  <button onClick={() => { void saveCustomBackground(); }} disabled={!customBackgroundSource || customBackgroundSaving} className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50">
+                    {customBackgroundSaving ? 'Saving...' : 'Save Background'}
+                  </button>
+                  <button onClick={() => { void clearCustomBackground(); }} disabled={!customBackgroundSaved && !customBackgroundSource} className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50">
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/55">
+                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">Output {customBackgroundTarget.width}x{customBackgroundTarget.height}</span>
+                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">{customBackgroundSaved ? 'Saved to Bloom' : 'Not saved yet'}</span>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-[1.25fr_0.9fr] gap-4">
+                <div className="space-y-3">
+                  <p className="text-[11px] uppercase tracking-[0.12em] font-extrabold text-white/55">Position and Zoom</p>
+                  <div
+                    onPointerDown={onCustomBackgroundPointerDown}
+                    onPointerMove={onCustomBackgroundPointerMove}
+                    onPointerUp={onCustomBackgroundPointerUp}
+                    onPointerLeave={onCustomBackgroundPointerUp}
+                    className={clsx('relative aspect-video overflow-hidden rounded-2xl border border-white/10 bg-black/40', customBackgroundSource ? (draggingCustomBackground ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default')}
+                  >
+                    {customBackgroundSource ? (
+                      <>
+                        <img
+                          src={customBackgroundSource}
+                          alt="Custom background editor"
+                          className="absolute inset-0 h-full w-full object-cover select-none pointer-events-none"
+                          style={{
+                            transform: `translate(${customBackgroundPanX * 14}%, ${customBackgroundPanY * 14}%) scale(${customBackgroundZoom})`
+                          }}
+                        />
+                        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.06)_1px,transparent_1px)] [background-size:10%_10%]" />
+                        <div className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-white/60 shadow-[0_0_0_9999px_rgba(0,0,0,0.28)]" />
+                      </>
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center text-sm font-bold text-white/38">Upload an image to position it</div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <label className="text-xs text-white/68">Horizontal
+                      <input type="range" min={-1} max={1} step={0.01} value={customBackgroundPanX} onChange={(event) => setCustomBackgroundPanX(Number(event.target.value))} className="mt-2 w-full g-range" />
+                    </label>
+                    <label className="text-xs text-white/68">Vertical
+                      <input type="range" min={-1} max={1} step={0.01} value={customBackgroundPanY} onChange={(event) => setCustomBackgroundPanY(Number(event.target.value))} className="mt-2 w-full g-range" />
+                    </label>
+                    <label className="text-xs text-white/68">Zoom
+                      <input type="range" min={1} max={2.8} step={0.01} value={customBackgroundZoom} onChange={(event) => setCustomBackgroundZoom(Number(event.target.value))} className="mt-2 w-full g-range" />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <p className="text-[11px] uppercase tracking-[0.12em] font-extrabold text-white/55">Exact Output Preview</p>
+                  <div className="rounded-2xl border border-white/10 bg-black/40 p-3">
+                    <div className="aspect-video overflow-hidden rounded-xl border border-white/10 bg-black/50">
+                      {customBackgroundRenderPreview ? (
+                        <img src={customBackgroundRenderPreview} alt="Custom background output preview" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="flex h-full items-center justify-center text-sm font-bold text-white/38">Saved output preview appears here</div>
+                      )}
+                    </div>
+                    <p className="mt-3 text-xs g-muted">This preview is rendered from the same canvas output Bloom will use for the launcher background.</p>
+                  </div>
+                </div>
+              </div>
+
+              {customBackgroundError && <p className="text-sm text-red-300">{customBackgroundError}</p>}
             </div>
           </AppearanceDropdown>
 
@@ -1385,11 +1744,21 @@ export function Settings() {
             </div>
           </div>
         </section>
-      ) : (
+      ) : tab === 'updates' ? (
         <section className="g-panel p-6 space-y-4">
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">App Updates</p>
-            <p className="text-xs g-muted">{updaterStatus}</p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Launcher Version</p>
+                <p className="text-2xl font-extrabold text-white mt-1">{APP_VERSION}</p>
+                <p className="text-xs g-muted mt-1">Bloom checks GitHub Releases for the newest Windows installer.</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 min-w-[220px]">
+                <p className="text-[11px] uppercase tracking-[0.12em] font-extrabold text-white/55">Status</p>
+                <p className="text-sm text-white mt-1">{updaterStatus}</p>
+              </div>
+            </div>
+
             {updaterProgress !== null && (
               <div className="rounded-lg border border-white/10 bg-white/[0.02] p-2">
                 <div className="h-2 rounded-full bg-white/10 overflow-hidden">
@@ -1398,6 +1767,7 @@ export function Settings() {
                 <p className="text-[10px] text-white/60 mt-1 font-bold">{Math.max(0, Math.min(100, updaterProgress))}%</p>
               </div>
             )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               <button
                 onClick={() => { void runUpdateCheck(); }}
@@ -1414,9 +1784,39 @@ export function Settings() {
                 {installingUpdate ? 'Installing...' : availableUpdate ? `Install v${availableUpdate.version}` : 'No Update'}
               </button>
             </div>
-            <p className="text-[10px] g-muted">Publishes are pulled from the latest GitHub Release installer asset (`*-setup.exe` or `.msi`).</p>
+            <p className="text-[10px] g-muted">Release assets are pulled from the latest GitHub Release installer asset (`*-setup.exe` or `.msi`).</p>
           </div>
 
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Automatic Update Checks</p>
+                <p className="text-xs g-muted mt-1">Check for a new launcher release each time Bloom opens.</p>
+              </div>
+              <button
+                data-on={updateAutoCheckEnabled}
+                onClick={() => applyUpdatePreferences({ autoCheck: !updateAutoCheckEnabled })}
+                className="g-toggle"
+                aria-label="Toggle automatic update checks"
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Update Notifications</p>
+                <p className="text-xs g-muted mt-1">Show an in-client notification card whenever a newer launcher version is found.</p>
+              </div>
+              <button
+                data-on={updateNotificationsEnabled}
+                onClick={() => applyUpdatePreferences({ notifications: !updateNotificationsEnabled })}
+                className="g-toggle"
+                aria-label="Toggle update notifications"
+              />
+            </div>
+          </div>
+        </section>
+      ) : (
+        <section className="g-panel p-6 space-y-4">
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div>
