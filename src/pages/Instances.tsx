@@ -6,6 +6,7 @@ import { CreateInstanceModal } from '../components/CreateInstanceModal';
 import { useDownloader } from '../hooks/useDownloader';
 import { useAuth } from '../hooks/useAuth';
 import { PageWidgets, type PageWidget } from '../components/PageWidgets';
+import { UniversalLoadingOverlay } from '../components/UniversalLoadingOverlay';
 
 const KEYBIND_ACTION_EVENT = 'bloom-keybind-action';
 
@@ -16,6 +17,7 @@ export function Instances() {
   const { startDownload, activeDownloads, disableIncompatibleMods } = useDownloader();
   const { authState } = useAuth();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [launchingInstanceId, setLaunchingInstanceId] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -35,6 +37,27 @@ export function Instances() {
     window.addEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
     return () => window.removeEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
   }, [instances, loadInstances, startDownload, authState]);
+
+  useEffect(() => {
+    if (!launchingInstanceId) return;
+    const current = activeDownloads[launchingInstanceId];
+    if (!current) {
+      setLaunchingInstanceId(null);
+      return;
+    }
+    if (current.status.toLowerCase().startsWith('error:')) {
+      const timer = window.setTimeout(() => setLaunchingInstanceId(null), 1200);
+      return () => window.clearTimeout(timer);
+    }
+  }, [activeDownloads, launchingInstanceId]);
+
+  const launchStatus = launchingInstanceId ? activeDownloads[launchingInstanceId]?.status || 'Preparing launch...' : null;
+
+  const handleLaunch = async (inst: typeof instances[number]) => {
+    if (activeDownloads[inst.id] && activeDownloads[inst.id].status !== 'Complete') return;
+    setLaunchingInstanceId(inst.id);
+    await startDownload(inst, authState);
+  };
 
   const headerWidget = (
     <section className="g-panel-strong p-6">
@@ -81,7 +104,7 @@ export function Instances() {
 
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={(event) => { event.stopPropagation(); void startDownload(inst, authState); }}
+                      onClick={(event) => { event.stopPropagation(); void handleLaunch(inst); }}
                       disabled={installing}
                       className="g-btn-accent h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] inline-flex items-center gap-1 disabled:opacity-50"
                     >
@@ -153,6 +176,13 @@ export function Instances() {
 
   return (
     <>
+      <UniversalLoadingOverlay
+        open={!!launchStatus}
+        fixed
+        eyebrow="Launching"
+        title={launchStatus || 'Preparing launch...'}
+        description="Bloom is installing files and starting Minecraft."
+      />
       <PageWidgets pageKey="instances" widgets={widgets} />
       <CreateInstanceModal
         isOpen={isCreateOpen}

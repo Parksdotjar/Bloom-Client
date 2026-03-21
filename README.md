@@ -70,3 +70,61 @@ Bloom Client is now wired for Tauri updater releases.
 - **Vanilla Launch Logic**: Fetch Mojang manifests, download libraries, extract natives, build the JVM launch command.
 - **Fabric Launch Logic**: Fetch Fabric metadata, install loaders, inject Mixins.
 - **Polish**: Crash log catchers, auto-updaters, and user settings panel wiring.
+
+## Bloom Console
+
+Bloom now includes an in-app developer console overlay designed for power users.
+
+- **UI wiring**: Mounted in `src/components/Layout.tsx` as `<BloomConsole />` so it shares the existing shell, theme variables, blur, motion, and overlay stack.
+- **Component**: `src/components/BloomConsole.tsx` handles keyboard UX, history navigation, autocomplete, inline suggestions, and formatted output rendering.
+- **Command runtime**:
+  - Parser: `src/console/parser.ts`
+  - Executor/validation: `src/console/executor.ts`
+  - Registry (commands + metadata): `src/console/registry.ts`
+  - Suggestions: `src/console/suggestions.ts`
+  - Store/history: `src/console/store.ts`
+- **Settings keys**: Shared in `src/constants/console.ts` (hotkey, history persistence, startup tip, dev-help visibility, log level).
+- **Adding commands**: Add a typed command definition in `createConsoleRegistry()` inside `src/console/registry.ts` with `name`, `usage`, `description`, optional `args`, optional `autocomplete`, and a safe `handler` that uses the provided runtime context (no shell/eval access).
+
+## Script Studio (BloomScript IDE)
+
+Bloom now includes an IDE-style in-app scripting surface for power users.
+
+- **Route/UI**: `src/pages/ScriptStudio.tsx` mounted at `/script-studio` and wired into sidebar/search.
+- **Language tooling** (`src/ide/`):
+  - `types.ts`: typed AST/execution shapes
+  - `bridge.ts`: maps dot-style BloomScript commands to console command definitions/aliases
+  - `parser.ts`: tokenizer/parser + static diagnostics
+  - `runtime.ts`: safe executor that routes commands through Bloom's internal command runtime (no OS shell, no eval)
+  - `language.ts`: Monaco language registration, custom syntax theme, completion provider, and marker mapping
+- **How command execution works**:
+  1. BloomScript parses statements (`let`, commands, variables like `$name`)
+  2. Command names resolve against the existing Bloom console registry
+  3. Execution is forwarded through `executeConsoleInput(...)` with typed context handlers
+- **Adding future language commands**: add/update console commands in `src/console/registry.ts`; BloomScript command index and autocomplete will pick them up automatically through the bridge layer.
+
+## Host Server (Local + Relay-Ready)
+
+Bloom now includes a built-in local server hosting surface with a compact control panel.
+
+- **Route/UI**: `src/pages/HostServer.tsx` mounted at `/host-server`, linked in sidebar + search.
+- **State/provider**: `src/hooks/useHostedServers.ts` wraps server CRUD/lifecycle actions.
+- **Tauri bridge**: `src/services/tauri.ts` exposes hosted-server commands and typed payloads.
+- **Backend module**: `src-tauri/src/servers.rs` handles:
+  - local server records and folders under app data `servers/`
+  - vanilla server jar provisioning from Mojang metadata
+  - process lifecycle (`start`, `stop`, `restart`, status polling)
+  - live log capture + command stdin forwarding
+  - file browser actions (list/read/write/create/rename/delete)
+  - backup actions (create/list/delete/restore)
+  - tunnel session wiring points (`hosted_servers_tunnel_open/close`)
+
+### Hidden IP model
+
+- Server process always runs on host machine locally (for example `127.0.0.1:<port>`).
+- Public shareable address uses Bloom hostname metadata (`<subdomain>.playbloom.gg`).
+- The client is wired for outbound relay negotiation via environment variables:
+  - `BLOOM_RELAY_API_URL` (optional API handshake endpoint)
+  - `BLOOM_RELAY_API_KEY` (optional bearer token)
+  - `BLOOM_RELAY_ENDPOINT` (optional informational relay endpoint string)
+- Without relay API configuration, tunnel commands remain safe placeholders (no raw home-IP exposure flow is added in renderer).

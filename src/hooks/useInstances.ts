@@ -18,6 +18,7 @@ type InstancesContextValue = {
     loading: boolean;
     error: string | null;
     loadInstances: () => Promise<void>;
+    getInstance: (id: string) => Promise<Instance>;
     createInstance: (payload: Instance) => Promise<void>;
     updateInstance: (id: string, payload: Instance) => Promise<void>;
     deleteInstance: (id: string) => Promise<void>;
@@ -77,6 +78,8 @@ function useInstancesController(): InstancesContextValue {
         }
     };
 
+    const getInstance = async (id: string) => TauriApi.instancesGet(id);
+
     useEffect(() => {
         void loadInstances();
     }, []);
@@ -86,6 +89,7 @@ function useInstancesController(): InstancesContextValue {
         loading,
         error,
         loadInstances,
+        getInstance,
         createInstance,
         updateInstance,
         deleteInstance

@@ -4,6 +4,7 @@ import { Eye, EyeOff, GripVertical, Play, Shield, Sparkles, UserRound } from 'lu
 import { useInstances } from '../hooks/useInstances';
 import { useAuth } from '../hooks/useAuth';
 import { useDownloader } from '../hooks/useDownloader';
+import { TauriApi } from '../services/tauri';
 
 type HomeWidgetId = 'hero' | 'instances' | 'account' | 'metrics' | 'clock' | 'stopwatch';
 type HomeWidget = { id: HomeWidgetId; visible: boolean };
@@ -46,6 +47,7 @@ export function Home() {
   const [showWidgetDocker, setShowWidgetDocker] = useState<boolean>(() => localStorage.getItem(SHOW_WIDGET_DOCKER_KEY) === 'true');
   const [hideEmptyWidgetSlots, setHideEmptyWidgetSlots] = useState<boolean>(() => localStorage.getItem(HIDE_EMPTY_WIDGET_SLOTS_KEY) === 'true');
   const [accountLaunchInstanceId, setAccountLaunchInstanceId] = useState<string>(() => localStorage.getItem(ACCOUNT_LAUNCH_INSTANCE_KEY) || '');
+  const [selectedCoverDataUrl, setSelectedCoverDataUrl] = useState<string | undefined>(undefined);
   const [now, setNow] = useState<Date>(() => new Date());
   const [stopwatchRunning, setStopwatchRunning] = useState(false);
   const [stopwatchElapsedMs, setStopwatchElapsedMs] = useState(0);
@@ -156,6 +158,28 @@ export function Home() {
 
     localStorage.setItem(ACCOUNT_LAUNCH_INSTANCE_KEY, accountLaunchInstanceId);
   }, [accountLaunchInstanceId, instances]);
+
+  useEffect(() => {
+    let active = true;
+    if (!selected?.id) {
+      setSelectedCoverDataUrl(undefined);
+      return () => {
+        active = false;
+      };
+    }
+
+    void TauriApi.instancesGet(selected.id)
+      .then((instance) => {
+        if (active) setSelectedCoverDataUrl(instance.coverDataUrl);
+      })
+      .catch(() => {
+        if (active) setSelectedCoverDataUrl(undefined);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selected?.id]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
@@ -270,7 +294,7 @@ export function Home() {
   const widgetMap: Record<HomeWidgetId, ReactNode> = {
     hero: (
       <section className="g-panel-strong p-6 relative overflow-hidden h-full">
-        {selected?.coverDataUrl && <img src={selected.coverDataUrl} className="absolute inset-0 w-full h-full object-cover opacity-30" />}
+        {selectedCoverDataUrl && <img src={selectedCoverDataUrl} className="absolute inset-0 w-full h-full object-cover opacity-30" />}
         <div className="relative">
           <p className="text-[10px] font-extrabold tracking-[0.2em] uppercase g-accent-text">Welcome</p>
           <div className="mt-2 flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">

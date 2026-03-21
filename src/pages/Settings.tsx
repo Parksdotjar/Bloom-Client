@@ -2,6 +2,15 @@ import { useEffect, useRef, useState, type ChangeEvent, type PointerEventHandler
 import { clsx } from 'clsx';
 import { APP_VERSION } from '../constants/version';
 import { TauriApi } from '../services/tauri';
+import { UniversalLoadingOverlay } from '../components/UniversalLoadingOverlay';
+import {
+  CONSOLE_HOTKEY_DEFAULT,
+  CONSOLE_PERSIST_HISTORY_KEY,
+  CONSOLE_SETTINGS_CHANGE_EVENT,
+  CONSOLE_SHOW_DEV_COMMANDS_KEY,
+  CONSOLE_SHOW_STARTUP_TIP_KEY,
+  SHORTCUT_CONSOLE_KEY
+} from '../constants/console';
 import {
   checkForLauncherUpdate,
   downloadAndInstallLauncherUpdate,
@@ -26,6 +35,55 @@ type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
 type SoundPackMode = 'off' | 'soft' | 'arcade' | 'retro';
 type StartupSceneTheme = 'nova' | 'horizon' | 'matrix';
 type StartupSceneSoundProfile = 'off' | 'shimmer' | 'impact';
+type InstanceInstallLoadingStyle = 'orbit' | 'bars' | 'prism' | 'pulse';
+
+type AppearancePresetPayload = {
+  themeMode: LauncherTheme;
+  accentMode: AccentMode;
+  backgroundMode: BackgroundMode;
+  backgroundVisualOpacity: number;
+  taskbarSurfaceOpacity: number;
+  dropdownOpacity: number;
+  densityMode: DensityMode;
+  fontPackMode: FontPackMode;
+  sidebarMode: SidebarMode;
+  sidebarPosition: SidebarPosition;
+  cardStyleMode: CardStyleMode;
+  taskbarLogoBackgroundMode: TaskbarLogoBackgroundMode;
+  buttonTheme: ButtonThemeMode;
+  motionMode: MotionMode;
+  motionFps: number;
+  motionAnimDurationMs: number;
+  motionFadeDurationMs: number;
+  motionStaggerMs: number;
+  motionOffsetX: number;
+  motionOffsetY: number;
+  motionEasingPreset: MotionEasingPreset;
+  motionEasingX1: number;
+  motionEasingY1: number;
+  motionEasingX2: number;
+  motionEasingY2: number;
+  uiAssetPixelLevel: number;
+  iconPackMode: IconPackMode;
+  roundnessLevel: number;
+  buttonRoundnessLevel: number;
+  glassAmount: number;
+  customBackgroundDataUrl?: string | null;
+};
+
+type AppearancePresetRecord = {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  payload: AppearancePresetPayload;
+};
+
+type AppearancePresetExportFileV1 = {
+  type: 'bloom-appearance-preset';
+  version: 1;
+  preset: AppearancePresetRecord;
+};
 
 type SettingsTab = 'general' | 'appearance' | 'keybinds' | 'widgets' | 'updates' | 'extra';
 
@@ -51,6 +109,8 @@ const TASKBAR_LOGO_BACKGROUND_KEY = 'bloom_taskbar_logo_background';
 const TASKBAR_LOGO_BACKGROUND_CHANGE_EVENT = 'bloom-taskbar-logo-background-change';
 const TASKBAR_SURFACE_OPACITY_KEY = 'bloom_taskbar_surface_opacity';
 const TASKBAR_SURFACE_OPACITY_CHANGE_EVENT = 'bloom-taskbar-surface-opacity-change';
+const DROPDOWN_OPACITY_KEY = 'bloom_dropdown_opacity';
+const DROPDOWN_OPACITY_CHANGE_EVENT = 'bloom-dropdown-opacity-change';
 const BUTTON_THEME_STORAGE_KEY = 'bloom_button_theme';
 const BUTTON_THEME_CHANGE_EVENT = 'bloom-button-theme-change';
 const MOTION_STORAGE_KEY = 'bloom_motion_mode';
@@ -70,6 +130,7 @@ const MOTION_EASING_X2_KEY = 'bloom_motion_easing_x2';
 const MOTION_EASING_Y2_KEY = 'bloom_motion_easing_y2';
 const SHOW_WIDGET_DOCKER_KEY = 'bloom_show_widget_docker';
 const HIDE_EMPTY_WIDGET_SLOTS_KEY = 'bloom_hide_empty_widget_slots';
+const SHOW_GAMES_SECTION_KEY = 'bloom_show_games_section';
 const EXTRA_CHANGE_EVENT = 'bloom-extra-change';
 const SIDEBAR_DOCK_HOVER_ENABLED_KEY = 'bloom_sidebar_dock_hover_enabled';
 const SIDEBAR_DOCK_GROW_SIZE_KEY = 'bloom_sidebar_dock_grow_size';
@@ -101,6 +162,8 @@ const STARTUP_SCENE_THEME_KEY = 'bloom_startup_scene_theme';
 const STARTUP_SCENE_SOUND_PROFILE_KEY = 'bloom_startup_scene_sound_profile';
 const STARTUP_SCENE_CHANGE_EVENT = 'bloom-startup-scene-change';
 const ROUTE_TAB_ANIMATIONS_KEY = 'bloom_route_tab_animations_enabled';
+const INSTANCE_INSTALL_LOADING_STYLE_KEY = 'bloom_instance_install_loading_style';
+const APPEARANCE_PRESETS_KEY = 'bloom_appearance_presets';
 
 const THEMES: { id: LauncherTheme; label: string; description: string }[] = [
   { id: 'dark', label: 'Dark', description: 'Deep contrast with glow.' },
@@ -164,6 +227,13 @@ const STARTUP_SCENE_THEMES: { id: StartupSceneTheme; label: string; description:
   { id: 'matrix', label: 'Matrix', description: 'Grid pulse style.' }
 ];
 
+const INSTANCE_INSTALL_LOADING_STYLES: { id: InstanceInstallLoadingStyle; label: string; description: string }[] = [
+  { id: 'orbit', label: 'Orbit', description: 'Single orbit ring around a center core.' },
+  { id: 'bars', label: 'Bars', description: 'Quiet vertical bars with staggered motion.' },
+  { id: 'prism', label: 'Prism', description: 'Rotating diamond frame with a bright core.' },
+  { id: 'pulse', label: 'Pulse', description: 'Soft expanding rings with a minimal center.' }
+];
+
 const KEYBIND_GROUPS = [
   {
     title: 'Global',
@@ -171,6 +241,7 @@ const KEYBIND_GROUPS = [
       { id: 'search', label: 'Open Search', description: 'Focus the launcher search overlay.', defaultValue: 'Ctrl+K', wired: true },
       { id: 'create', label: 'Create Instance', description: 'Jump straight into the instance create flow.', defaultValue: 'Ctrl+N', wired: true },
       { id: 'settings', label: 'Open Settings', description: 'Open the main settings page.', defaultValue: 'Ctrl+,', wired: true },
+      { id: 'console', label: 'Open Console', description: 'Toggle the Bloom developer console overlay.', defaultValue: CONSOLE_HOTKEY_DEFAULT, wired: true },
       { id: 'replay-startup-scene', label: 'Replay Startup Scene', description: 'Replay the Bloom intro scene.', defaultValue: 'Ctrl+Shift+J', wired: true },
       { id: 'open-help', label: 'Open Help', description: 'Open the help page.', defaultValue: '', wired: true },
       { id: 'open-marketplace', label: 'Open Marketplace', description: 'Jump to the marketplace page.', defaultValue: '', wired: true }
@@ -300,6 +371,154 @@ function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
+function clampDropdownOpacity(value: number) {
+  return Math.max(35, Math.min(100, Math.round(value)));
+}
+
+function readBooleanSetting(key: string, fallback: boolean) {
+  const raw = localStorage.getItem(key);
+  if (raw === null) return fallback;
+  return raw !== 'false';
+}
+
+function sanitizePresetName(input: string) {
+  return input.trim().slice(0, 64);
+}
+
+function slugifyPresetName(name: string) {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+  return slug || 'appearance-preset';
+}
+
+function triggerJsonDownload(fileName: string, payload: unknown) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function parseAppearancePresetPayload(raw: unknown): AppearancePresetPayload | null {
+  if (!isObjectRecord(raw)) return null;
+
+  const isTheme = (value: unknown): value is LauncherTheme => THEMES.some((theme) => theme.id === value);
+  const isAccent = (value: unknown): value is AccentMode => ACCENTS.some((accent) => accent.id === value);
+  const isBackground = (value: unknown): value is BackgroundMode =>
+    value === 'none' || value === 'plus' || value === 'particles' || value === 'aurora' || value === 'scanlines' || value === 'nebula' || value === 'custom';
+  const isDensity = (value: unknown): value is DensityMode => value === 'compact' || value === 'cozy' || value === 'spacious';
+  const isFont = (value: unknown): value is FontPackMode => value === 'manrope' || value === 'space-grotesk' || value === 'sora';
+  const isSidebarMode = (value: unknown): value is SidebarMode => value === 'rail' || value === 'classic' || value === 'expanded';
+  const isSidebarPosition = (value: unknown): value is SidebarPosition => value === 'left' || value === 'right' || value === 'top' || value === 'bottom';
+  const isCardStyle = (value: unknown): value is CardStyleMode => value === 'glass' || value === 'solid' || value === 'outline';
+  const isTaskbarLogo = (value: unknown): value is TaskbarLogoBackgroundMode =>
+    value === 'default' || value === 'discord' || value === 'accent' || value === 'glass' || value === 'none';
+  const isButtonTheme = (value: unknown): value is ButtonThemeMode =>
+    value === 'default' || value === 'simple' || value === 'cartoon' || value === 'glass' || value === 'neon' || value === 'pixel' || value === 'brutalist' || value === 'pill' || value === 'terminal' || value === 'arcade';
+  const isMotionMode = (value: unknown): value is MotionMode => value === 'off' || value === 'subtle' || value === 'standard' || value === 'cinematic';
+  const isMotionEasingPreset = (value: unknown): value is MotionEasingPreset =>
+    value === 'out-quad' || value === 'out-cubic' || value === 'in-out-cubic' || value === 'out-back' || value === 'out-elastic' || value === 'linear' || value === 'custom';
+  const isIconPack = (value: unknown): value is IconPackMode => value === 'default' || value === 'bold' || value === 'rounded' || value === 'pixel';
+
+  if (!isTheme(raw.themeMode)) return null;
+  if (!isAccent(raw.accentMode)) return null;
+  if (!isBackground(raw.backgroundMode)) return null;
+  if (!isDensity(raw.densityMode)) return null;
+  if (!isFont(raw.fontPackMode)) return null;
+  if (!isSidebarMode(raw.sidebarMode)) return null;
+  if (!isSidebarPosition(raw.sidebarPosition)) return null;
+  if (!isCardStyle(raw.cardStyleMode)) return null;
+  if (!isTaskbarLogo(raw.taskbarLogoBackgroundMode)) return null;
+  if (!isButtonTheme(raw.buttonTheme)) return null;
+  if (!isMotionMode(raw.motionMode)) return null;
+  if (!isMotionEasingPreset(raw.motionEasingPreset)) return null;
+  if (!isIconPack(raw.iconPackMode)) return null;
+
+  const tuning = clampMotionTuning({
+    animDurationMs: Number(raw.motionAnimDurationMs),
+    fadeDurationMs: Number(raw.motionFadeDurationMs),
+    staggerMs: Number(raw.motionStaggerMs),
+    offsetX: Number(raw.motionOffsetX),
+    offsetY: Number(raw.motionOffsetY),
+    easingPreset: raw.motionEasingPreset,
+    easingX1: Number(raw.motionEasingX1),
+    easingY1: Number(raw.motionEasingY1),
+    easingX2: Number(raw.motionEasingX2),
+    easingY2: Number(raw.motionEasingY2)
+  });
+
+  return {
+    themeMode: raw.themeMode,
+    accentMode: raw.accentMode,
+    backgroundMode: raw.backgroundMode,
+    backgroundVisualOpacity: clampPercent(Number(raw.backgroundVisualOpacity)),
+    taskbarSurfaceOpacity: clampPercent(Number(raw.taskbarSurfaceOpacity)),
+    dropdownOpacity: Number.isFinite(Number(raw.dropdownOpacity)) ? clampDropdownOpacity(Number(raw.dropdownOpacity)) : 92,
+    densityMode: raw.densityMode,
+    fontPackMode: raw.fontPackMode,
+    sidebarMode: raw.sidebarMode,
+    sidebarPosition: raw.sidebarPosition,
+    cardStyleMode: raw.cardStyleMode,
+    taskbarLogoBackgroundMode: raw.taskbarLogoBackgroundMode,
+    buttonTheme: raw.buttonTheme,
+    motionMode: raw.motionMode,
+    motionFps: Math.max(14, Math.min(30, Math.round(Number(raw.motionFps)))),
+    motionAnimDurationMs: tuning.animDurationMs,
+    motionFadeDurationMs: tuning.fadeDurationMs,
+    motionStaggerMs: tuning.staggerMs,
+    motionOffsetX: tuning.offsetX,
+    motionOffsetY: tuning.offsetY,
+    motionEasingPreset: tuning.easingPreset,
+    motionEasingX1: tuning.easingX1,
+    motionEasingY1: tuning.easingY1,
+    motionEasingX2: tuning.easingX2,
+    motionEasingY2: tuning.easingY2,
+    uiAssetPixelLevel: clampUiAssetPixelLevel(Number(raw.uiAssetPixelLevel)),
+    iconPackMode: raw.iconPackMode,
+    roundnessLevel: clampRoundness(Number(raw.roundnessLevel)),
+    buttonRoundnessLevel: clampRoundness(Number(raw.buttonRoundnessLevel)),
+    glassAmount: clampGlassAmount(Number(raw.glassAmount)),
+    customBackgroundDataUrl: typeof raw.customBackgroundDataUrl === 'string' ? raw.customBackgroundDataUrl : null
+  };
+}
+
+function parseAppearancePresetRecord(raw: unknown): AppearancePresetRecord | null {
+  if (!isObjectRecord(raw)) return null;
+  const payload = parseAppearancePresetPayload(raw.payload);
+  if (!payload) return null;
+  const name = sanitizePresetName(String(raw.name ?? 'Preset'));
+  return {
+    id: typeof raw.id === 'string' && raw.id.trim() ? raw.id : crypto.randomUUID(),
+    name: name || 'Preset',
+    createdAt: Number.isFinite(Number(raw.createdAt)) ? Number(raw.createdAt) : Date.now(),
+    updatedAt: Number.isFinite(Number(raw.updatedAt)) ? Number(raw.updatedAt) : Date.now(),
+    payload
+  };
+}
+
+function readStoredAppearancePresets(): AppearancePresetRecord[] {
+  try {
+    const raw = localStorage.getItem(APPEARANCE_PRESETS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(parseAppearancePresetRecord)
+      .filter((preset): preset is AppearancePresetRecord => Boolean(preset))
+      .slice(0, 100);
+  } catch {
+    return [];
+  }
+}
+
 function AppearanceDropdown(props: { title: string; description: string; children: ReactNode }) {
   const { title, description, children } = props;
   return (
@@ -312,6 +531,47 @@ function AppearanceDropdown(props: { title: string; description: string; childre
         {children}
       </div>
     </details>
+  );
+}
+
+function LoadingScreenPreviewGlyph({ style }: { style: InstanceInstallLoadingStyle }) {
+  if (style === 'bars') {
+    return (
+      <div className="flex h-16 items-end justify-center gap-1.5">
+        {[0, 1, 2, 3].map((index) => (
+          <span
+            key={index}
+            className="w-2 rounded-full bg-white/85"
+            style={{ height: `${20 + index * 7}px`, opacity: 0.45 + index * 0.12 }}
+          />
+        ))}
+      </div>
+    );
+  }
+  if (style === 'prism') {
+    return (
+      <div className="relative h-16 w-16">
+        <div className="absolute inset-0 rotate-45 rounded-[18px] border border-white/70" />
+        <div className="absolute inset-[18px] rotate-45 rounded-[8px] bg-white/90" />
+      </div>
+    );
+  }
+  if (style === 'pulse') {
+    return (
+      <div className="relative h-16 w-16">
+        <div className="absolute inset-2 rounded-full border border-white/30" />
+        <div className="absolute inset-5 rounded-full border border-white/60" />
+        <div className="absolute inset-[26px] rounded-full bg-white/92" />
+      </div>
+    );
+  }
+  return (
+    <div className="relative h-16 w-16">
+      <div className="absolute inset-1 rounded-full border border-white/22" />
+      <div className="absolute inset-4 rounded-full border border-white/70" />
+      <div className="absolute left-1/2 top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/92" />
+      <div className="absolute left-1/2 top-2 h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-white/78" />
+    </div>
   );
 }
 
@@ -388,6 +648,7 @@ export function Settings() {
   const [tab, setTab] = useState<SettingsTab>('general');
   const [showWidgetDocker, setShowWidgetDocker] = useState<boolean>(() => localStorage.getItem(SHOW_WIDGET_DOCKER_KEY) === 'true');
   const [hideEmptyWidgetSlots, setHideEmptyWidgetSlots] = useState<boolean>(() => localStorage.getItem(HIDE_EMPTY_WIDGET_SLOTS_KEY) === 'true');
+  const [showGamesSection, setShowGamesSection] = useState<boolean>(() => localStorage.getItem(SHOW_GAMES_SECTION_KEY) === 'true');
   const [routeTabAnimationsEnabled, setRouteTabAnimationsEnabled] = useState<boolean>(() => localStorage.getItem(ROUTE_TAB_ANIMATIONS_KEY) === 'true');
   const [sidebarDockHoverEnabled, setSidebarDockHoverEnabled] = useState<boolean>(() => localStorage.getItem(SIDEBAR_DOCK_HOVER_ENABLED_KEY) === 'true');
   const [sidebarDockGrowSize, setSidebarDockGrowSize] = useState<number>(() => {
@@ -432,11 +693,16 @@ export function Settings() {
   const [shortcutSearch, setShortcutSearch] = useState<string>(() => localStorage.getItem(SHORTCUT_SEARCH_KEY) || 'Ctrl+K');
   const [shortcutCreateInstance, setShortcutCreateInstance] = useState<string>(() => localStorage.getItem(SHORTCUT_CREATE_INSTANCE_KEY) || 'Ctrl+N');
   const [shortcutSettings, setShortcutSettings] = useState<string>(() => localStorage.getItem(SHORTCUT_SETTINGS_KEY) || 'Ctrl+,');
+  const [shortcutConsole, setShortcutConsole] = useState<string>(() => localStorage.getItem(SHORTCUT_CONSOLE_KEY) || CONSOLE_HOTKEY_DEFAULT);
   const [shortcutReplayStartupScene, setShortcutReplayStartupScene] = useState<string>(() => localStorage.getItem(SHORTCUT_REPLAY_STARTUP_SCENE_KEY) || 'Ctrl+Shift+J');
   const [draftShortcutSearch, setDraftShortcutSearch] = useState<string>(() => localStorage.getItem(SHORTCUT_SEARCH_KEY) || 'Ctrl+K');
   const [draftShortcutCreateInstance, setDraftShortcutCreateInstance] = useState<string>(() => localStorage.getItem(SHORTCUT_CREATE_INSTANCE_KEY) || 'Ctrl+N');
   const [draftShortcutSettings, setDraftShortcutSettings] = useState<string>(() => localStorage.getItem(SHORTCUT_SETTINGS_KEY) || 'Ctrl+,');
+  const [draftShortcutConsole, setDraftShortcutConsole] = useState<string>(() => localStorage.getItem(SHORTCUT_CONSOLE_KEY) || CONSOLE_HOTKEY_DEFAULT);
   const [draftShortcutReplayStartupScene, setDraftShortcutReplayStartupScene] = useState<string>(() => localStorage.getItem(SHORTCUT_REPLAY_STARTUP_SCENE_KEY) || 'Ctrl+Shift+J');
+  const [consolePersistHistory, setConsolePersistHistory] = useState<boolean>(() => readBooleanSetting(CONSOLE_PERSIST_HISTORY_KEY, true));
+  const [consoleShowStartupTip, setConsoleShowStartupTip] = useState<boolean>(() => readBooleanSetting(CONSOLE_SHOW_STARTUP_TIP_KEY, true));
+  const [consoleShowDevCommands, setConsoleShowDevCommands] = useState<boolean>(() => readBooleanSetting(CONSOLE_SHOW_DEV_COMMANDS_KEY, false));
   const [extraKeybinds, setExtraKeybinds] = useState<Record<string, string>>(() => {
     try {
       const raw = localStorage.getItem(EXTRA_KEYBINDS_STORAGE_KEY);
@@ -457,6 +723,7 @@ export function Settings() {
   });
   const [capturingShortcut, setCapturingShortcut] = useState<string | null>(null);
   const [keybindSaveState, setKeybindSaveState] = useState<'idle' | 'saved'>('idle');
+  const [savingOverlayOpen, setSavingOverlayOpen] = useState(false);
   const [soundPack, setSoundPack] = useState<SoundPackMode>(() => {
     const stored = localStorage.getItem(SOUND_PACK_KEY);
     return stored === 'off' || stored === 'soft' || stored === 'arcade' || stored === 'retro' ? stored : 'soft';
@@ -472,6 +739,10 @@ export function Settings() {
   const [startupSceneSoundProfile, setStartupSceneSoundProfile] = useState<StartupSceneSoundProfile>(() => {
     const stored = localStorage.getItem(STARTUP_SCENE_SOUND_PROFILE_KEY);
     return stored === 'off' || stored === 'shimmer' || stored === 'impact' ? stored : 'shimmer';
+  });
+  const [instanceInstallLoadingStyle, setInstanceInstallLoadingStyle] = useState<InstanceInstallLoadingStyle>(() => {
+    const stored = localStorage.getItem(INSTANCE_INSTALL_LOADING_STYLE_KEY);
+    return stored === 'orbit' || stored === 'bars' || stored === 'prism' || stored === 'pulse' ? stored : 'orbit';
   });
   const [availableUpdate, setAvailableUpdate] = useState<ExternalUpdate | null>(null);
   const [updaterStatus, setUpdaterStatus] = useState<string>('No update check run yet.');
@@ -510,6 +781,11 @@ export function Settings() {
   const [customBackgroundError, setCustomBackgroundError] = useState<string | null>(null);
   const [draggingCustomBackground, setDraggingCustomBackground] = useState(false);
   const customBackgroundPointerRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const [appearancePresets, setAppearancePresets] = useState<AppearancePresetRecord[]>(() => readStoredAppearancePresets());
+  const [appearancePresetName, setAppearancePresetName] = useState('');
+  const [appearancePresetStatus, setAppearancePresetStatus] = useState<string | null>(null);
+  const [appearancePresetError, setAppearancePresetError] = useState<string | null>(null);
+  const appearanceImportRef = useRef<HTMLInputElement | null>(null);
   const [backgroundVisualOpacity, setBackgroundVisualOpacity] = useState<number>(() => {
     const stored = Number(localStorage.getItem(BACKGROUND_VISUAL_OPACITY_KEY));
     if (Number.isFinite(stored)) return clampPercent(stored);
@@ -518,6 +794,11 @@ export function Settings() {
   const [taskbarSurfaceOpacity, setTaskbarSurfaceOpacity] = useState<number>(() => {
     const stored = Number(localStorage.getItem(TASKBAR_SURFACE_OPACITY_KEY));
     if (Number.isFinite(stored)) return clampPercent(stored);
+    return 92;
+  });
+  const [dropdownOpacity, setDropdownOpacity] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(DROPDOWN_OPACITY_KEY));
+    if (Number.isFinite(stored)) return clampDropdownOpacity(stored);
     return 92;
   });
   const [densityMode, setDensityMode] = useState<DensityMode>(() => {
@@ -614,6 +895,7 @@ export function Settings() {
     draftShortcutSearch !== shortcutSearch
     || draftShortcutCreateInstance !== shortcutCreateInstance
     || draftShortcutSettings !== shortcutSettings
+    || draftShortcutConsole !== shortcutConsole
     || draftShortcutReplayStartupScene !== shortcutReplayStartupScene
     || serializeKeybindMap(draftExtraKeybinds) !== serializeKeybindMap(extraKeybinds);
   const applyTheme = (next: LauncherTheme) => {
@@ -662,10 +944,11 @@ export function Settings() {
     window.dispatchEvent(new CustomEvent(GLASS_AMOUNT_CHANGE_EVENT, { detail: { amount: clamped } }));
   };
 
-  const applyShortcuts = (partial: { search?: string; create?: string; settings?: string; replayStartupScene?: string }) => {
+  const applyShortcuts = (partial: { search?: string; create?: string; settings?: string; console?: string; replayStartupScene?: string }) => {
     setDraftShortcutSearch(partial.search ?? draftShortcutSearch);
     setDraftShortcutCreateInstance(partial.create ?? draftShortcutCreateInstance);
     setDraftShortcutSettings(partial.settings ?? draftShortcutSettings);
+    setDraftShortcutConsole(partial.console ?? draftShortcutConsole);
     setDraftShortcutReplayStartupScene(partial.replayStartupScene ?? draftShortcutReplayStartupScene);
     setKeybindSaveState('idle');
   };
@@ -679,19 +962,23 @@ export function Settings() {
     if (id === 'search') applyShortcuts({ search: '' });
     else if (id === 'create') applyShortcuts({ create: '' });
     else if (id === 'settings') applyShortcuts({ settings: '' });
+    else if (id === 'console') applyShortcuts({ console: '' });
     else if (id === 'replay-startup-scene') applyShortcuts({ replayStartupScene: '' });
     else applyExtraKeybind(id, '');
   };
 
   const saveKeybinds = () => {
+    setSavingOverlayOpen(true);
     setShortcutSearch(draftShortcutSearch);
     setShortcutCreateInstance(draftShortcutCreateInstance);
     setShortcutSettings(draftShortcutSettings);
+    setShortcutConsole(draftShortcutConsole);
     setShortcutReplayStartupScene(draftShortcutReplayStartupScene);
     setExtraKeybinds(draftExtraKeybinds);
     localStorage.setItem(SHORTCUT_SEARCH_KEY, draftShortcutSearch);
     localStorage.setItem(SHORTCUT_CREATE_INSTANCE_KEY, draftShortcutCreateInstance);
     localStorage.setItem(SHORTCUT_SETTINGS_KEY, draftShortcutSettings);
+    localStorage.setItem(SHORTCUT_CONSOLE_KEY, draftShortcutConsole);
     localStorage.setItem(SHORTCUT_REPLAY_STARTUP_SCENE_KEY, draftShortcutReplayStartupScene);
     localStorage.setItem(EXTRA_KEYBINDS_STORAGE_KEY, JSON.stringify(draftExtraKeybinds));
     window.dispatchEvent(new CustomEvent(SHORTCUTS_CHANGE_EVENT, {
@@ -699,11 +986,36 @@ export function Settings() {
         search: draftShortcutSearch,
         create: draftShortcutCreateInstance,
         settings: draftShortcutSettings,
+        console: draftShortcutConsole,
         replayStartupScene: draftShortcutReplayStartupScene,
         extras: draftExtraKeybinds
       }
     }));
     setKeybindSaveState('saved');
+    window.setTimeout(() => setSavingOverlayOpen(false), 420);
+  };
+
+  const applyConsoleSettings = (partial: {
+    persistHistory?: boolean;
+    showStartupTip?: boolean;
+    showDevCommands?: boolean;
+  }) => {
+    const nextPersistHistory = partial.persistHistory ?? consolePersistHistory;
+    const nextShowStartupTip = partial.showStartupTip ?? consoleShowStartupTip;
+    const nextShowDevCommands = partial.showDevCommands ?? consoleShowDevCommands;
+    setConsolePersistHistory(nextPersistHistory);
+    setConsoleShowStartupTip(nextShowStartupTip);
+    setConsoleShowDevCommands(nextShowDevCommands);
+    localStorage.setItem(CONSOLE_PERSIST_HISTORY_KEY, nextPersistHistory ? 'true' : 'false');
+    localStorage.setItem(CONSOLE_SHOW_STARTUP_TIP_KEY, nextShowStartupTip ? 'true' : 'false');
+    localStorage.setItem(CONSOLE_SHOW_DEV_COMMANDS_KEY, nextShowDevCommands ? 'true' : 'false');
+    window.dispatchEvent(new CustomEvent(CONSOLE_SETTINGS_CHANGE_EVENT, {
+      detail: {
+        persistHistory: nextPersistHistory,
+        showStartupTip: nextShowStartupTip,
+        showDevCommands: nextShowDevCommands
+      }
+    }));
   };
 
   const applySound = (partial: {
@@ -740,6 +1052,11 @@ export function Settings() {
     localStorage.setItem(STARTUP_SCENE_THEME_KEY, nextTheme);
     localStorage.setItem(STARTUP_SCENE_SOUND_PROFILE_KEY, nextSound);
     window.dispatchEvent(new CustomEvent(STARTUP_SCENE_CHANGE_EVENT, { detail: { enabled: nextEnabled, theme: nextTheme, soundProfile: nextSound } }));
+  };
+
+  const applyInstanceInstallLoadingStyle = (value: InstanceInstallLoadingStyle) => {
+    setInstanceInstallLoadingStyle(value);
+    localStorage.setItem(INSTANCE_INSTALL_LOADING_STYLE_KEY, value);
   };
 
   const applyUpdatePreferences = (partial: { autoCheck?: boolean; notifications?: boolean }) => {
@@ -819,6 +1136,190 @@ export function Settings() {
     }
   };
 
+  const buildCurrentAppearancePayload = (): AppearancePresetPayload => ({
+    themeMode,
+    accentMode,
+    backgroundMode,
+    backgroundVisualOpacity,
+    taskbarSurfaceOpacity,
+    dropdownOpacity,
+    densityMode,
+    fontPackMode,
+    sidebarMode,
+    sidebarPosition,
+    cardStyleMode,
+    taskbarLogoBackgroundMode,
+    buttonTheme,
+    motionMode,
+    motionFps,
+    motionAnimDurationMs,
+    motionFadeDurationMs,
+    motionStaggerMs,
+    motionOffsetX,
+    motionOffsetY,
+    motionEasingPreset,
+    motionEasingX1,
+    motionEasingY1,
+    motionEasingX2,
+    motionEasingY2,
+    uiAssetPixelLevel,
+    iconPackMode,
+    roundnessLevel,
+    buttonRoundnessLevel,
+    glassAmount,
+    customBackgroundDataUrl: customBackgroundSaved
+  });
+
+  const applyAppearancePresetPayload = async (payload: AppearancePresetPayload, presetLabel?: string) => {
+    setAppearancePresetError(null);
+    applyTheme(payload.themeMode);
+    applyAccent(payload.accentMode);
+    applyBackgroundVisualOpacity(payload.backgroundVisualOpacity);
+    applyTaskbarSurfaceOpacity(payload.taskbarSurfaceOpacity);
+    applyDropdownOpacity(payload.dropdownOpacity);
+    applyDensity(payload.densityMode);
+    applyFontPack(payload.fontPackMode);
+    applySidebar(payload.sidebarMode);
+    applySidebarPosition(payload.sidebarPosition);
+    applyCardStyle(payload.cardStyleMode);
+    applyTaskbarLogoBackground(payload.taskbarLogoBackgroundMode);
+    applyButtonTheme(payload.buttonTheme);
+    applyMotion(payload.motionMode);
+    applyMotionFps(payload.motionFps);
+    applyMotionTuning({
+      animDurationMs: payload.motionAnimDurationMs,
+      fadeDurationMs: payload.motionFadeDurationMs,
+      staggerMs: payload.motionStaggerMs,
+      offsetX: payload.motionOffsetX,
+      offsetY: payload.motionOffsetY,
+      easingPreset: payload.motionEasingPreset,
+      easingX1: payload.motionEasingX1,
+      easingY1: payload.motionEasingY1,
+      easingX2: payload.motionEasingX2,
+      easingY2: payload.motionEasingY2
+    });
+    applyUiAssetPixelLevel(payload.uiAssetPixelLevel);
+    applyIconPack(payload.iconPackMode);
+    applyRoundness(payload.roundnessLevel);
+    applyButtonRoundness(payload.buttonRoundnessLevel);
+    applyGlassAmount(payload.glassAmount);
+
+    if (payload.backgroundMode === 'custom') {
+      const hasCustomData = Boolean(payload.customBackgroundDataUrl && payload.customBackgroundDataUrl.startsWith('data:image/'));
+      if (hasCustomData) {
+        const customData = payload.customBackgroundDataUrl as string;
+        await TauriApi.launcherBackgroundSave(dataUrlToBytes(customData));
+        setCustomBackgroundSaved(customData);
+        setCustomBackgroundSource(customData);
+        setCustomBackgroundRenderPreview(customData);
+        try {
+          const image = await loadImageElement(customData);
+          setCustomBackgroundTarget(resolveBackgroundTarget(image.naturalWidth, image.naturalHeight));
+        } catch {
+          setCustomBackgroundTarget({ width: 1920, height: 1080 });
+        }
+        applyBackground('custom');
+      } else if (customBackgroundSaved) {
+        applyBackground('custom');
+      } else {
+        applyBackground('particles');
+        setAppearancePresetError('Preset requested a custom background, but no custom image data was included. Switched to Particles.');
+      }
+    } else {
+      applyBackground(payload.backgroundMode);
+    }
+
+    if (presetLabel) {
+      setAppearancePresetStatus(`Applied preset "${presetLabel}".`);
+    } else {
+      setAppearancePresetStatus('Applied appearance preset.');
+    }
+  };
+
+  const saveAppearancePreset = () => {
+    const cleanedName = sanitizePresetName(appearancePresetName);
+    const presetName = cleanedName || `Preset ${appearancePresets.length + 1}`;
+    const now = Date.now();
+    const nextPreset: AppearancePresetRecord = {
+      id: crypto.randomUUID(),
+      name: presetName,
+      createdAt: now,
+      updatedAt: now,
+      payload: buildCurrentAppearancePayload()
+    };
+    setAppearancePresets((current) => [nextPreset, ...current].slice(0, 100));
+    setAppearancePresetName('');
+    setAppearancePresetError(null);
+    setAppearancePresetStatus(`Saved preset "${presetName}".`);
+  };
+
+  const deleteAppearancePreset = (id: string) => {
+    setAppearancePresets((current) => current.filter((preset) => preset.id !== id));
+    setAppearancePresetStatus('Preset removed.');
+    setAppearancePresetError(null);
+  };
+
+  const exportAppearancePreset = (preset: AppearancePresetRecord) => {
+    const payload: AppearancePresetExportFileV1 = {
+      type: 'bloom-appearance-preset',
+      version: 1,
+      preset
+    };
+    const fileName = `bloom-appearance-${slugifyPresetName(preset.name)}.json`;
+    triggerJsonDownload(fileName, payload);
+    setAppearancePresetError(null);
+    setAppearancePresetStatus(`Exported preset "${preset.name}".`);
+  };
+
+  const exportCurrentAppearance = () => {
+    const cleanedName = sanitizePresetName(appearancePresetName) || 'Current Appearance';
+    const now = Date.now();
+    const preset: AppearancePresetRecord = {
+      id: crypto.randomUUID(),
+      name: cleanedName,
+      createdAt: now,
+      updatedAt: now,
+      payload: buildCurrentAppearancePayload()
+    };
+    exportAppearancePreset(preset);
+  };
+
+  const onImportAppearancePresetFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      setAppearancePresetError(null);
+      const text = await file.text();
+      const parsed = JSON.parse(text) as unknown;
+      let record: AppearancePresetRecord | null = null;
+
+      if (isObjectRecord(parsed) && parsed.type === 'bloom-appearance-preset' && Number(parsed.version) === 1) {
+        record = parseAppearancePresetRecord(parsed.preset);
+      } else {
+        record = parseAppearancePresetRecord(parsed);
+      }
+
+      if (!record) {
+        throw new Error('Invalid preset file format.');
+      }
+
+      const importedPreset: AppearancePresetRecord = {
+        ...record,
+        id: crypto.randomUUID(),
+        name: sanitizePresetName(record.name) || 'Imported Preset',
+        updatedAt: Date.now()
+      };
+
+      setAppearancePresets((current) => [importedPreset, ...current].slice(0, 100));
+      await applyAppearancePresetPayload(importedPreset.payload, importedPreset.name);
+      setAppearancePresetStatus(`Imported and applied "${importedPreset.name}".`);
+    } catch (error) {
+      setAppearancePresetError(error instanceof Error ? error.message : String(error));
+    } finally {
+      event.target.value = '';
+    }
+  };
+
   const onCustomBackgroundPointerDown: PointerEventHandler<HTMLDivElement> = (event) => {
     if (!customBackgroundSource) return;
     customBackgroundPointerRef.current = {
@@ -894,13 +1395,14 @@ export function Settings() {
       if (capturingShortcut === 'search') applyShortcuts({ search: shortcut });
       else if (capturingShortcut === 'create') applyShortcuts({ create: shortcut });
       else if (capturingShortcut === 'settings') applyShortcuts({ settings: shortcut });
+      else if (capturingShortcut === 'console') applyShortcuts({ console: shortcut });
       else if (capturingShortcut === 'replay-startup-scene') applyShortcuts({ replayStartupScene: shortcut });
       else applyExtraKeybind(capturingShortcut, shortcut);
       setCapturingShortcut(null);
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [capturingShortcut, shortcutSearch, shortcutCreateInstance, shortcutSettings, shortcutReplayStartupScene, extraKeybinds]);
+  }, [capturingShortcut, shortcutSearch, shortcutCreateInstance, shortcutSettings, shortcutConsole, shortcutReplayStartupScene, extraKeybinds]);
 
   useEffect(() => {
     const handleSettingsTabOpen = (event: Event) => {
@@ -910,6 +1412,20 @@ export function Settings() {
     window.addEventListener('bloom-settings-open-tab', handleSettingsTabOpen as EventListener);
     return () => window.removeEventListener('bloom-settings-open-tab', handleSettingsTabOpen as EventListener);
   }, []);
+
+  useEffect(() => {
+    const syncConsoleSettings = () => {
+      setConsolePersistHistory(readBooleanSetting(CONSOLE_PERSIST_HISTORY_KEY, true));
+      setConsoleShowStartupTip(readBooleanSetting(CONSOLE_SHOW_STARTUP_TIP_KEY, true));
+      setConsoleShowDevCommands(readBooleanSetting(CONSOLE_SHOW_DEV_COMMANDS_KEY, false));
+    };
+    window.addEventListener(CONSOLE_SETTINGS_CHANGE_EVENT, syncConsoleSettings as EventListener);
+    return () => window.removeEventListener(CONSOLE_SETTINGS_CHANGE_EVENT, syncConsoleSettings as EventListener);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(APPEARANCE_PRESETS_KEY, JSON.stringify(appearancePresets));
+  }, [appearancePresets]);
 
   useEffect(() => {
     void loadSavedCustomBackground();
@@ -961,6 +1477,13 @@ export function Settings() {
     setTaskbarSurfaceOpacity(clamped);
     localStorage.setItem(TASKBAR_SURFACE_OPACITY_KEY, String(clamped));
     window.dispatchEvent(new CustomEvent(TASKBAR_SURFACE_OPACITY_CHANGE_EVENT, { detail: { value: clamped } }));
+  };
+
+  const applyDropdownOpacity = (next: number) => {
+    const clamped = clampDropdownOpacity(next);
+    setDropdownOpacity(clamped);
+    localStorage.setItem(DROPDOWN_OPACITY_KEY, String(clamped));
+    window.dispatchEvent(new CustomEvent(DROPDOWN_OPACITY_CHANGE_EVENT, { detail: { value: clamped } }));
   };
 
   const applyDensity = (next: DensityMode) => {
@@ -1062,6 +1585,7 @@ export function Settings() {
   const dispatchExtraChange = (partial: {
     showWidgetDocker?: boolean;
     hideEmptyWidgetSlots?: boolean;
+    showGamesSection?: boolean;
     routeTabAnimationsEnabled?: boolean;
     sidebarDockHoverEnabled?: boolean;
     sidebarDockGrowSize?: number;
@@ -1073,6 +1597,7 @@ export function Settings() {
         detail: {
           showWidgetDocker: partial.showWidgetDocker ?? showWidgetDocker,
           hideEmptyWidgetSlots: partial.hideEmptyWidgetSlots ?? hideEmptyWidgetSlots,
+          showGamesSection: partial.showGamesSection ?? showGamesSection,
           routeTabAnimationsEnabled: partial.routeTabAnimationsEnabled ?? routeTabAnimationsEnabled,
           sidebarDockHoverEnabled: partial.sidebarDockHoverEnabled ?? sidebarDockHoverEnabled,
           sidebarDockGrowSize: partial.sidebarDockGrowSize ?? sidebarDockGrowSize,
@@ -1093,6 +1618,12 @@ export function Settings() {
     setHideEmptyWidgetSlots(next);
     localStorage.setItem(HIDE_EMPTY_WIDGET_SLOTS_KEY, next ? 'true' : 'false');
     dispatchExtraChange({ hideEmptyWidgetSlots: next });
+  };
+
+  const applyShowGamesSection = (next: boolean) => {
+    setShowGamesSection(next);
+    localStorage.setItem(SHOW_GAMES_SECTION_KEY, next ? 'true' : 'false');
+    dispatchExtraChange({ showGamesSection: next });
   };
 
   const applyRouteTabAnimationsEnabled = (next: boolean) => {
@@ -1133,6 +1664,13 @@ export function Settings() {
 
   return (
     <div className="max-w-[1100px] mx-auto min-h-full space-y-4">
+      <UniversalLoadingOverlay
+        open={savingOverlayOpen}
+        fixed
+        eyebrow="Saving"
+        title="Saving keybinds..."
+        description="Bloom is applying your shortcut changes."
+      />
       <section className="g-panel-strong p-6">
         <p className="text-[10px] uppercase tracking-[0.2em] font-extrabold g-accent-text">Settings</p>
         <h1 className="text-5xl font-extrabold text-white mt-1">Launcher Control</h1>
@@ -1162,6 +1700,76 @@ export function Settings() {
         </section>
       ) : tab === 'appearance' ? (
         <section className="g-panel p-6 space-y-6">
+          <AppearanceDropdown title="Appearance Presets" description="Save, apply, export, and import full launcher look presets to share with others.">
+            <input
+              ref={appearanceImportRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={(event) => { void onImportAppearancePresetFile(event); }}
+            />
+
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto_auto] gap-2">
+              <input
+                value={appearancePresetName}
+                onChange={(event) => setAppearancePresetName(event.target.value)}
+                placeholder="Preset name (optional)"
+                className="g-input h-10 px-3 text-sm font-semibold outline-none"
+              />
+              <button onClick={saveAppearancePreset} className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]">
+                Save Current
+              </button>
+              <button onClick={exportCurrentAppearance} className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]">
+                Export Current
+              </button>
+              <button onClick={() => appearanceImportRef.current?.click()} className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]">
+                Import File
+              </button>
+            </div>
+
+            {appearancePresetStatus && <p className="text-xs text-emerald-200">{appearancePresetStatus}</p>}
+            {appearancePresetError && <p className="text-xs text-red-300">{appearancePresetError}</p>}
+
+            <div className="space-y-2">
+              {appearancePresets.length === 0 ? (
+                <p className="text-xs g-muted">No saved presets yet.</p>
+              ) : (
+                appearancePresets.map((preset) => (
+                  <div key={preset.id} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-extrabold text-white">{preset.name}</p>
+                        <p className="text-[11px] g-muted mt-1">
+                          {preset.payload.themeMode} / {preset.payload.accentMode} / {preset.payload.backgroundMode} • {new Date(preset.updatedAt).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => { void applyAppearancePresetPayload(preset.payload, preset.name); }}
+                          className="g-btn-accent h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]"
+                        >
+                          Apply
+                        </button>
+                        <button
+                          onClick={() => exportAppearancePreset(preset)}
+                          className="g-btn h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]"
+                        >
+                          Export
+                        </button>
+                        <button
+                          onClick={() => deleteAppearancePreset(preset.id)}
+                          className="g-btn h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] text-red-200 border-red-300/40"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </AppearanceDropdown>
+
           <AppearanceDropdown title="Theme Mode" description="Pick the overall visual theme for the launcher.">
             <div className="flex justify-center">
               <button
@@ -1262,6 +1870,37 @@ export function Settings() {
             </div>
           </AppearanceDropdown>
 
+          <AppearanceDropdown title="Dropdown Menus Opacity" description="Applies to dropdown surfaces and context menus, including search, avatar menu, and top menu popovers.">
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min={35}
+                  max={100}
+                  step={1}
+                  value={dropdownOpacity}
+                  onChange={(event) => applyDropdownOpacity(Number(event.target.value))}
+                  className="w-full g-range"
+                />
+                <span className="w-14 text-right text-sm font-extrabold text-white">{dropdownOpacity}%</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {[55, 70, 82, 92, 100].map((preset) => (
+                  <button
+                    key={preset}
+                    onClick={() => applyDropdownOpacity(preset)}
+                    className={clsx(
+                      'g-btn h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]',
+                      dropdownOpacity === preset ? 'g-btn-accent' : ''
+                    )}
+                  >
+                    {preset}%
+                  </button>
+                ))}
+              </div>
+            </div>
+          </AppearanceDropdown>
+
           <AppearanceDropdown title="Accent Color" description="Global accent applied to controls and highlights.">
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {ACCENTS.map((accent) => (
@@ -1299,7 +1938,7 @@ export function Settings() {
               ))}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Background Opacity</p>
@@ -1317,6 +1956,7 @@ export function Settings() {
                 <p className="text-xs g-muted mt-1">Controls how solid the sidebar dock and top shell are over the background.</p>
                 <input type="range" min={0} max={100} step={1} value={taskbarSurfaceOpacity} onChange={(event) => applyTaskbarSurfaceOpacity(Number(event.target.value))} className="mt-3 w-full g-range" />
               </div>
+
             </div>
 
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
@@ -1495,6 +2135,27 @@ export function Settings() {
             </div>
           </AppearanceDropdown>
 
+          <AppearanceDropdown title="Universal Loading Screen" description="Pick the minimal loading screen Bloom uses for installs, saves, imports, and launch actions.">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+              {INSTANCE_INSTALL_LOADING_STYLES.map((style) => (
+                <button
+                  key={style.id}
+                  onClick={() => applyInstanceInstallLoadingStyle(style.id)}
+                  className={clsx(
+                    'rounded-xl border p-3 text-left transition',
+                    instanceInstallLoadingStyle === style.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]'
+                  )}
+                >
+                  <div className="flex h-24 items-center justify-center rounded-xl border border-white/10 bg-black/30">
+                    <LoadingScreenPreviewGlyph style={style.id} />
+                  </div>
+                  <p className="mt-3 text-sm font-extrabold text-white">{style.label}</p>
+                  <p className="mt-1 text-[11px] g-muted">{style.description}</p>
+                </button>
+              ))}
+            </div>
+          </AppearanceDropdown>
+
           <AppearanceDropdown title="Animation FPS" description="Controls anime.js update rate for launcher motion.">
             <div className="mt-3 flex items-center gap-3">
               <input
@@ -1631,6 +2292,22 @@ export function Settings() {
             <p className="text-[11px] text-white/40 mt-2">Press `Escape` while capturing to cancel. Use `Clear` to set a shortcut back to `Unbound`.</p>
           </div>
 
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Bloom Console</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <button onClick={() => applyConsoleSettings({ persistHistory: !consolePersistHistory })} className="g-btn h-10 w-full rounded-lg px-3 inline-flex items-center justify-between text-xs font-extrabold uppercase tracking-[0.12em]">
+                Persist History <span>{consolePersistHistory ? 'On' : 'Off'}</span>
+              </button>
+              <button onClick={() => applyConsoleSettings({ showStartupTip: !consoleShowStartupTip })} className="g-btn h-10 w-full rounded-lg px-3 inline-flex items-center justify-between text-xs font-extrabold uppercase tracking-[0.12em]">
+                Startup Tip <span>{consoleShowStartupTip ? 'On' : 'Off'}</span>
+              </button>
+              <button onClick={() => applyConsoleSettings({ showDevCommands: !consoleShowDevCommands })} className="g-btn h-10 w-full rounded-lg px-3 inline-flex items-center justify-between text-xs font-extrabold uppercase tracking-[0.12em]">
+                Dev Help <span>{consoleShowDevCommands ? 'On' : 'Off'}</span>
+              </button>
+            </div>
+            <p className="text-[11px] text-white/40">These settings affect the in-app Bloom Console overlay in real time.</p>
+          </div>
+
           {KEYBIND_GROUPS.map((group) => (
             <div key={group.title} className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
               <div>
@@ -1653,6 +2330,8 @@ export function Settings() {
                         ? draftShortcutCreateInstance
                         : binding.id === 'settings'
                           ? draftShortcutSettings
+                          : binding.id === 'console'
+                            ? draftShortcutConsole
                           : binding.id === 'replay-startup-scene'
                             ? draftShortcutReplayStartupScene
                             : draftExtraKeybinds[binding.id] ?? binding.defaultValue;
@@ -1888,6 +2567,21 @@ export function Settings() {
               <button onClick={() => applySound({ notifications: !soundNotificationsEnabled })} className="g-btn w-full h-10 rounded-lg px-3 inline-flex items-center justify-between text-xs font-extrabold uppercase tracking-[0.12em]">
                 Notifications <span>{soundNotificationsEnabled ? 'On' : 'Off'}</span>
               </button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Show Games Section</p>
+                <p className="text-xs g-muted mt-1">Enable the Games tab (Bloom Clicker, Flappy Bird, and Whiteboard). Default is off.</p>
+              </div>
+              <button
+                data-on={showGamesSection}
+                onClick={() => applyShowGamesSection(!showGamesSection)}
+                className="g-toggle"
+                aria-label="Toggle Games Section"
+              />
             </div>
           </div>
 

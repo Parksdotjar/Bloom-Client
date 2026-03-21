@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
+import { HOST_SERVERS_UNLOCK_EVENT, HOST_SERVERS_UNLOCK_KEY, readHostServersUnlocked } from '../constants/hostServerAccess';
 
 type WidgetDef = {
   id: string;
@@ -84,6 +85,19 @@ const WIDGET_PAGES: WidgetPageDef[] = [
       { id: 'importer-modrinth', title: 'Modrinth', description: 'Search and install Modrinth modpacks.' },
       { id: 'importer-local', title: 'Local Import', description: 'Import local .mrpack and .zip files.' }
     ]
+  },
+  {
+    pageKey: 'host-server',
+    label: 'Host Server',
+    route: '/host-server',
+    storageType: 'pagewidgets',
+    widgets: [
+      { id: 'host-server-status', title: 'Status', description: 'Server status and quick actions.' },
+      { id: 'host-server-console', title: 'Console', description: 'Live logs and command input.' },
+      { id: 'host-server-files', title: 'Files', description: 'Server file browser/editor.' },
+      { id: 'host-server-backups', title: 'Backups', description: 'Backup create/restore actions.' },
+      { id: 'host-server-settings', title: 'Settings', description: 'Server and tunnel settings.' }
+    ]
   }
 ];
 
@@ -128,15 +142,53 @@ function writeVisibility(page: WidgetPageDef, visibility: Record<string, boolean
 }
 
 export function Widgets() {
+  const [hostServersUnlocked, setHostServersUnlocked] = useState<boolean>(() => readHostServersUnlocked());
+  const widgetPages = useMemo(
+    () => (hostServersUnlocked ? WIDGET_PAGES : WIDGET_PAGES.filter((page) => page.pageKey !== 'host-server')),
+    [hostServersUnlocked]
+  );
   const [selectedPageKey, setSelectedPageKey] = useState<string>('home');
   const selectedPage = useMemo(
-    () => WIDGET_PAGES.find((page) => page.pageKey === selectedPageKey) || WIDGET_PAGES[0],
-    [selectedPageKey]
+    () => widgetPages.find((page) => page.pageKey === selectedPageKey) || widgetPages[0],
+    [selectedPageKey, widgetPages]
   );
-  const [visibility, setVisibility] = useState<Record<string, boolean>>(() => readVisibility(WIDGET_PAGES[0]));
+  const [visibility, setVisibility] = useState<Record<string, boolean>>(() => readVisibility(widgetPages[0]));
+
+  useEffect(() => {
+    const syncHostServersUnlocked = () => {
+      setHostServersUnlocked(readHostServersUnlocked());
+    };
+    const onUnlockChange = (event: Event) => {
+      const custom = event as CustomEvent<{ unlocked?: boolean }>;
+      if (typeof custom.detail?.unlocked === 'boolean') {
+        setHostServersUnlocked(custom.detail.unlocked);
+        return;
+      }
+      syncHostServersUnlocked();
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === HOST_SERVERS_UNLOCK_KEY) {
+        syncHostServersUnlocked();
+      }
+    };
+    window.addEventListener(HOST_SERVERS_UNLOCK_EVENT, onUnlockChange as EventListener);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(HOST_SERVERS_UNLOCK_EVENT, onUnlockChange as EventListener);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (widgetPages.some((page) => page.pageKey === selectedPageKey)) return;
+    const fallback = widgetPages[0];
+    if (!fallback) return;
+    setSelectedPageKey(fallback.pageKey);
+    setVisibility(readVisibility(fallback));
+  }, [selectedPageKey, widgetPages]);
 
   const selectPage = (pageKey: string) => {
-    const nextPage = WIDGET_PAGES.find((page) => page.pageKey === pageKey);
+    const nextPage = widgetPages.find((page) => page.pageKey === pageKey);
     if (!nextPage) return;
     setSelectedPageKey(pageKey);
     setVisibility(readVisibility(nextPage));
@@ -171,7 +223,7 @@ export function Widgets() {
       <section className="g-panel p-4">
         <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60 mb-2">Pages</p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          {WIDGET_PAGES.map((page) => (
+          {widgetPages.map((page) => (
             <button
               key={page.pageKey}
               onClick={() => selectPage(page.pageKey)}

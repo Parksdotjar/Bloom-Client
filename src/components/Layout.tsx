@@ -1,17 +1,17 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Bell, Camera, Gift, Layers, Maximize2, Minus, Move, Palette, Search, Send, Sparkles, User, Waves, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import { animate, engine, remove, set } from 'animejs';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { SidebarRail } from './SidebarRail';
-import { Particles } from './Particles';
+import { BloomConsole } from './BloomConsole';
 import { useAuth } from '../hooks/useAuth';
 import { useInstances } from '../hooks/useInstances';
 import { useDownloader } from '../hooks/useDownloader';
 import { APP_VERSION } from '../constants/version';
 import { setDiscordPresence } from '../services/presence';
-import { TauriApi } from '../services/tauri';
+import { TauriApi, type Instance } from '../services/tauri';
 import {
   checkForLauncherUpdate,
   downloadAndInstallLauncherUpdate,
@@ -37,6 +37,23 @@ import {
   clampMotionTuning,
   resolveMotionEase
 } from '../constants/motion';
+import {
+  CONSOLE_HOTKEY_DEFAULT,
+  CONSOLE_LOG_LEVEL_KEY,
+  CONSOLE_SETTINGS_CHANGE_EVENT,
+  CONSOLE_SHOW_DEV_COMMANDS_KEY,
+  SHORTCUT_CONSOLE_KEY,
+  type ConsoleLogLevel
+} from '../constants/console';
+import { CONSOLE_MODULES, CONSOLE_THEMES, createConsoleRegistry } from '../console/registry';
+import {
+  HOST_SERVERS_UNLOCK_EVENT,
+  HOST_SERVERS_UNLOCK_KEY,
+  readHostServersUnlocked,
+  setHostServersUnlocked as writeHostServersUnlocked
+} from '../constants/hostServerAccess';
+
+const Particles = lazy(() => import('./Particles').then((module) => ({ default: module.Particles })));
 
 type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'rainbow';
@@ -84,6 +101,8 @@ const TASKBAR_LOGO_BACKGROUND_KEY = 'bloom_taskbar_logo_background';
 const TASKBAR_LOGO_BACKGROUND_CHANGE_EVENT = 'bloom-taskbar-logo-background-change';
 const TASKBAR_SURFACE_OPACITY_KEY = 'bloom_taskbar_surface_opacity';
 const TASKBAR_SURFACE_OPACITY_CHANGE_EVENT = 'bloom-taskbar-surface-opacity-change';
+const DROPDOWN_OPACITY_KEY = 'bloom_dropdown_opacity';
+const DROPDOWN_OPACITY_CHANGE_EVENT = 'bloom-dropdown-opacity-change';
 const BUTTON_THEME_STORAGE_KEY = 'bloom_button_theme';
 const BUTTON_THEME_CHANGE_EVENT = 'bloom-button-theme-change';
 const MOTION_STORAGE_KEY = 'bloom_motion_mode';
@@ -108,6 +127,8 @@ const SHORTCUT_REPLAY_STARTUP_SCENE_KEY = 'bloom_shortcut_replay_startup_scene';
 const EXTRA_KEYBINDS_STORAGE_KEY = 'bloom_extra_keybinds';
 const KEYBIND_ACTION_EVENT = 'bloom-keybind-action';
 const SHOW_WIDGET_DOCKER_KEY = 'bloom_show_widget_docker';
+const HIDE_EMPTY_WIDGET_SLOTS_KEY = 'bloom_hide_empty_widget_slots';
+const SHOW_GAMES_SECTION_KEY = 'bloom_show_games_section';
 const SOUND_PACK_KEY = 'bloom_sound_pack';
 const SOUND_CLICKS_KEY = 'bloom_sound_clicks_enabled';
 const SOUND_HOVERS_KEY = 'bloom_sound_hovers_enabled';
@@ -196,6 +217,12 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return tag === 'input' || tag === 'textarea' || node.isContentEditable;
 }
 
+function readConsoleBool(key: string, fallback: boolean) {
+  const raw = localStorage.getItem(key);
+  if (raw === null) return fallback;
+  return raw !== 'false';
+}
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -232,6 +259,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
   });
   const [taskbarSurfaceOpacity, setTaskbarSurfaceOpacity] = useState<number>(() => {
     const stored = Number(localStorage.getItem(TASKBAR_SURFACE_OPACITY_KEY));
+    if (Number.isFinite(stored)) return clampPercent(stored);
+    return 92;
+  });
+  const [dropdownOpacity, setDropdownOpacity] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(DROPDOWN_OPACITY_KEY));
     if (Number.isFinite(stored)) return clampPercent(stored);
     return 92;
   });
@@ -289,6 +321,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     })
   );
   const [routeTabAnimationsEnabled, setRouteTabAnimationsEnabled] = useState<boolean>(() => localStorage.getItem(ROUTE_TAB_ANIMATIONS_KEY) === 'true');
+  const [showGamesSection, setShowGamesSection] = useState<boolean>(() => localStorage.getItem(SHOW_GAMES_SECTION_KEY) === 'true');
   const [isMaximized, setIsMaximized] = useState(false);
   const [iconPack, setIconPack] = useState<IconPackMode>(() => {
     const stored = localStorage.getItem(ICON_PACK_KEY);
@@ -332,6 +365,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [showInternalConsoleCommands, setShowInternalConsoleCommands] = useState<boolean>(() => readConsoleBool(CONSOLE_SHOW_DEV_COMMANDS_KEY, false));
+  const [hostServersUnlocked, setHostServersUnlocked] = useState<boolean>(() => readHostServersUnlocked());
+  const [consoleLogLevel, setConsoleLogLevel] = useState<ConsoleLogLevel>(() => {
+    const stored = localStorage.getItem(CONSOLE_LOG_LEVEL_KEY);
+    return stored === 'error' || stored === 'warn' || stored === 'info' || stored === 'debug' ? stored : 'info';
+  });
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [updatePreferences, setUpdatePreferences] = useState<UpdatePreferences>(() => readUpdatePreferences());
   const [availableLauncherUpdate, setAvailableLauncherUpdate] = useState<ExternalUpdate | null>(null);
@@ -379,7 +419,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     setProfileAvatar,
     clearProfileAvatar
   } = useAuth();
-  const { instances } = useInstances();
+  const { instances, loadInstances, createInstance, updateInstance, deleteInstance } = useInstances();
   const { startDownload } = useDownloader();
 
   const entries: SearchEntry[] = useMemo(() => {
@@ -389,11 +429,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
       { id: 'marketplace', label: 'Marketplace', description: 'Install modpacks, mods, and resource packs', route: '/marketplace' },
       { id: 'importer', label: 'Importer', description: 'Create instances from Modrinth packs or local archives', route: '/importer' },
       { id: 'widgets', label: 'Widgets', description: 'Manage per-page widgets and visibility', route: '/widgets' },
+      { id: 'script-studio', label: 'Script Studio', description: 'IDE-style BloomScript editor and runtime', route: '/script-studio' },
       { id: 'settings', label: 'Settings', description: 'Theme and launcher options', route: '/settings' }
     ];
+    if (hostServersUnlocked) {
+      base.splice(6, 0, { id: 'host-server', label: 'Host Server', description: 'Run and manage local multiplayer servers', route: '/host-server' });
+    }
+    if (showGamesSection) {
+      base.splice(5, 0, { id: 'games', label: 'Games', description: 'Play Bloom Clicker, Flappy Bird, and Whiteboard', route: '/games' });
+    }
     if (!authState) base.push({ id: 'signin', label: 'Sign In', description: 'Connect Microsoft account', action: 'signin' });
     return base;
-  }, [authState]);
+  }, [authState, hostServersUnlocked, showGamesSection]);
 
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -510,6 +557,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
     document.documentElement.style.setProperty('--g-glass-opacity-mult', String(opacityMult));
     localStorage.setItem(GLASS_AMOUNT_KEY, String(clamped));
   }, [glassAmount]);
+
+  useEffect(() => {
+    const clamped = Math.max(0, Math.min(100, Math.round(dropdownOpacity)));
+    document.documentElement.style.setProperty('--g-dropdown-opacity', `${clamped}%`);
+    document.documentElement.setAttribute('data-dropdown-opacity', String(clamped));
+    localStorage.setItem(DROPDOWN_OPACITY_KEY, String(clamped));
+  }, [dropdownOpacity]);
 
   useEffect(() => {
     const accent = ACCENT_MAP[accentMode] || ACCENT_MAP.purple;
@@ -766,6 +820,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    const onDropdownOpacityChange = (event: Event) => {
+      const custom = event as CustomEvent<{ value?: number }>;
+      if (Number.isFinite(custom.detail?.value)) {
+        setDropdownOpacity(clampPercent(Number(custom.detail?.value)));
+      }
+    };
+    window.addEventListener(DROPDOWN_OPACITY_CHANGE_EVENT, onDropdownOpacityChange as EventListener);
+    return () => window.removeEventListener(DROPDOWN_OPACITY_CHANGE_EVENT, onDropdownOpacityChange as EventListener);
+  }, []);
+
+  useEffect(() => {
     if (backgroundMode !== 'custom') return;
     let active = true;
     void TauriApi.launcherBackgroundLoad()
@@ -945,6 +1010,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
       location.pathname === '/instances' ? 'Instances' :
       location.pathname === '/marketplace' ? 'Marketplace' :
       location.pathname === '/importer' || location.pathname === '/downloads' ? 'Modpack Importer' :
+      location.pathname === '/script-studio' ? 'Script Studio' :
+      location.pathname === '/host-server' ? 'Host Server' :
       location.pathname === '/settings' ? 'Settings' :
       'Launcher';
     void setDiscordPresence(`Browsing ${pageName}`, `Bloom Client ${APP_VERSION}`);
@@ -1007,6 +1074,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       const searchShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_SEARCH_KEY) || 'Ctrl+K');
       const createShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_CREATE_INSTANCE_KEY) || 'Ctrl+N');
       const settingsShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_SETTINGS_KEY) || 'Ctrl+,');
+      const consoleShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_CONSOLE_KEY) || CONSOLE_HOTKEY_DEFAULT);
       const replayStartupSceneShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_REPLAY_STARTUP_SCENE_KEY) || 'Ctrl+Shift+J');
       const extraBindings = (() => {
         try {
@@ -1054,7 +1122,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      if (activeShortcut && activeShortcut === consoleShortcut) {
+        event.preventDefault();
+        if (!authState || !onboardingCompleted) return;
+        setConsoleOpen((current) => !current);
+        return;
+      }
+
+      if (consoleOpen && event.key === 'Escape') {
+        event.preventDefault();
+        setConsoleOpen(false);
+        return;
+      }
+
       if (isTypingTarget(event.target)) return;
+
+      if (consoleOpen) return;
 
       if (activeShortcut && activeShortcut === searchShortcut) {
         event.preventDefault();
@@ -1120,6 +1203,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         }
       }
       if (event.key === 'Escape') {
+        setConsoleOpen(false);
         setSearchOpen(false);
         setNotificationsOpen(false);
         setAccountOpen(false);
@@ -1132,18 +1216,79 @@ export function Layout({ children }: { children: React.ReactNode }) {
       window.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('keydown', onKeyDown, true);
     };
-  }, [navigate, startupSceneSoundProfile, authState, onboardingOpen, onboardingCompleted]);
+  }, [navigate, startupSceneSoundProfile, authState, onboardingOpen, onboardingCompleted, consoleOpen]);
 
   useEffect(() => {
     const onExtraChange = (event: Event) => {
-      const custom = event as CustomEvent<{ routeTabAnimationsEnabled?: boolean }>;
+      const custom = event as CustomEvent<{ routeTabAnimationsEnabled?: boolean; showGamesSection?: boolean }>;
       if (typeof custom.detail?.routeTabAnimationsEnabled === 'boolean') {
         setRouteTabAnimationsEnabled(custom.detail.routeTabAnimationsEnabled);
+      }
+      if (typeof custom.detail?.showGamesSection === 'boolean') {
+        setShowGamesSection(custom.detail.showGamesSection);
       }
     };
     window.addEventListener('bloom-extra-change', onExtraChange as EventListener);
     return () => window.removeEventListener('bloom-extra-change', onExtraChange as EventListener);
   }, []);
+
+  useEffect(() => {
+    const syncConsoleSettings = () => {
+      setShowInternalConsoleCommands(readConsoleBool(CONSOLE_SHOW_DEV_COMMANDS_KEY, false));
+      const rawLevel = localStorage.getItem(CONSOLE_LOG_LEVEL_KEY);
+      const level: ConsoleLogLevel =
+        rawLevel === 'error' || rawLevel === 'warn' || rawLevel === 'info' || rawLevel === 'debug'
+          ? rawLevel
+          : 'info';
+      setConsoleLogLevel(level);
+    };
+    window.addEventListener(CONSOLE_SETTINGS_CHANGE_EVENT, syncConsoleSettings as EventListener);
+    return () => window.removeEventListener(CONSOLE_SETTINGS_CHANGE_EVENT, syncConsoleSettings as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const syncHostServersUnlocked = () => {
+      setHostServersUnlocked(readHostServersUnlocked());
+    };
+    const onHostUnlockChange = (event: Event) => {
+      const custom = event as CustomEvent<{ unlocked?: boolean }>;
+      if (typeof custom.detail?.unlocked === 'boolean') {
+        setHostServersUnlocked(custom.detail.unlocked);
+        return;
+      }
+      syncHostServersUnlocked();
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === HOST_SERVERS_UNLOCK_KEY) {
+        syncHostServersUnlocked();
+      }
+    };
+    window.addEventListener(HOST_SERVERS_UNLOCK_EVENT, onHostUnlockChange as EventListener);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(HOST_SERVERS_UNLOCK_EVENT, onHostUnlockChange as EventListener);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!showGamesSection && location.pathname === '/games') {
+      navigate('/settings', { replace: true });
+    }
+  }, [showGamesSection, location.pathname, navigate]);
+
+  useEffect(() => {
+    if (!authState || !onboardingCompleted) {
+      setConsoleOpen(false);
+    }
+  }, [authState, onboardingCompleted]);
+
+  useEffect(() => {
+    if (!consoleOpen) return;
+    setSearchOpen(false);
+    setNotificationsOpen(false);
+    setAccountOpen(false);
+  }, [consoleOpen]);
 
   useEffect(() => {
     if (!mainRef.current) return;
@@ -1380,6 +1525,331 @@ export function Layout({ children }: { children: React.ReactNode }) {
     logout();
   };
 
+  const setThemeFromConsole = useCallback((themeId: string) => {
+    const normalized = themeId as LauncherTheme;
+    setThemeMode(normalized);
+  }, []);
+
+  const setUiScaleFromConsole = useCallback((value: number) => {
+    const clamped = Math.max(0.8, Math.min(1.2, Number(value.toFixed(2))));
+    const mappedDensity: DensityMode = clamped < 0.95 ? 'compact' : clamped > 1.05 ? 'spacious' : 'cozy';
+    setDensityMode(mappedDensity);
+    return { mappedDensity };
+  }, []);
+
+  const setReducedMotionFromConsole = useCallback((enabled: boolean) => {
+    setMotionMode(enabled ? 'off' : 'standard');
+  }, []);
+
+  const setShowInternalCommandsFromConsole = useCallback((next: boolean) => {
+    setShowInternalConsoleCommands(next);
+    localStorage.setItem(CONSOLE_SHOW_DEV_COMMANDS_KEY, next ? 'true' : 'false');
+    window.dispatchEvent(new CustomEvent(CONSOLE_SETTINGS_CHANGE_EVENT));
+  }, []);
+
+  const setConsoleLogLevelFromConsole = useCallback((next: ConsoleLogLevel) => {
+    setConsoleLogLevel(next);
+    localStorage.setItem(CONSOLE_LOG_LEVEL_KEY, next);
+    window.dispatchEvent(new CustomEvent(CONSOLE_SETTINGS_CHANGE_EVENT));
+  }, []);
+
+  const setHostServersUnlockedFromConsole = useCallback((next: boolean) => {
+    setHostServersUnlocked(next);
+    writeHostServersUnlocked(next);
+  }, []);
+
+  const moduleConfig = useMemo(() => ({
+    'widget-docker': {
+      get: () => localStorage.getItem(SHOW_WIDGET_DOCKER_KEY) === 'true',
+      set: (enabled: boolean) => {
+        localStorage.setItem(SHOW_WIDGET_DOCKER_KEY, enabled ? 'true' : 'false');
+        window.dispatchEvent(new CustomEvent('bloom-extra-change', { detail: { showWidgetDocker: enabled } }));
+      }
+    },
+    'games-section': {
+      get: () => showGamesSection,
+      set: (enabled: boolean) => {
+        setShowGamesSection(enabled);
+        localStorage.setItem(SHOW_GAMES_SECTION_KEY, enabled ? 'true' : 'false');
+        window.dispatchEvent(new CustomEvent('bloom-extra-change', { detail: { showGamesSection: enabled } }));
+      }
+    },
+    'route-animations': {
+      get: () => routeTabAnimationsEnabled,
+      set: (enabled: boolean) => {
+        setRouteTabAnimationsEnabled(enabled);
+        localStorage.setItem(ROUTE_TAB_ANIMATIONS_KEY, enabled ? 'true' : 'false');
+        window.dispatchEvent(new CustomEvent('bloom-extra-change', { detail: { routeTabAnimationsEnabled: enabled } }));
+      }
+    },
+    'startup-scene': {
+      get: () => startupSceneEnabled,
+      set: (enabled: boolean) => {
+        setStartupSceneEnabled(enabled);
+        localStorage.setItem(STARTUP_SCENE_ENABLED_KEY, enabled ? 'true' : 'false');
+        window.dispatchEvent(new CustomEvent(STARTUP_SCENE_CHANGE_EVENT, {
+          detail: { enabled, theme: startupSceneTheme, soundProfile: startupSceneSoundProfile }
+        }));
+      }
+    }
+  }), [routeTabAnimationsEnabled, showGamesSection, startupSceneEnabled, startupSceneSoundProfile, startupSceneTheme]);
+
+  const createConsoleInstance = useCallback(async (name: string): Promise<Instance> => {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error('Instance name cannot be empty.');
+    const duplicate = instances.some((instance) => instance.name.trim().toLowerCase() === trimmed.toLowerCase());
+    if (duplicate) throw new Error(`Instance "${trimmed}" already exists.`);
+    const now = Date.now();
+    const payload: Instance = {
+      id: crypto.randomUUID(),
+      name: trimmed,
+      mcVersion: '1.21.1',
+      loader: 'vanilla',
+      createdAt: now,
+      updatedAt: now,
+      iconDataUrl: undefined,
+      coverDataUrl: undefined,
+      colorTag: '#9a65ff',
+      iconFrame: 'rounded',
+      java: {},
+      memoryMb: 4096,
+      jvmArgs: [],
+      fabricLoaderVersion: undefined,
+      resolution: { width: 854, height: 480, fullscreen: false }
+    };
+    await createInstance(payload);
+    return payload;
+  }, [createInstance, instances]);
+
+  const removeConsoleInstance = useCallback(async (instanceId: string) => {
+    await deleteInstance(instanceId);
+  }, [deleteInstance]);
+
+  const renameConsoleInstance = useCallback(async (instanceId: string, nextName: string): Promise<Instance> => {
+    const current = await TauriApi.instancesGet(instanceId);
+    const trimmed = nextName.trim();
+    if (!trimmed) throw new Error('Instance name cannot be empty.');
+    const duplicate = instances.some((instance) => instance.id !== instanceId && instance.name.trim().toLowerCase() === trimmed.toLowerCase());
+    if (duplicate) throw new Error(`Instance "${trimmed}" already exists.`);
+    const updated: Instance = { ...current, name: trimmed, updatedAt: Date.now() };
+    await updateInstance(instanceId, updated);
+    return updated;
+  }, [instances, updateInstance]);
+
+  const launchConsoleInstance = useCallback(async (instanceId: string) => {
+    const target = instances.find((instance) => instance.id === instanceId);
+    if (!target) throw new Error('Instance not found.');
+    await startDownload(target, authState);
+  }, [authState, instances, startDownload]);
+
+  const cloneConsoleInstance = useCallback(async (sourceId: string, targetName: string): Promise<Instance> => {
+    const source = await TauriApi.instancesGet(sourceId);
+    const trimmed = targetName.trim();
+    if (!trimmed) throw new Error('Target instance name cannot be empty.');
+    const duplicate = instances.some((instance) => instance.name.trim().toLowerCase() === trimmed.toLowerCase());
+    if (duplicate) throw new Error(`Instance "${trimmed}" already exists.`);
+    const now = Date.now();
+    const cloned: Instance = {
+      ...source,
+      id: crypto.randomUUID(),
+      name: trimmed,
+      createdAt: now,
+      updatedAt: now
+    };
+    await createInstance(cloned);
+    return cloned;
+  }, [createInstance, instances]);
+
+  const updateConsoleInstanceVersion = useCallback(async (instanceId: string, version: string): Promise<Instance> => {
+    const current = await TauriApi.instancesGet(instanceId);
+    const nextVersion = version.trim();
+    if (!nextVersion) throw new Error('Version cannot be empty.');
+    const updated: Instance = { ...current, mcVersion: nextVersion, updatedAt: Date.now() };
+    await updateInstance(instanceId, updated);
+    return updated;
+  }, [updateInstance]);
+
+  const updateConsoleInstanceLoader = useCallback(async (instanceId: string, loader: 'vanilla' | 'fabric'): Promise<Instance> => {
+    const current = await TauriApi.instancesGet(instanceId);
+    const updated: Instance = {
+      ...current,
+      loader,
+      fabricLoaderVersion: loader === 'fabric' ? (current.fabricLoaderVersion || 'latest') : undefined,
+      updatedAt: Date.now()
+    };
+    await updateInstance(instanceId, updated);
+    return updated;
+  }, [updateInstance]);
+
+  const getConsoleInstancePath = useCallback(async (instanceId: string) => {
+    const paths = await TauriApi.pathsGet() as { instances?: string };
+    const root = String(paths.instances || '');
+    if (!root) return instanceId;
+    const joiner = root.endsWith('\\') || root.endsWith('/') ? '' : '\\';
+    return `${root}${joiner}${instanceId}`;
+  }, []);
+
+  const resetConsoleLayout = useCallback(() => {
+    const keysToRemove: string[] = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (!key) continue;
+      if (key.startsWith('bloom_widget_layout_') || key.startsWith('bloom_widget_visible_')) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.push('bloom_home_widgets', 'bloom_home_widget_layout');
+    for (const key of keysToRemove) {
+      localStorage.removeItem(key);
+    }
+    localStorage.setItem(SHOW_WIDGET_DOCKER_KEY, 'false');
+    localStorage.setItem(HIDE_EMPTY_WIDGET_SLOTS_KEY, 'false');
+    window.dispatchEvent(new CustomEvent('bloom-extra-change', {
+      detail: { showWidgetDocker: false, hideEmptyWidgetSlots: false }
+    }));
+  }, []);
+
+  const dumpConsoleConfig = useCallback(() => {
+    const out: Record<string, string> = {};
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (!key || !key.startsWith('bloom_')) continue;
+      out[key] = localStorage.getItem(key) ?? '';
+    }
+    return Object.fromEntries(Object.entries(out).sort(([a], [b]) => a.localeCompare(b)));
+  }, []);
+
+  const inspectConsoleTheme = useCallback(() => {
+    const root = document.documentElement;
+    const computed = getComputedStyle(root);
+    const keys = ['--g-accent', '--g-accent-soft', '--g-text', '--g-surface', '--g-shell'];
+    const cssVars: Record<string, string> = {};
+    for (const key of keys) {
+      cssVars[key] = computed.getPropertyValue(key).trim();
+    }
+    return {
+      'data-theme': root.getAttribute('data-theme') || 'unknown',
+      'data-button-theme': root.getAttribute('data-button-theme') || 'unknown',
+      'data-icon-pack': root.getAttribute('data-icon-pack') || 'unknown',
+      ...cssVars
+    };
+  }, []);
+
+  const consoleCommands = useMemo(() => createConsoleRegistry(), []);
+  const consoleContext = useMemo(() => ({
+    appVersion: APP_VERSION,
+    routePath: location.pathname,
+    reducedMotionActive: motionMode === 'off',
+    authName: authState?.profile.name ?? null,
+    authUuid: authState?.profile.id ?? null,
+    instances,
+    themes: CONSOLE_THEMES.map((theme) => ({ id: theme.id, label: theme.label })),
+    modules: CONSOLE_MODULES.map((module) => ({ id: module.id, description: module.description })),
+    showInternalCommands: showInternalConsoleCommands,
+    setShowInternalCommands: setShowInternalCommandsFromConsole,
+    hostServersUnlocked,
+    setHostServersUnlocked: setHostServersUnlockedFromConsole,
+    logLevel: consoleLogLevel,
+    setLogLevel: setConsoleLogLevelFromConsole,
+    setTheme: setThemeFromConsole,
+    getAppearanceSnapshot: () => ({
+      theme: themeMode,
+      accent: accentMode,
+      background: backgroundMode,
+      density: densityMode,
+      font: fontPackMode,
+      sidebar: sidebarMode,
+      sidebarPosition,
+      cardStyle: cardStyleMode,
+      buttonTheme,
+      motion: motionMode,
+      iconPack,
+      roundness: String(roundnessLevel),
+      glassAmount: String(glassAmount),
+      dropdownOpacity: String(dropdownOpacity)
+    }),
+    setUiScale: setUiScaleFromConsole,
+    setReducedMotion: setReducedMotionFromConsole,
+    listInstances: async () => {
+      await loadInstances();
+      return TauriApi.instancesList();
+    },
+    createInstance: createConsoleInstance,
+    removeInstance: removeConsoleInstance,
+    renameInstance: renameConsoleInstance,
+    launchInstance: launchConsoleInstance,
+    openInstance: (instanceId: string) => navigate(`/instance-editor?id=${encodeURIComponent(instanceId)}`),
+    cloneInstance: cloneConsoleInstance,
+    updateInstanceVersion: updateConsoleInstanceVersion,
+    updateInstanceLoader: updateConsoleInstanceLoader,
+    openInstanceConfig: (instanceId: string) => navigate(`/instance-editor?id=${encodeURIComponent(instanceId)}&tab=settings`),
+    getInstancePath: getConsoleInstancePath,
+    searchMarketplaceMods: (query: string, source?: 'all' | 'modrinth' | 'curseforge', loader?: string, gameVersion?: string) =>
+      TauriApi.marketplaceSearchMods(query, source, loader, gameVersion),
+    installMarketplaceMod: (instanceId: string, source: 'modrinth' | 'curseforge', projectId: string) =>
+      TauriApi.marketplaceInstallMod(instanceId, source, projectId),
+    installFabricApi: (instanceId: string) =>
+      TauriApi.instanceInstallFabricApi(instanceId),
+    getModuleEnabled: (moduleId: string) => moduleConfig[moduleId as keyof typeof moduleConfig]?.get() ?? false,
+    setModuleEnabled: (moduleId: string, enabled: boolean) => {
+      const module = moduleConfig[moduleId as keyof typeof moduleConfig];
+      if (!module) return;
+      module.set(enabled);
+    },
+    reloadApp: () => window.location.reload(),
+    dumpConfig: dumpConsoleConfig,
+    resetLayout: resetConsoleLayout,
+    mockNotification: () => {
+      setUpdateStatusMessage('Console notification test ping.');
+      setNotificationsOpen(true);
+    },
+    inspectTheme: inspectConsoleTheme
+  }), [
+    location.pathname,
+    motionMode,
+    authState?.profile.id,
+    authState?.profile.name,
+    instances,
+    showInternalConsoleCommands,
+    setShowInternalCommandsFromConsole,
+    hostServersUnlocked,
+    setHostServersUnlockedFromConsole,
+    consoleLogLevel,
+    setConsoleLogLevelFromConsole,
+    setThemeFromConsole,
+    themeMode,
+    accentMode,
+    backgroundMode,
+    densityMode,
+    fontPackMode,
+    sidebarMode,
+    sidebarPosition,
+    cardStyleMode,
+    buttonTheme,
+    iconPack,
+    roundnessLevel,
+    glassAmount,
+    dropdownOpacity,
+    setUiScaleFromConsole,
+    setReducedMotionFromConsole,
+    loadInstances,
+    createConsoleInstance,
+    removeConsoleInstance,
+    renameConsoleInstance,
+    launchConsoleInstance,
+    navigate,
+    cloneConsoleInstance,
+    updateConsoleInstanceVersion,
+    updateConsoleInstanceLoader,
+    getConsoleInstancePath,
+    moduleConfig,
+    dumpConsoleConfig,
+    resetConsoleLayout,
+    inspectConsoleTheme
+  ]);
+
+  const consoleHotkeyLabel = normalizeShortcut(localStorage.getItem(SHORTCUT_CONSOLE_KEY) || CONSOLE_HOTKEY_DEFAULT).toUpperCase();
+
   const openOnboarding = (step?: 0 | 1 | 2 | 3 | 4) => {
     setOnboardingOpen(true);
     setOnboardingExitActive(false);
@@ -1517,6 +1987,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       sidebarMode={sidebarMode}
       sidebarPosition={sidebarPosition}
       surfaceOpacity={taskbarSurfaceOpacity}
+      showHostServer={hostServersUnlocked}
       toggleTheme={() => {}}
       onQuickLaunch={runQuickLaunchLastInstance}
       onOpenLogs={runOpenLogs}
@@ -1548,7 +2019,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
             }}
           />
         )}
-        {backgroundMode === 'particles' && <Particles />}
+        {backgroundMode === 'particles' && (
+          <Suspense fallback={null}>
+            <Particles animated={motionMode !== 'off'} />
+          </Suspense>
+        )}
         {backgroundMode === 'plus' && <div className="absolute inset-0 g-bg-plus" />}
         {backgroundMode === 'aurora' && <div className="absolute inset-0 g-bg-aurora" />}
         {backgroundMode === 'scanlines' && <div className="absolute inset-0 g-bg-scanlines" />}
@@ -1583,7 +2058,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </div>
 
             {searchOpen && (
-              <div className="absolute top-[47px] left-0 right-0 z-[250] g-panel-strong p-2">
+              <div className="absolute top-[47px] left-0 right-0 z-[250] g-dropdown-surface p-2">
                 <div className="space-y-1 max-h-[260px] overflow-y-auto">
                   {filtered.map((entry) => (
                     <button key={entry.id} onClick={() => runEntry(entry)} className="w-full text-left rounded-lg border border-transparent hover:border-white/15 hover:bg-white/[0.05] px-3 py-2">
@@ -1611,7 +2086,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
             <div ref={notifRef} className="relative">
               {notificationsOpen && (
-                <div className="absolute right-0 top-[44px] z-[260] w-[320px] g-panel-strong p-3">
+                <div className="absolute right-0 top-[44px] z-[260] w-[320px] g-dropdown-surface p-3">
                   <p className="text-[10px] tracking-[0.16em] uppercase font-extrabold g-accent-text">Notifications</p>
                   {availableLauncherUpdate ? (
                     <div className="mt-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
@@ -1669,7 +2144,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               </button>
 
               {accountOpen && (
-                <div className="absolute right-0 top-[46px] z-[270] w-[420px] g-panel-strong p-4">
+                <div className="absolute right-0 top-[46px] z-[270] w-[420px] g-dropdown-surface p-4">
                   {!authState ? (
                     <div>
                       <p className="text-lg font-extrabold">Account</p>
@@ -1799,6 +2274,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <main ref={mainRef} className="flex-1 min-h-0 overflow-y-auto app-region-no-drag" style={{ padding: density.mainPadding }}>
           <div className="min-h-full">{children}</div>
         </main>
+
+        <BloomConsole
+          open={consoleOpen}
+          hotkeyLabel={consoleHotkeyLabel}
+          commands={consoleCommands}
+          context={consoleContext}
+          onClose={() => setConsoleOpen(false)}
+        />
       </div>
       )}
 

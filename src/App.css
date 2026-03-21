@@ -47,6 +47,7 @@
   --g-btn-font-family: var(--g-font-family);
   --g-btn-font-weight: 800;
   --g-btn-letter-spacing: 0.02em;
+  --g-dropdown-opacity: 92%;
 }
 
 html[data-theme='dark'] {
@@ -797,6 +798,17 @@ html[data-card-style='outline'] {
     filter: contrast(1.2) saturate(1.12);
   }
 
+  .games-hd-canvas,
+  html[data-ui-pixel='1'] .games-hd-canvas,
+  html[data-ui-pixel='2'] .games-hd-canvas,
+  html[data-ui-pixel='3'] .games-hd-canvas,
+  html[data-ui-pixel='4'] .games-hd-canvas,
+  html[data-ui-pixel='5'] .games-hd-canvas {
+    image-rendering: auto !important;
+    shape-rendering: geometricPrecision !important;
+    filter: none !important;
+  }
+
   ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -1007,8 +1019,18 @@ html[data-card-style='outline'] {
   .g-select-menu {
     border: 1px solid var(--g-border);
     border-radius: calc(14px * var(--g-roundness-mult));
-    background: color-mix(in srgb, var(--g-surface-strong) 92%, transparent);
-    backdrop-filter: blur(var(--g-panel-backdrop));
+    background: var(--g-menu-solid-bg);
+    background: color-mix(in srgb, var(--g-menu-solid-bg) var(--g-dropdown-opacity), transparent);
+    backdrop-filter: blur(calc(var(--g-panel-backdrop) * var(--g-glass-blur-mult)));
+    box-shadow: var(--g-panel-shadow);
+  }
+
+  .g-dropdown-surface {
+    border: 1px solid var(--g-border);
+    border-radius: calc(16px * var(--g-roundness-mult));
+    background: var(--g-menu-solid-bg);
+    background: color-mix(in srgb, var(--g-menu-solid-bg) var(--g-dropdown-opacity), transparent);
+    backdrop-filter: blur(calc(var(--g-panel-backdrop) * var(--g-glass-blur-mult)));
     box-shadow: var(--g-panel-shadow);
   }
 
@@ -1244,7 +1266,21 @@ html[data-button-theme='arcade'] {
 
 .g-context-menu {
   background: var(--g-menu-solid-bg) !important;
+  background: color-mix(in srgb, var(--g-menu-solid-bg) var(--g-dropdown-opacity), transparent) !important;
   border: 1px solid var(--g-menu-solid-border) !important;
+  backdrop-filter: blur(calc(var(--g-panel-backdrop) * var(--g-glass-blur-mult))) !important;
+}
+
+.g-select-menu,
+.g-dropdown-surface,
+.g-context-menu {
+  z-index: 2147483000 !important;
+}
+
+html[data-dropdown-opacity='100'] .g-select-menu,
+html[data-dropdown-opacity='100'] .g-dropdown-surface,
+html[data-dropdown-opacity='100'] .g-context-menu {
+  background: var(--g-menu-solid-bg) !important;
   backdrop-filter: none !important;
 }
 
@@ -1254,6 +1290,27 @@ html[data-button-theme='arcade'] {
 
 .g-context-item:hover {
   background: var(--g-menu-solid-hover) !important;
+}
+
+.particle-orb {
+  position: absolute;
+  width: var(--particle-size);
+  height: var(--particle-size);
+  left: var(--particle-left);
+  top: var(--particle-top);
+  border-radius: 999px;
+  opacity: var(--particle-opacity);
+  background: radial-gradient(circle, color-mix(in srgb, var(--g-accent) 70%, #ffffff 30%) 0%, transparent 72%);
+  filter: blur(48px);
+  will-change: transform, opacity;
+  animation: particle-drift var(--particle-duration) linear infinite;
+  animation-delay: calc(var(--particle-delay) * -1);
+  transform: translate3d(0, 0, 0) scale(0.92);
+}
+
+.particle-orb-static {
+  animation: none;
+  transform: translate3d(0, 0, 0) scale(0.96);
 }
 
 .startup-scene-media {
@@ -1471,6 +1528,25 @@ html[data-button-theme='arcade'] {
   100% { opacity: 0.22; transform: perspective(640px) rotateX(62deg) translateY(8%) scale(1); }
 }
 
+@keyframes particle-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(0.9);
+    opacity: calc(var(--particle-opacity) * 0.5);
+  }
+  33% {
+    transform: translate3d(var(--particle-drift-x), calc(var(--particle-drift-y) * -1), 0) scale(var(--particle-scale-peak));
+    opacity: var(--particle-opacity);
+  }
+  66% {
+    transform: translate3d(calc(var(--particle-drift-x) * -0.85), var(--particle-drift-y), 0) scale(0.95);
+    opacity: calc(var(--particle-opacity) * 0.45);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(0.9);
+    opacity: calc(var(--particle-opacity) * 0.5);
+  }
+}
+
 @keyframes startup-scene-aura-a {
   0% { transform: scale(0.82); opacity: 0; }
   35% { opacity: 0.52; }
@@ -1510,4 +1586,11 @@ html[data-button-theme='arcade'] {
   0% { opacity: 0.1; filter: blur(8px); }
   35% { opacity: 0.45; filter: blur(4px); }
   100% { opacity: 1; filter: blur(0px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .particle-orb {
+    animation: none;
+    transform: translate3d(0, 0, 0) scale(0.96);
+  }
 }

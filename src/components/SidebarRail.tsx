@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { CircleHelp, FolderUp, Gamepad2, LayoutDashboard, Layers3, LogIn, Plus, Settings, User } from 'lucide-react';
+import { CircleHelp, Code2, FolderUp, Gamepad2, LayoutDashboard, Layers3, LogIn, Plus, Server, Settings, Sparkles, User } from 'lucide-react';
 import { animate, remove, set } from 'animejs';
 import { clsx } from 'clsx';
 import logo from '../assets/logo.png';
@@ -36,6 +36,7 @@ const SIDEBAR_TAB_GAP_KEY = 'bloom_sidebar_tab_gap';
 const ICON_PACK_KEY = 'bloom_icon_pack';
 const ICON_PACK_CHANGE_EVENT = 'bloom-icon-pack-change';
 const ROUTE_TAB_ANIMATIONS_KEY = 'bloom_route_tab_animations_enabled';
+const SHOW_GAMES_SECTION_KEY = 'bloom_show_games_section';
 
 interface SidebarProps {
   className?: string;
@@ -43,6 +44,7 @@ interface SidebarProps {
   sidebarMode: SidebarMode;
   sidebarPosition: SidebarPosition;
   surfaceOpacity: number;
+  showHostServer: boolean;
   toggleTheme: () => void;
   onQuickLaunch?: () => void;
   onOpenLogs?: () => void;
@@ -50,7 +52,7 @@ interface SidebarProps {
 }
 
 export function SidebarRail(props: SidebarProps) {
-  const { className, themeMode, sidebarMode, sidebarPosition, surfaceOpacity, onQuickLaunch, onOpenLogs, onRefreshMods } = props;
+  const { className, themeMode, sidebarMode, sidebarPosition, surfaceOpacity, showHostServer, onQuickLaunch, onOpenLogs, onRefreshMods } = props;
   const navigate = useNavigate();
   const location = useLocation();
   const railRef = useRef<HTMLDivElement | null>(null);
@@ -90,6 +92,7 @@ export function SidebarRail(props: SidebarProps) {
     return 12;
   });
   const [routeTabAnimationsEnabled, setRouteTabAnimationsEnabled] = useState<boolean>(() => localStorage.getItem(ROUTE_TAB_ANIMATIONS_KEY) === 'true');
+  const [showGamesSection, setShowGamesSection] = useState<boolean>(() => localStorage.getItem(SHOW_GAMES_SECTION_KEY) === 'true');
   const [hoverY, setHoverY] = useState<number | null>(null);
   const [hoverX, setHoverX] = useState<number | null>(null);
   const [dockHoverReady, setDockHoverReady] = useState(false);
@@ -105,13 +108,15 @@ export function SidebarRail(props: SidebarProps) {
   const sidebarWidth = sidebarMode === 'expanded' ? 126 : sidebarMode === 'rail' ? 76 : 92;
   const sidebarHeight = sidebarMode === 'expanded' ? 98 : sidebarMode === 'rail' ? 78 : 88;
   const iconStrokeWidth = iconPack === 'bold' ? 2.6 : iconPack === 'pixel' ? 2.2 : iconPack === 'rounded' ? 1.9 : 2;
-
   const navItems = [
     { icon: User, path: '/', label: 'Account' },
     { icon: Gamepad2, path: '/instances', label: 'Play' },
     { icon: Layers3, path: '/marketplace', label: 'Market' },
     { icon: FolderUp, path: '/importer', label: 'Importer' },
     { icon: LayoutDashboard, path: '/widgets', label: 'Widgets' },
+    { icon: Code2, path: '/script-studio', label: 'Studio' },
+    ...(showHostServer ? [{ icon: Server, path: '/host-server', label: 'Host' }] : []),
+    ...(showGamesSection ? [{ icon: Sparkles, path: '/games', label: 'Games' }] : []),
     { icon: CircleHelp, path: '/help', label: 'Help' },
     { icon: Settings, path: '/settings', label: 'Settings' }
   ];
@@ -156,6 +161,7 @@ export function SidebarRail(props: SidebarProps) {
         sidebarDockGrowSpeed?: number;
         sidebarTabGap?: number;
         routeTabAnimationsEnabled?: boolean;
+        showGamesSection?: boolean;
       }>;
       if (typeof custom.detail?.sidebarDockHoverEnabled === 'boolean') {
         setSidebarDockHoverEnabled(custom.detail.sidebarDockHoverEnabled);
@@ -171,6 +177,9 @@ export function SidebarRail(props: SidebarProps) {
       }
       if (typeof custom.detail?.routeTabAnimationsEnabled === 'boolean') {
         setRouteTabAnimationsEnabled(custom.detail.routeTabAnimationsEnabled);
+      }
+      if (typeof custom.detail?.showGamesSection === 'boolean') {
+        setShowGamesSection(custom.detail.showGamesSection);
       }
     };
     window.addEventListener(EXTRA_CHANGE_EVENT, onExtraChange as EventListener);

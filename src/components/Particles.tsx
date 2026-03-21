@@ -1,60 +1,57 @@
-import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import { memo, useMemo, type CSSProperties } from 'react';
 
 interface Particle {
-    id: number;
-    x: number;
-    y: number;
-    size: number;
-    duration: number;
-    delay: number;
-    opacity: number;
+  id: number;
+  x: number;
+  y: number;
+  size: number;
+  duration: number;
+  delay: number;
+  opacity: number;
+  driftX: number;
+  driftY: number;
+  scalePeak: number;
 }
 
-export function Particles() {
-    const [particles, setParticles] = useState<Particle[]>([]);
-
-    useEffect(() => {
-        const generated = Array.from({ length: 25 }).map((_, i) => ({
-            id: i,
-            x: Math.random() * 100,
-            y: Math.random() * 100,
-            size: Math.random() * 180 + 60,
-            duration: Math.random() * 30 + 18,
-            delay: Math.random() * 5,
-            opacity: Math.random() * 0.18 + 0.06
-        }));
-        setParticles(generated);
-    }, []);
-
-    return (
-        <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
-            {particles.map((p) => (
-                <motion.div
-                    key={p.id}
-                    className="absolute rounded-full blur-3xl"
-                    style={{
-                        width: p.size,
-                        height: p.size,
-                        left: `${p.x}%`,
-                        top: `${p.y}%`,
-                        background: 'radial-gradient(circle, color-mix(in srgb, var(--g-accent) 70%, #ffffff 30%) 0%, transparent 72%)',
-                        opacity: p.opacity,
-                    }}
-                    animate={{
-                        y: ['0vh', '-12vh', '10vh', '0vh'],
-                        x: ['0vw', '8vw', '-7vw', '0vw'],
-                        opacity: [p.opacity * 0.5, p.opacity, p.opacity * 0.45],
-                        scale: [0.9, 1.08, 0.95, 0.9],
-                    }}
-                    transition={{
-                        duration: p.duration,
-                        repeat: Infinity,
-                        ease: 'linear',
-                        delay: p.delay,
-                    }}
-                />
-            ))}
-        </div>
-    );
+function createParticle(id: number): Particle {
+  return {
+    id,
+    x: Math.random() * 100,
+    y: Math.random() * 100,
+    size: Math.random() * 180 + 60,
+    duration: Math.random() * 30 + 18,
+    delay: Math.random() * 5,
+    opacity: Math.random() * 0.18 + 0.06,
+    driftX: Math.random() * 15 - 7,
+    driftY: Math.random() * 22 - 11,
+    scalePeak: 1 + Math.random() * 0.14
+  };
 }
+
+export const Particles = memo(function Particles({ animated = true }: { animated?: boolean }) {
+  const particles = useMemo(() => Array.from({ length: 25 }, (_, index) => createParticle(index)), []);
+
+  return (
+    <div className="particles-layer absolute inset-0 z-0 pointer-events-none overflow-hidden" aria-hidden="true">
+      {particles.map((particle) => (
+        <div
+          key={particle.id}
+          className={`particle-orb ${animated ? '' : 'particle-orb-static'}`.trim()}
+          style={
+            {
+              '--particle-size': `${particle.size}px`,
+              '--particle-left': `${particle.x}%`,
+              '--particle-top': `${particle.y}%`,
+              '--particle-opacity': particle.opacity,
+              '--particle-duration': `${particle.duration}s`,
+              '--particle-delay': `${particle.delay}s`,
+              '--particle-drift-x': `${particle.driftX}vw`,
+              '--particle-drift-y': `${particle.driftY}vh`,
+              '--particle-scale-peak': particle.scalePeak
+            } as CSSProperties
+          }
+        />
+      ))}
+    </div>
+  );
+});

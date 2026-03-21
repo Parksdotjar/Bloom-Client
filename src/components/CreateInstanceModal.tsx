@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ImageIcon, Package2, Search, Sparkles, Sword, Wrench, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ImageIcon, Sparkles, Sword, Wrench, X } from 'lucide-react';
 import { animate, remove, set } from 'animejs';
-import { Instance, MarketplaceMod, MarketplacePack, TauriApi } from '../services/tauri';
+import { Instance } from '../services/tauri';
 import { useMojang } from '../hooks/useMojang';
 import { useFabric } from '../hooks/useFabric';
 
@@ -12,10 +12,11 @@ interface Props {
   onRefresh?: () => Promise<void>;
 }
 
-type WizardStep = 'name' | 'loader' | 'version' | 'extras';
-type SourceFilter = 'all' | 'modrinth' | 'curseforge';
+type WizardStep = 'name' | 'loader' | 'version' | 'visuals';
 type LoaderType = 'vanilla' | 'fabric';
-const STEPS: WizardStep[] = ['name', 'loader', 'version', 'extras'];
+type InstallLoaderStyle = 'orbit' | 'bars' | 'prism' | 'pulse';
+const STEPS: WizardStep[] = ['name', 'loader', 'version', 'visuals'];
+const INSTANCE_INSTALL_LOADING_STYLE_KEY = 'bloom_instance_install_loading_style';
 
 interface DropdownOption<T extends string> {
   value: T;
@@ -35,11 +36,52 @@ interface PickerDropdownProps<T extends string> {
   disabled?: boolean;
 }
 
-const SOURCE_OPTIONS: DropdownOption<SourceFilter>[] = [
-  { value: 'modrinth', label: 'Modrinth', hint: 'Best metadata coverage' },
-  { value: 'curseforge', label: 'CurseForge', hint: 'Broad catalog' },
-  { value: 'all', label: 'All Sources', hint: 'Merge both results' }
-];
+function readInstallLoaderStyle(): InstallLoaderStyle {
+  const stored = localStorage.getItem(INSTANCE_INSTALL_LOADING_STYLE_KEY);
+  return stored === 'orbit' || stored === 'bars' || stored === 'prism' || stored === 'pulse' ? stored : 'orbit';
+}
+
+function InstallLoaderArt({ style }: { style: InstallLoaderStyle }) {
+  if (style === 'bars') {
+    return (
+      <div className="flex h-16 items-end justify-center gap-2">
+        {[0, 1, 2, 3].map((index) => (
+          <span
+            key={index}
+            className="w-2.5 rounded-full bg-white/92 animate-pulse"
+            style={{ height: `${22 + index * 8}px`, animationDelay: `${index * 120}ms`, animationDuration: '1100ms' }}
+          />
+        ))}
+      </div>
+    );
+  }
+  if (style === 'prism') {
+    return (
+      <div className="relative h-20 w-20">
+        <div className="absolute inset-0 rounded-[24px] border border-white/18 bg-white/[0.02]" />
+        <div className="absolute inset-3 animate-spin rounded-[16px] border border-white/65" style={{ animationDuration: '1800ms' }} />
+        <div className="absolute inset-[26px] rotate-45 rounded-[8px] bg-white/92 shadow-[0_0_18px_rgba(255,255,255,0.26)]" />
+      </div>
+    );
+  }
+  if (style === 'pulse') {
+    return (
+      <div className="relative h-20 w-20">
+        <span className="absolute inset-2 rounded-full border border-white/25 animate-ping" style={{ animationDuration: '1400ms' }} />
+        <span className="absolute inset-4 rounded-full border border-white/45 animate-ping" style={{ animationDuration: '1400ms', animationDelay: '200ms' }} />
+        <span className="absolute inset-[30px] rounded-full bg-white/92 shadow-[0_0_14px_rgba(255,255,255,0.3)]" />
+      </div>
+    );
+  }
+  return (
+    <div className="relative h-20 w-20">
+      <span className="absolute inset-2 rounded-full border border-white/18" />
+      <span className="absolute inset-4 rounded-full border border-white/55 animate-spin" style={{ animationDuration: '1600ms' }} />
+      <span className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/92 shadow-[0_0_14px_rgba(255,255,255,0.28)]" />
+      <span className="absolute left-1/2 top-2 h-3 w-3 -translate-x-1/2 rounded-full bg-white/78 animate-spin" style={{ transformOrigin: '50% 32px', animationDuration: '1600ms' }} />
+    </div>
+  );
+}
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -86,18 +128,6 @@ async function cropBanner(dataUrl: string, xRatio: number, yRatio: number, zoom:
   if (!ctx) return dataUrl;
   ctx.drawImage(image, sx, sy, cropW, cropH, 0, 0, outW, outH);
   return canvas.toDataURL('image/jpeg', 0.92);
-}
-
-function compactDownloads(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return `${value}`;
-}
-
-function sourceLabel(value: SourceFilter): string {
-  if (value === 'modrinth') return 'Modrinth';
-  if (value === 'curseforge') return 'CurseForge';
-  return 'All Sources';
 }
 
 function LoaderGlyph({ loader }: { loader: LoaderType }) {
@@ -161,54 +191,6 @@ function PickerDropdown<T extends string>({
   );
 }
 
-function ResultCard({
-  title,
-  description,
-  meta,
-  iconUrl,
-  selected,
-  onClick,
-  featured
-}: {
-  title: string;
-  description: string;
-  meta: string;
-  iconUrl?: string | null;
-  selected?: boolean;
-  onClick: () => void;
-  featured?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`w-full rounded-[24px] border p-4 text-left transition ${
-        selected
-          ? 'border-[var(--g-accent)] bg-[var(--g-accent-soft)]/80 shadow-[0_18px_44px_rgba(0,0,0,0.34)]'
-          : 'border-white/12 bg-white/[0.04] hover:bg-white/[0.08]'
-      }`}
-    >
-      <div className="flex items-start gap-4">
-        <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-[18px] border border-white/10 bg-white/[0.06]">
-          {iconUrl ? <img src={iconUrl} alt={title} className="h-full w-full object-cover" /> : <Package2 size={18} className="text-white/48" />}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <p className="truncate text-base font-black text-white">{title}</p>
-            {featured && (
-              <span className="rounded-full border border-[var(--g-accent)]/45 bg-[var(--g-accent-soft)] px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] text-white">
-                Featured
-              </span>
-            )}
-          </div>
-          <p className="mt-1 line-clamp-2 text-sm text-white/70">{description || 'No description provided.'}</p>
-          <p className="mt-2 text-[10px] uppercase tracking-[0.14em] text-white/45">{meta}</p>
-        </div>
-      </div>
-    </button>
-  );
-}
-
 export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Props) {
   const [stepIndex, setStepIndex] = useState(0);
   const [name, setName] = useState('');
@@ -219,24 +201,6 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
 
   const [versionOpen, setVersionOpen] = useState(false);
   const [fabricOpen, setFabricOpen] = useState(false);
-  const [modpackSourceOpen, setModpackSourceOpen] = useState(false);
-  const [modpackQuery, setModpackQuery] = useState('');
-  const [modpackSource, setModpackSource] = useState<SourceFilter>('modrinth');
-  const [modpackRows, setModpackRows] = useState<MarketplacePack[]>([]);
-  const [modpackLoading, setModpackLoading] = useState(false);
-  const [selectedModpack, setSelectedModpack] = useState<MarketplacePack | null>(null);
-
-  const [modsQuery, setModsQuery] = useState('');
-  const [modsSource] = useState<SourceFilter>('modrinth');
-  const [modsRows, setModsRows] = useState<MarketplaceMod[]>([]);
-  const [, setModsLoading] = useState(false);
-  const [selectedMods, setSelectedMods] = useState<MarketplaceMod[]>([]);
-
-  const [resourceQuery, setResourceQuery] = useState('');
-  const [resourceSource] = useState<SourceFilter>('modrinth');
-  const [resourceRows, setResourceRows] = useState<MarketplacePack[]>([]);
-  const [, setResourceLoading] = useState(false);
-  const [selectedResources, setSelectedResources] = useState<MarketplacePack[]>([]);
 
   const [iconDataUrl, setIconDataUrl] = useState<string | undefined>(undefined);
   const [bannerSource, setBannerSource] = useState<string | undefined>(undefined);
@@ -248,10 +212,12 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [didLoadFeatured, setDidLoadFeatured] = useState(false);
+  const [loadingLabel, setLoadingLabel] = useState('Preparing instance...');
+  const [installLoaderStyle, setInstallLoaderStyle] = useState<InstallLoaderStyle>(() => readInstallLoaderStyle());
 
   const shellRef = useRef<HTMLDivElement | null>(null);
   const bannerDragStart = useRef<{ x: number; y: number; startX: number; startY: number } | null>(null);
+  const submitLockRef = useRef(false);
 
   const { releases, snapshots, loading: versionsLoading } = useMojang();
   const { versions: fabricVersions, loading: fabricLoading, latestStable } = useFabric(mcVersion, loader === 'fabric');
@@ -276,6 +242,7 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
 
   useEffect(() => {
     if (!isOpen || !shellRef.current) return;
+    setInstallLoaderStyle(readInstallLoaderStyle());
     const node = shellRef.current;
     remove(node);
     set(node, { opacity: 0, scale: 0.96, translateY: 14 });
@@ -327,16 +294,6 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
     setFabricVersion('');
     setVersionOpen(false);
     setFabricOpen(false);
-    setModpackSourceOpen(false);
-    setModpackQuery('');
-    setModpackRows([]);
-    setSelectedModpack(null);
-    setModsQuery('');
-    setModsRows([]);
-    setSelectedMods([]);
-    setResourceQuery('');
-    setResourceRows([]);
-    setSelectedResources([]);
     setIconDataUrl(undefined);
     setBannerSource(undefined);
     setBannerDataUrl(undefined);
@@ -344,84 +301,13 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
     setBannerY(0.5);
     setBannerZoom(1.15);
     setError(null);
-    setDidLoadFeatured(false);
+    setLoadingLabel('Preparing instance...');
   };
 
   const closeModal = () => {
     onClose();
     setTimeout(resetAll, 120);
   };
-
-  const searchModpacks = async (overrideQuery?: string) => {
-    const effectiveQuery = (overrideQuery ?? modpackQuery).trim();
-    if (!effectiveQuery) return;
-    setModpackLoading(true);
-    setError(null);
-    try {
-      const rows = await TauriApi.marketplaceSearchModpacks(effectiveQuery, modpackSource);
-      setModpackRows(
-        [...rows].sort((a, b) => {
-          const aScore = a.title.toLowerCase() === 'fabulously optimized' ? 2 : a.title.toLowerCase().includes('fabulously optimized') ? 1 : 0;
-          const bScore = b.title.toLowerCase() === 'fabulously optimized' ? 2 : b.title.toLowerCase().includes('fabulously optimized') ? 1 : 0;
-          if (aScore !== bScore) return bScore - aScore;
-          return b.downloads - a.downloads;
-        })
-      );
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setModpackLoading(false);
-    }
-  };
-
-  const searchMods = async (overrideQuery?: string) => {
-    const effectiveQuery = (overrideQuery ?? modsQuery).trim();
-    if (!effectiveQuery) return;
-    setModsLoading(true);
-    setError(null);
-    try {
-      const rows = await TauriApi.marketplaceSearchMods(effectiveQuery, modsSource, loader, mcVersion);
-      setModsRows(rows);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setModsLoading(false);
-    }
-  };
-
-  const searchResources = async (overrideQuery?: string) => {
-    const effectiveQuery = (overrideQuery ?? resourceQuery).trim();
-    if (!effectiveQuery) return;
-    setResourceLoading(true);
-    setError(null);
-    try {
-      const rows = await TauriApi.marketplaceSearchResourcepacks(effectiveQuery, resourceSource, mcVersion);
-      setResourceRows(rows);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setResourceLoading(false);
-    }
-  };
-
-  const toggleModSelection = (row: MarketplaceMod) => {
-    setSelectedMods((prev) => prev.some((m) => m.id === row.id) ? prev.filter((m) => m.id !== row.id) : [...prev, row]);
-  };
-
-  const toggleResourceSelection = (row: MarketplacePack) => {
-    setSelectedResources((prev) => prev.some((m) => m.id === row.id) ? prev.filter((m) => m.id !== row.id) : [...prev, row]);
-  };
-
-  useEffect(() => {
-    if (!isOpen || didLoadFeatured) return;
-    setDidLoadFeatured(true);
-    setModpackQuery('Fabulously Optimized');
-    setModsQuery('Sodium');
-    setResourceQuery('Faithful');
-    void searchModpacks('Fabulously Optimized');
-    void searchMods('Sodium');
-    void searchResources('Faithful');
-  }, [didLoadFeatured, isOpen]);
 
   const onIconFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -459,7 +345,7 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
       case 'name': return 'Pick A Name';
       case 'loader': return 'Choose Loader';
       case 'version': return 'Choose Version';
-      case 'extras': return 'Other Options';
+      case 'visuals': return 'Visual Options';
       default: return 'Create Instance';
     }
   }, [step]);
@@ -469,7 +355,7 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
       case 'name': return 'Start with the instance name Bloom will show across the launcher.';
       case 'loader': return 'Pick whether this starts as a clean Vanilla install or a Fabric-ready base.';
       case 'version': return 'Choose the Minecraft version with the custom Bloom picker, then lock the Fabric loader if needed.';
-      case 'extras': return 'Optional setup for modpacks, mods, resource packs, and visuals before the first launch.';
+      case 'visuals': return 'Optional icon and banner customization before your first launch.';
       default: return 'Create a new instance.';
     }
   }, [step]);
@@ -482,7 +368,7 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
         return true;
       case 'version':
         return mcVersion.trim().length > 0 && (loader === 'vanilla' || fabricVersion.trim().length > 0);
-      case 'extras':
+      case 'visuals':
         return canAdvanceCore;
       default:
         return canAdvanceCore;
@@ -490,60 +376,40 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
   }, [canAdvanceCore, fabricVersion, loader, mcVersion, name, step]);
 
   const handleCreate = async () => {
-    if (!canAdvanceCore) return;
+    if (!canAdvanceCore || submitLockRef.current) return;
+    submitLockRef.current = true;
     setLoading(true);
     setError(null);
     try {
-      let instance: Instance;
-      if (selectedModpack) {
-        instance = await TauriApi.marketplaceInstallModpackInstance(selectedModpack.source, selectedModpack.id, mcVersion);
-        const customized: Instance = {
-          ...instance,
-          name: name.trim() || instance.name,
-          mcVersion: instance.mcVersion || mcVersion,
-          loader: instance.loader || loader,
-          fabricLoaderVersion: instance.loader === 'fabric' ? (instance.fabricLoaderVersion || fabricVersion || undefined) : undefined,
-          iconDataUrl,
-          coverDataUrl: bannerDataUrl,
-          updatedAt: Date.now()
-        };
-        await TauriApi.instancesUpdate(customized.id, customized);
-        instance = customized;
-      } else {
-        const created: Instance = {
-          id: crypto.randomUUID(),
-          name: name.trim(),
-          mcVersion,
-          loader,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          iconDataUrl,
-          coverDataUrl: bannerDataUrl,
-          colorTag: '#9a65ff',
-          iconFrame: 'rounded',
-          java: {},
-          memoryMb: 4096,
-          jvmArgs: [],
-          fabricLoaderVersion: loader === 'fabric' ? fabricVersion : undefined,
-          resolution: { width: 854, height: 480, fullscreen: false }
-        };
-        await onSubmit(created);
-        instance = created;
-      }
+      setLoadingLabel('Creating base instance...');
+      const created: Instance = {
+        id: crypto.randomUUID(),
+        name: name.trim(),
+        mcVersion,
+        loader,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        iconDataUrl,
+        coverDataUrl: bannerDataUrl,
+        colorTag: '#9a65ff',
+        iconFrame: 'rounded',
+        java: {},
+        memoryMb: 4096,
+        jvmArgs: [],
+        fabricLoaderVersion: loader === 'fabric' ? fabricVersion : undefined,
+        resolution: { width: 854, height: 480, fullscreen: false }
+      };
+      await onSubmit(created);
 
-      for (const mod of selectedMods) {
-        await TauriApi.marketplaceInstallMod(instance.id, mod.source, mod.id);
-      }
-      for (const pack of selectedResources) {
-        await TauriApi.marketplaceInstallResourcepack(instance.id, pack.source, pack.id, mcVersion);
-      }
-
+      setLoadingLabel('Refreshing library...');
       if (onRefresh) await onRefresh();
       closeModal();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
+      submitLockRef.current = false;
+      setLoadingLabel('Preparing instance...');
     }
   };
 
@@ -559,6 +425,16 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.08),transparent_28%),radial-gradient(circle_at_bottom,rgba(255,255,255,0.04),transparent_36%)]" />
         <div className="absolute inset-0 opacity-[0.16]" style={{ backgroundImage: 'radial-gradient(rgba(255,255,255,0.18) 0.85px, transparent 0.85px)', backgroundSize: '16px 16px' }} />
         <div className="relative flex max-h-[min(860px,calc(100vh-24px))] flex-col">
+          {loading && (
+            <div className="absolute inset-0 z-[30] flex items-center justify-center bg-black/72 backdrop-blur-xl">
+              <div className="flex w-full max-w-[360px] flex-col items-center px-8 text-center">
+                <InstallLoaderArt style={installLoaderStyle} />
+                <p className="mt-7 text-[11px] font-black uppercase tracking-[0.24em] text-white/42">Installing Instance</p>
+                <p className="mt-3 text-2xl font-black text-white">{loadingLabel}</p>
+                <p className="mt-2 text-sm text-white/55">Bloom is working. This step is locked until the install finishes.</p>
+              </div>
+            </div>
+          )}
           <div className="px-5 pt-5 md:px-7 md:pt-6">
             <div className="flex items-center justify-center gap-3">
               {STEPS.map((item, idx) => (
@@ -582,7 +458,7 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
                   {step === 'name' && <Sparkles size={28} className="text-white/82" />}
                   {step === 'loader' && <Wrench size={28} className="text-white/82" />}
                   {step === 'version' && <ChevronDown size={28} className="text-white/82" />}
-                  {step === 'extras' && <Package2 size={28} className="text-white/82" />}
+                  {step === 'visuals' && <ImageIcon size={28} className="text-white/82" />}
                 </div>
               </div>
               <p className="mt-6 text-[10px] font-black uppercase tracking-[0.28em] text-white/38">Create Instance</p>
@@ -678,156 +554,43 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
             </div>
           )}
 
-          {step === 'extras' && (
-            <div className="space-y-5">
-              <div className="rounded-[24px] border border-white/10 bg-black/25 p-4">
-                <p className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-white/38">Optional Modpack</p>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-[180px_1fr_110px]">
-                  <PickerDropdown
-                    label="Source"
-                    value={modpackSource}
-                    valueLabel={sourceLabel(modpackSource)}
-                    open={modpackSourceOpen}
-                    onToggle={() => setModpackSourceOpen((v) => !v)}
-                    onClose={() => setModpackSourceOpen(false)}
-                    options={SOURCE_OPTIONS}
-                    onSelect={setModpackSource}
-                  />
-                  <div className="flex h-12 items-center gap-3 rounded-[18px] border border-white/10 bg-black/35 px-4">
-                    <Search size={15} className="text-white/45" />
-                    <input
-                      value={modpackQuery}
-                      onChange={(e) => setModpackQuery(e.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') void searchModpacks();
-                      }}
-                      placeholder="Search modpacks..."
-                      className="w-full bg-transparent text-sm font-semibold text-white outline-none placeholder:text-white/28"
-                    />
+          {step === 'visuals' && (
+            <div className="rounded-[24px] border border-white/10 bg-black/25 p-4">
+              <p className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-white/38">Visuals</p>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[180px_1fr]">
+                <div>
+                  <div className="flex h-36 items-center justify-center overflow-hidden rounded-[20px] border border-white/10 bg-black/35">
+                    {iconDataUrl ? <img src={iconDataUrl} className="h-full w-full object-cover" /> : <ImageIcon size={24} className="text-white/36" />}
                   </div>
-                  <button onClick={() => { void searchModpacks(); }} disabled={modpackLoading} className="h-12 rounded-[18px] border border-white/12 bg-white/[0.05] px-4 text-xs font-black uppercase tracking-[0.16em] text-white">
-                    {modpackLoading ? 'Searching' : 'Search'}
-                  </button>
-                </div>
-                <div className="mt-3 grid max-h-[220px] grid-cols-1 gap-3 overflow-y-auto pr-1">
-                  {modpackRows.slice(0, 5).map((row) => (
-                    <ResultCard
-                      key={`${row.source}:${row.id}`}
-                      title={row.title}
-                      description={row.description}
-                      meta={`${row.source} | ${row.author || 'Unknown author'} | ${compactDownloads(row.downloads)} downloads`}
-                      iconUrl={row.iconUrl}
-                      featured={row.title.toLowerCase().includes('fabulously optimized')}
-                      selected={selectedModpack?.id === row.id && selectedModpack?.source === row.source}
-                      onClick={() => setSelectedModpack(row)}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-                <div className="rounded-[24px] border border-white/10 bg-black/25 p-4">
-                  <p className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-white/38">Optional Mods</p>
-                  <div className="flex h-11 items-center gap-3 rounded-[18px] border border-white/10 bg-black/35 px-4">
-                    <Search size={15} className="text-white/45" />
-                    <input
-                      value={modsQuery}
-                      onChange={(e) => setModsQuery(e.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') void searchMods();
-                      }}
-                      placeholder="Search mods..."
-                      className="w-full bg-transparent text-sm font-semibold text-white outline-none placeholder:text-white/28"
-                    />
-                  </div>
-                  <div className="mt-3 grid max-h-[220px] grid-cols-1 gap-3 overflow-y-auto pr-1">
-                    {modsRows.slice(0, 4).map((row) => {
-                      const selected = selectedMods.some((m) => m.id === row.id);
-                      return (
-                        <ResultCard
-                          key={`${row.source}:${row.id}`}
-                          title={row.title}
-                          description={row.description}
-                          meta={`${row.source} | ${compactDownloads(row.downloads)} downloads`}
-                          iconUrl={row.iconUrl}
-                          selected={selected}
-                          onClick={() => toggleModSelection(row)}
-                        />
-                      );
-                    })}
-                  </div>
+                  <label className="mt-3 inline-flex cursor-pointer rounded-[16px] border border-white/12 bg-white/[0.05] px-4 py-2.5 text-xs font-black uppercase tracking-[0.16em] text-white">
+                    Upload Icon
+                    <input type="file" accept="image/*" onChange={(e) => { void onIconFile(e); }} className="hidden" />
+                  </label>
                 </div>
 
-                <div className="rounded-[24px] border border-white/10 bg-black/25 p-4">
-                  <p className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-white/38">Optional Resource Packs</p>
-                  <div className="flex h-11 items-center gap-3 rounded-[18px] border border-white/10 bg-black/35 px-4">
-                    <Search size={15} className="text-white/45" />
-                    <input
-                      value={resourceQuery}
-                      onChange={(e) => setResourceQuery(e.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') void searchResources();
-                      }}
-                      placeholder="Search resource packs..."
-                      className="w-full bg-transparent text-sm font-semibold text-white outline-none placeholder:text-white/28"
-                    />
-                  </div>
-                  <div className="mt-3 grid max-h-[220px] grid-cols-1 gap-3 overflow-y-auto pr-1">
-                    {resourceRows.slice(0, 4).map((row) => {
-                      const selected = selectedResources.some((m) => m.id === row.id);
-                      return (
-                        <ResultCard
-                          key={`${row.source}:${row.id}`}
-                          title={row.title}
-                          description={row.description}
-                          meta={`${row.source} | ${compactDownloads(row.downloads)} downloads`}
-                          iconUrl={row.iconUrl}
-                          selected={selected}
-                          onClick={() => toggleResourceSelection(row)}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-[24px] border border-white/10 bg-black/25 p-4">
-                <p className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-white/38">Visuals</p>
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-[180px_1fr]">
-                  <div>
-                    <div className="flex h-36 items-center justify-center overflow-hidden rounded-[20px] border border-white/10 bg-black/35">
-                      {iconDataUrl ? <img src={iconDataUrl} className="h-full w-full object-cover" /> : <ImageIcon size={24} className="text-white/36" />}
-                    </div>
-                    <label className="mt-3 inline-flex cursor-pointer rounded-[16px] border border-white/12 bg-white/[0.05] px-4 py-2.5 text-xs font-black uppercase tracking-[0.16em] text-white">
-                      Upload Icon
-                      <input type="file" accept="image/*" onChange={(e) => { void onIconFile(e); }} className="hidden" />
+                <div>
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/38">Banner</p>
+                    <label className="inline-flex cursor-pointer rounded-[14px] border border-white/12 bg-white/[0.05] px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-white">
+                      Upload Banner
+                      <input type="file" accept="image/*" onChange={(e) => { void onBannerFile(e); }} className="hidden" />
                     </label>
                   </div>
-
-                  <div>
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/38">Banner</p>
-                      <label className="inline-flex cursor-pointer rounded-[14px] border border-white/12 bg-white/[0.05] px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-white">
-                        Upload Banner
-                        <input type="file" accept="image/*" onChange={(e) => { void onBannerFile(e); }} className="hidden" />
-                      </label>
-                    </div>
-                    <div
-                      onPointerDown={onBannerPointerDown}
-                      onPointerMove={onBannerPointerMove}
-                      onPointerUp={onBannerPointerUp}
-                      onPointerLeave={onBannerPointerUp}
-                      className={`relative h-44 overflow-hidden rounded-[20px] border border-white/10 bg-black/35 ${draggingBanner ? 'cursor-grabbing' : 'cursor-grab'}`}
-                    >
-                      {bannerSource && (
-                        <img
-                          src={bannerSource}
-                          className="absolute inset-0 h-full w-full object-cover select-none pointer-events-none"
-                          style={{ transform: `translate(${(0.5 - bannerX) * 36}px, ${(0.5 - bannerY) * 28}px) scale(${bannerZoom})` }}
-                        />
-                      )}
-                      <div className="pointer-events-none absolute left-1/2 top-1/2 aspect-[3.2/1] w-[72%] -translate-x-1/2 -translate-y-1/2 rounded-xl border-2 border-white/70 shadow-[0_0_0_9999px_rgba(0,0,0,0.38)]" />
-                    </div>
+                  <div
+                    onPointerDown={onBannerPointerDown}
+                    onPointerMove={onBannerPointerMove}
+                    onPointerUp={onBannerPointerUp}
+                    onPointerLeave={onBannerPointerUp}
+                    className={`relative h-44 overflow-hidden rounded-[20px] border border-white/10 bg-black/35 ${draggingBanner ? 'cursor-grabbing' : 'cursor-grab'}`}
+                  >
+                    {bannerSource && (
+                      <img
+                        src={bannerSource}
+                        className="absolute inset-0 h-full w-full object-cover select-none pointer-events-none"
+                        style={{ transform: `translate(${(0.5 - bannerX) * 36}px, ${(0.5 - bannerY) * 28}px) scale(${bannerZoom})` }}
+                      />
+                    )}
+                    <div className="pointer-events-none absolute left-1/2 top-1/2 aspect-[3.2/1] w-[72%] -translate-x-1/2 -translate-y-1/2 rounded-xl border-2 border-white/70 shadow-[0_0_0_9999px_rgba(0,0,0,0.38)]" />
                   </div>
                 </div>
               </div>

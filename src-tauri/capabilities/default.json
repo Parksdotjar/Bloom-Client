@@ -12,9 +12,7 @@
     "core:window:allow-minimize",
     "core:window:allow-hide",
     "core:window:allow-show",
-    "shell:default",
     "opener:default",
-    "dialog:default",
-    "updater:default"
+    "dialog:default"
   ]
 }

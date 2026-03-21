@@ -9,18 +9,15 @@ mod instances;
 mod launcher;
 mod mojang;
 mod paths;
+mod servers;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            #[cfg(desktop)]
-            app.handle()
-                .plugin(tauri_plugin_updater::Builder::new().build())?;
             let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
             for (_, window) in app.webview_windows() {
                 let _ = window.set_icon(icon.clone());
@@ -30,6 +27,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             paths::paths_get,
             instances::instances_list,
+            instances::instances_get,
             instances::instances_create,
             instances::instances_update,
             instances::instances_delete,
@@ -73,7 +71,32 @@ pub fn run() {
             discord_presence::discord_presence_clear,
             backgrounds::launcher_background_save,
             backgrounds::launcher_background_load,
-            backgrounds::launcher_background_clear
+            backgrounds::launcher_background_clear,
+            servers::hosted_servers_list,
+            servers::hosted_servers_get,
+            servers::hosted_servers_create,
+            servers::hosted_servers_update,
+            servers::hosted_servers_delete,
+            servers::hosted_servers_start,
+            servers::hosted_servers_stop,
+            servers::hosted_servers_restart,
+            servers::hosted_servers_status,
+            servers::hosted_servers_send_command,
+            servers::hosted_servers_logs,
+            servers::hosted_servers_logs_clear,
+            servers::hosted_servers_open_folder,
+            servers::hosted_servers_files_list,
+            servers::hosted_servers_files_read,
+            servers::hosted_servers_files_write,
+            servers::hosted_servers_files_create,
+            servers::hosted_servers_files_rename,
+            servers::hosted_servers_files_delete,
+            servers::hosted_servers_backups_list,
+            servers::hosted_servers_backups_create,
+            servers::hosted_servers_backups_delete,
+            servers::hosted_servers_backups_restore,
+            servers::hosted_servers_tunnel_open,
+            servers::hosted_servers_tunnel_close
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

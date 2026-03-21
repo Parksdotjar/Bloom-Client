@@ -4,6 +4,7 @@ import { ChevronDown, Download, ImageIcon, Package2, Search, Sparkles, X } from 
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useInstances } from '../hooks/useInstances';
 import { TauriApi, type MarketplaceMod, type MarketplacePack } from '../services/tauri';
+import { UniversalLoadingOverlay } from '../components/UniversalLoadingOverlay';
 
 type SourceFilter = 'all' | 'modrinth' | 'curseforge';
 type MarketTab = 'modpacks' | 'mods' | 'resourcepacks' | 'shaders';
@@ -45,6 +46,7 @@ export function Marketplace() {
   const [searching, setSearching] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [installingId, setInstallingId] = useState<string | null>(null);
+  const [blockingTitle, setBlockingTitle] = useState<string | null>(null);
   const [sourceOpen, setSourceOpen] = useState(false);
   const [instanceOpen, setInstanceOpen] = useState(false);
   const [versionOpen, setVersionOpen] = useState(false);
@@ -160,6 +162,7 @@ export function Marketplace() {
     }
     const rowId = `${item.source}:${item.id}`;
     setInstallingId(rowId);
+    setBlockingTitle(activeTab === 'mods' ? 'Installing mod...' : activeTab === 'shaders' ? 'Installing shader pack...' : 'Installing resource pack...');
     setStatus(`Installing ${item.title}...`);
     try {
       if (activeTab === 'mods') {
@@ -177,25 +180,31 @@ export function Marketplace() {
       setStatus(`Install failed: ${message}`);
     } finally {
       setInstallingId(null);
+      setBlockingTitle(null);
     }
   };
 
   const installModpack = async () => {
     if (!versionModalFor || !selectedVersion) return;
-    const rowId = `${versionModalFor.source}:${versionModalFor.id}`;
+    const pack = versionModalFor;
+    const version = selectedVersion;
+    const rowId = `${pack.source}:${pack.id}`;
+    setVersionOpen(false);
+    setVersionModalFor(null);
     setInstallingId(rowId);
-    setStatus(`Installing ${versionModalFor.title} for ${selectedVersion}...`);
+    setBlockingTitle('Installing modpack...');
+    setStatus(`Installing ${pack.title} for ${version}...`);
     try {
-      const instance = await TauriApi.marketplaceInstallModpackInstance(versionModalFor.source, versionModalFor.id, selectedVersion);
+      const instance = await TauriApi.marketplaceInstallModpackInstance(pack.source, pack.id, version);
       await loadInstances();
       setStatus(`Created instance "${instance.name}".`);
-      setVersionModalFor(null);
       navigate(`/instance-editor?id=${encodeURIComponent(instance.id)}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus(`Install failed: ${message}`);
     } finally {
       setInstallingId(null);
+      setBlockingTitle(null);
     }
   };
 
@@ -204,6 +213,13 @@ export function Marketplace() {
 
   return (
     <>
+      <UniversalLoadingOverlay
+        open={!!blockingTitle}
+        fixed
+        eyebrow="Installing"
+        title={blockingTitle || 'Installing...'}
+        description="Bloom is applying marketplace content."
+      />
       <div className="mx-auto max-w-[1360px] min-h-full px-4 py-6">
         <div
           className="relative overflow-hidden border"
@@ -369,7 +385,7 @@ export function Marketplace() {
         </div>
       </div>
 
-      {versionModalFor && createPortal(
+      {versionModalFor && !blockingTitle && createPortal(
         <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
           <div
             className="w-full max-w-md border p-5 shadow-[0_30px_80px_rgba(0,0,0,0.5)]"
@@ -405,6 +421,7 @@ export function Marketplace() {
               <button onClick={() => setVersionModalFor(null)} className="g-btn h-10 text-xs font-extrabold uppercase tracking-[0.12em]">Cancel</button>
               <button
                 onClick={() => { void installModpack(); }}
+                disabled={!!installingId}
                 className="h-10 border text-xs font-extrabold uppercase tracking-[0.12em]"
                 style={{
                   borderRadius: 'calc(12px * var(--g-roundness-mult))',

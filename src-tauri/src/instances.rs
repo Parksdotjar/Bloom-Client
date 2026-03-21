@@ -28,6 +28,11 @@ pub struct Instance {
     pub resolution: Resolution,
 }
 
+fn strip_instance_media(mut instance: Instance) -> Instance {
+    instance.cover_data_url = None;
+    instance
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct JavaConfig {
@@ -437,7 +442,7 @@ pub fn instances_list(app: AppHandle) -> Result<Vec<Instance>, String> {
                 let instance_file = path.join("instance.json");
                 if let Ok(content) = fs::read_to_string(&instance_file) {
                     if let Ok(inst) = serde_json::from_str::<Instance>(&content) {
-                        instances.push(inst);
+                        instances.push(strip_instance_media(inst));
                     }
                 }
             }
@@ -445,6 +450,17 @@ pub fn instances_list(app: AppHandle) -> Result<Vec<Instance>, String> {
     }
 
     Ok(instances)
+}
+
+#[tauri::command]
+pub fn instances_get(app: AppHandle, id: String) -> Result<Instance, String> {
+    let paths = paths_get(app)?;
+    let instance_dir = paths.instances.join(&id);
+    if !instance_dir.exists() {
+        return Err("Instance not found".into());
+    }
+
+    load_instance_from_dir(&instance_dir)
 }
 
 #[tauri::command]

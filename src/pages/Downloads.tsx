@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { PageWidgets, type PageWidget } from '../components/PageWidgets';
 import { TauriApi, type MarketplacePack } from '../services/tauri';
 import { useInstances } from '../hooks/useInstances';
+import { UniversalLoadingOverlay } from '../components/UniversalLoadingOverlay';
 
 type SourceFilter = 'modrinth';
 const KEYBIND_ACTION_EVENT = 'bloom-keybind-action';
@@ -26,6 +27,7 @@ export function Downloads() {
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [localImporting, setLocalImporting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [blockingTitle, setBlockingTitle] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const totalInstances = instances.length;
 
@@ -74,6 +76,7 @@ export function Downloads() {
   const installFromMarketplace = async (pack: MarketplacePack) => {
     const rowId = `${pack.source}:${pack.id}`;
     setInstallingId(rowId);
+    setBlockingTitle('Importing modpack...');
     setStatus(`Importing ${pack.title} for ${gameVersion}...`);
     try {
       const instance = await TauriApi.marketplaceInstallModpackInstance('modrinth', pack.id, gameVersion);
@@ -85,11 +88,13 @@ export function Downloads() {
       setStatus(`Import failed: ${message}`);
     } finally {
       setInstallingId(null);
+      setBlockingTitle(null);
     }
   };
 
   const importLocalFile = async () => {
     setLocalImporting(true);
+    setBlockingTitle('Importing local archive...');
     setStatus(null);
     try {
       const selected = await open({
@@ -107,6 +112,7 @@ export function Downloads() {
       setStatus(`Local import failed: ${message}`);
     } finally {
       setLocalImporting(false);
+      setBlockingTitle(null);
     }
   };
 
@@ -241,5 +247,16 @@ export function Downloads() {
     { id: 'importer-local', title: 'Local Import', defaultSlot: 'rightTop', content: localWidget }
   ];
 
-  return <PageWidgets pageKey="importer" widgets={widgets} />;
+  return (
+    <>
+      <UniversalLoadingOverlay
+        open={!!blockingTitle}
+        fixed
+        eyebrow="Importing"
+        title={blockingTitle || 'Importing...'}
+        description="Bloom is building the new instance."
+      />
+      <PageWidgets pageKey="importer" widgets={widgets} />
+    </>
+  );
 }

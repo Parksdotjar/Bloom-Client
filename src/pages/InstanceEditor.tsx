@@ -4,6 +4,7 @@ import { ArrowLeft, Copy, Download, FolderOpen, ImageIcon, Package2, RefreshCcw,
 import { open } from '@tauri-apps/plugin-dialog';
 import { useInstances } from '../hooks/useInstances';
 import { TauriApi, type InstanceContentFile, type InstanceModFile, type MarketplaceMod, type MarketplacePack, type ModInstallResult } from '../services/tauri';
+import { UniversalLoadingOverlay } from '../components/UniversalLoadingOverlay';
 
 type EditorTab = 'mods' | 'resourcepacks' | 'shaders' | 'settings';
 type SettingsSubTab = 'profile' | 'launch';
@@ -58,7 +59,7 @@ export function InstanceEditor() {
         ? 'shaders'
         : 'mods';
 
-  const { instances, updateInstance, loading, loadInstances } = useInstances();
+  const { instances, updateInstance, loading, loadInstances, getInstance } = useInstances();
 
   const instance = useMemo(() => {
     if (!instanceId) return null;
@@ -77,9 +78,11 @@ export function InstanceEditor() {
   const [javaPathOverride, setJavaPathOverride] = useState('');
   const [iconDataUrl, setIconDataUrl] = useState<string | undefined>(undefined);
   const [coverDataUrl, setCoverDataUrl] = useState<string | undefined>(undefined);
+  const [instanceMediaLoaded, setInstanceMediaLoaded] = useState(false);
   const [colorTag, setColorTag] = useState('#9a65ff');
   const [iconFrame, setIconFrame] = useState<'square' | 'rounded' | 'diamond'>('rounded');
   const [saving, setSaving] = useState(false);
+  const [blockingTitle, setBlockingTitle] = useState<string | null>(null);
   const [optionsClipboard, setOptionsClipboard] = useState<{ instanceId: string; instanceName: string } | null>(() => {
     try {
       const raw = localStorage.getItem(INSTANCE_OPTIONS_CLIPBOARD_KEY);
@@ -133,15 +136,39 @@ export function InstanceEditor() {
       else if (instance.java?.pathOverride) setJavaRuntime('custom');
       else setJavaRuntime('system');
       setJavaPathOverride(instance.java?.pathOverride || '');
-      setIconDataUrl(instance.iconDataUrl);
-      setCoverDataUrl(instance.coverDataUrl);
       setColorTag(instance.colorTag || '#9a65ff');
       setIconFrame(instance.iconFrame || 'rounded');
       setModsView('installed');
       setResourcepacksView('installed');
       setShadersView('installed');
+      setInstanceMediaLoaded(false);
     }
   }, [instance]);
+
+  useEffect(() => {
+    let active = true;
+    if (!instanceId || !instance) return () => {
+      active = false;
+    };
+
+    void getInstance(instanceId)
+      .then((fullInstance) => {
+        if (!active) return;
+        setIconDataUrl(fullInstance.iconDataUrl);
+        setCoverDataUrl(fullInstance.coverDataUrl);
+        setInstanceMediaLoaded(true);
+      })
+      .catch(() => {
+        if (!active) return;
+        setIconDataUrl(undefined);
+        setCoverDataUrl(undefined);
+        setInstanceMediaLoaded(true);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [getInstance, instance, instanceId]);
 
   useEffect(() => {
     if (!instanceId || instance || loading) return;
@@ -198,6 +225,7 @@ export function InstanceEditor() {
   const saveSettings = async () => {
     if (!instance) return;
     setSaving(true);
+    setBlockingTitle('Saving instance settings...');
     try {
       await updateInstance(instance.id, {
         ...instance,
@@ -217,6 +245,7 @@ export function InstanceEditor() {
       setStatusMessage('Instance settings saved.');
     } finally {
       setSaving(false);
+      setBlockingTitle(null);
     }
   };
 
@@ -344,6 +373,7 @@ export function InstanceEditor() {
     }
 
     setInstallingMods(true);
+    setBlockingTitle('Installing mods...');
     setStatusMessage('Installing mods...');
     try {
       const pathBackedFiles = jars.filter((file) => Boolean((file as NativeFile).path));
@@ -376,6 +406,7 @@ export function InstanceEditor() {
       setStatusMessage(`Mod install failed: ${message}`);
     } finally {
       setInstallingMods(false);
+      setBlockingTitle(null);
     }
   };
 
@@ -391,6 +422,7 @@ export function InstanceEditor() {
       const paths = Array.isArray(selected) ? selected : [selected];
       if (paths.length === 0) return;
       setInstallingMods(true);
+      setBlockingTitle('Installing mods...');
       setStatusMessage('Installing mods...');
       const result = await TauriApi.instanceInstallModPaths(instance.id, paths);
       setLastInstallResult(result);
@@ -401,6 +433,7 @@ export function InstanceEditor() {
       setStatusMessage(`Mod install failed: ${message}`);
     } finally {
       setInstallingMods(false);
+      setBlockingTitle(null);
     }
   };
 
@@ -473,6 +506,7 @@ export function InstanceEditor() {
   const autoInstallFabricApi = async () => {
     if (!instance || instance.loader !== 'fabric') return;
     setInstallingFabricApi(true);
+    setBlockingTitle('Installing Fabric API...');
     setStatusMessage('Installing Fabric API...');
     try {
       const fileName = await TauriApi.instanceInstallFabricApi(instance.id);
@@ -483,6 +517,7 @@ export function InstanceEditor() {
       setStatusMessage(`Fabric API install failed: ${message}`);
     } finally {
       setInstallingFabricApi(false);
+      setBlockingTitle(null);
     }
   };
 
@@ -535,6 +570,7 @@ export function InstanceEditor() {
     if (!instance) return;
     const rowId = `${mod.source}:${mod.id}`;
     setModsInstallingId(rowId);
+    setBlockingTitle('Installing mod...');
     setStatusMessage(`Installing ${mod.title}...`);
     try {
       const file = await TauriApi.marketplaceInstallMod(instance.id, mod.source, mod.id);
@@ -545,6 +581,7 @@ export function InstanceEditor() {
       setStatusMessage(`Install failed: ${message}`);
     } finally {
       setModsInstallingId(null);
+      setBlockingTitle(null);
     }
   };
 
@@ -552,6 +589,7 @@ export function InstanceEditor() {
     if (!instance) return;
     const rowId = `${pack.source}:${pack.id}`;
     setResourcepacksInstallingId(rowId);
+    setBlockingTitle('Installing resource pack...');
     setStatusMessage(`Installing ${pack.title}...`);
     try {
       const file = await TauriApi.marketplaceInstallResourcepack(instance.id, pack.source, pack.id, instance.mcVersion);
@@ -562,6 +600,7 @@ export function InstanceEditor() {
       setStatusMessage(`Install failed: ${message}`);
     } finally {
       setResourcepacksInstallingId(null);
+      setBlockingTitle(null);
     }
   };
 
@@ -569,6 +608,7 @@ export function InstanceEditor() {
     if (!instance) return;
     const rowId = `${pack.source}:${pack.id}`;
     setShadersInstallingId(rowId);
+    setBlockingTitle('Installing shader pack...');
     setStatusMessage(`Installing ${pack.title}...`);
     try {
       const file = await TauriApi.marketplaceInstallShaderpack(instance.id, pack.source, pack.id, instance.mcVersion);
@@ -579,6 +619,7 @@ export function InstanceEditor() {
       setStatusMessage(`Install failed: ${message}`);
     } finally {
       setShadersInstallingId(null);
+      setBlockingTitle(null);
     }
   };
 
@@ -764,7 +805,7 @@ export function InstanceEditor() {
     </section>
   );
 
-  if (loading) {
+  if (loading || (instance && !instanceMediaLoaded)) {
     return <div className="min-h-full p-8 flex items-center justify-center"><p className="text-sm font-black tracking-[0.16em] uppercase text-slate-500 dark:text-white/55">Loading instance...</p></div>;
   }
 
@@ -779,6 +820,13 @@ export function InstanceEditor() {
 
   return (
     <div className="min-h-full w-full max-w-[1360px] mx-auto p-4 md:p-6 space-y-4">
+      <UniversalLoadingOverlay
+        open={!!blockingTitle}
+        fixed
+        eyebrow="Working"
+        title={blockingTitle || 'Working...'}
+        description="Bloom is applying changes to this instance."
+      />
       <section className="g-panel-strong p-6">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3">

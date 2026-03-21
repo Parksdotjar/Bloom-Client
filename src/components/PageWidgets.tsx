@@ -27,7 +27,19 @@ const SLOT_RENDER_ORDER: WidgetSlot[] = ['hero', 'leftTop', 'rightTop', 'leftBot
 type LayoutMap = Record<string, WidgetSlot>;
 type VisibilityMap = Record<string, boolean>;
 
-export function PageWidgets({ pageKey, widgets }: { pageKey: string; widgets: PageWidget[] }) {
+export function PageWidgets({
+  pageKey,
+  widgets,
+  dense = false,
+  forceDockingPanel = false,
+  className
+}: {
+  pageKey: string;
+  widgets: PageWidget[];
+  dense?: boolean;
+  forceDockingPanel?: boolean;
+  className?: string;
+}) {
   const layoutStorageKey = `bloom_widget_layout_${pageKey}`;
   const visibleStorageKey = `bloom_widget_visible_${pageKey}`;
 
@@ -244,7 +256,7 @@ export function PageWidgets({ pageKey, widgets }: { pageKey: string; widgets: Pa
 
   return (
     <div className="max-w-[1400px] mx-auto min-h-full space-y-4">
-      {showWidgetDocker && (
+      {(showWidgetDocker || forceDockingPanel) && (
         <details className="g-panel p-3 js-giga-reveal">
           <summary className="cursor-pointer select-none text-xs font-extrabold uppercase tracking-[0.12em] text-white/60">
             Widget Docking
@@ -278,11 +290,23 @@ export function PageWidgets({ pageKey, widgets }: { pageKey: string; widgets: Pa
         </details>
       )}
 
-      <div className="flex flex-col gap-4">
-        {SLOT_RENDER_ORDER.map((slot) => (
-          <div key={slot} className="js-giga-reveal">{renderSlot(slot)}</div>
-        ))}
-      </div>
+      {dense ? (
+        <div className={`flex flex-col gap-4 ${className || ''}`}>
+          <div className="js-giga-reveal">{renderSlot('hero')}</div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="js-giga-reveal">{renderSlot('leftTop')}</div>
+            <div className="js-giga-reveal">{renderSlot('rightTop')}</div>
+            <div className="js-giga-reveal">{renderSlot('leftBottom')}</div>
+            <div className="js-giga-reveal">{renderSlot('rightBottom')}</div>
+          </div>
+        </div>
+      ) : (
+        <div className={`flex flex-col gap-4 ${className || ''}`}>
+          {SLOT_RENDER_ORDER.map((slot) => (
+            <div key={slot} className="js-giga-reveal">{renderSlot(slot)}</div>
+          ))}
+        </div>
+      )}
 
       {contextMenu && (
         <div
