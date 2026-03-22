@@ -144,6 +144,102 @@ dev.dump-config
 dev.mock-notification
 dev.log-level debug
 help --dev`
+  },
+  {
+    id: 'theme-tour',
+    label: 'Theme Tour',
+    description: 'Cycle through a few themes with timed pauses and print the final appearance snapshot.',
+    code: `# Theme showcase
+print "Running Bloom theme tour..."
+theme.set ocean
+sleep 350
+theme.set forest
+sleep 350
+theme.set sunset
+sleep 350
+theme.set true-dark
+appearance.show`
+  },
+  {
+    id: 'power-user-mode',
+    label: 'Power User Mode',
+    description: 'Apply a faster, cleaner launcher profile for daily grinding.',
+    code: `# Performance + utility tuning
+module.enable widget-docker
+module.enable games-section
+module.enable route-animations
+ui.scale 0.96
+motion.reduce on
+theme.set gray
+appearance.show
+print "Power-user profile applied."`
+  },
+  {
+    id: 'fabric-quickstart',
+    label: 'Fabric Quickstart',
+    description: 'Create a Fabric instance, set version, and install a few common mods.',
+    code: `# Fabric quickstart pack
+let pack = "Fabric Quickstart 1.21.1"
+mkinc $pack
+instance.set-loader $pack fabric
+instance.set-version $pack "1.21.1"
+mod.install-fabric-api $pack
+mod.install $pack sodium
+mod.install $pack iris
+instance.config $pack
+print "Ready:" $pack`
+  },
+  {
+    id: 'instance-maintenance',
+    label: 'Instance Maintenance',
+    description: 'Clone, rename, open config, and inspect path for maintenance workflows.',
+    code: `# Maintenance workflow
+let source = "Training"
+let clone = "Training Backup"
+instance.clone $source $clone
+instance.rename $clone "Training Backup 2"
+instance.path "Training Backup 2"
+instance.config "Training Backup 2"
+instance.list`
+  },
+  {
+    id: 'host-unlock',
+    label: 'Host Unlock',
+    description: 'Run the hidden host-tools unlock phrase and verify state.',
+    code: `# Hidden host tools unlock
+petals.power.the.server.rack
+module.list
+print "Host tools should now be visible in navigation."`
+  },
+  {
+    id: 'relock-host',
+    label: 'Host Relock',
+    description: 'Hide host tools again and keep the launcher surface clean.',
+    code: `# Hide host tools
+server.lock
+print "Host tools hidden again."`
+  },
+  {
+    id: 'status-card',
+    label: 'Status Card',
+    description: 'Generate a quick status readout for account, version, and modules.',
+    code: `# Quick status panel output
+version
+whoami
+module.list
+appearance.show`
+  },
+  {
+    id: 'safe-reset',
+    label: 'Safe Reset',
+    description: 'Reset widget layout keys and re-apply a stable baseline.',
+    code: `# Safe reset profile
+dev.reset-layout
+module.enable widget-docker
+motion.reduce off
+ui.scale 1
+theme.set dark
+print "Layout reset and baseline reapplied."`
   }
 ];
 

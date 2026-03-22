@@ -15,6 +15,7 @@ const Marketplace = lazy(() => import('./pages/Marketplace').then((module) => ({
 const Help = lazy(() => import('./pages/Help').then((module) => ({ default: module.Help })));
 const ScriptStudio = lazy(() => import('./pages/ScriptStudio').then((module) => ({ default: module.ScriptStudio })));
 const HostServer = lazy(() => import('./pages/HostServer').then((module) => ({ default: module.HostServer })));
+const Chat = lazy(() => import('./pages/Chat').then((module) => ({ default: module.Chat })));
 
 function App() {
   const [hostServersUnlocked, setHostServersUnlocked] = useState<boolean>(() => readHostServersUnlocked());
@@ -62,6 +63,7 @@ function App() {
             <Route path="/widgets" element={<Widgets />} />
             <Route path="/games" element={<Games />} />
             <Route path="/help" element={<Help />} />
+            <Route path="/chat" element={<Chat />} />
             <Route path="/script-studio" element={<ScriptStudio />} />
             <Route path="/host-server" element={hostServersUnlocked ? <HostServer /> : <Navigate to="/" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { CircleHelp, Code2, FolderUp, Gamepad2, LayoutDashboard, Layers3, LogIn, Plus, Server, Settings, Sparkles, User } from 'lucide-react';
+import { CircleHelp, Code2, FolderUp, Gamepad2, LayoutDashboard, Layers3, LogIn, MessageSquareMore, Plus, Server, Settings, Sparkles, User } from 'lucide-react';
 import { animate, remove, set } from 'animejs';
 import { clsx } from 'clsx';
 import logo from '../assets/logo.png';
@@ -114,6 +114,7 @@ export function SidebarRail(props: SidebarProps) {
     { icon: Layers3, path: '/marketplace', label: 'Market' },
     { icon: FolderUp, path: '/importer', label: 'Importer' },
     { icon: LayoutDashboard, path: '/widgets', label: 'Widgets' },
+    { icon: MessageSquareMore, path: '/chat', label: 'Chat' },
     { icon: Code2, path: '/script-studio', label: 'Studio' },
     ...(showHostServer ? [{ icon: Server, path: '/host-server', label: 'Host' }] : []),
     ...(showGamesSection ? [{ icon: Sparkles, path: '/games', label: 'Games' }] : []),

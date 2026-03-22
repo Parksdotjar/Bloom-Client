@@ -3,6 +3,7 @@ import { clsx } from 'clsx';
 import { APP_VERSION } from '../constants/version';
 import { TauriApi } from '../services/tauri';
 import { UniversalLoadingOverlay } from '../components/UniversalLoadingOverlay';
+import { eventToDisplayShortcut } from '../utils/shortcuts';
 import {
   CONSOLE_HOTKEY_DEFAULT,
   CONSOLE_PERSIST_HISTORY_KEY,
@@ -573,18 +574,6 @@ function LoadingScreenPreviewGlyph({ style }: { style: InstanceInstallLoadingSty
       <div className="absolute left-1/2 top-2 h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-white/78" />
     </div>
   );
-}
-
-function eventToShortcut(event: KeyboardEvent): string {
-  const parts: string[] = [];
-  if (event.ctrlKey) parts.push('Ctrl');
-  if (event.altKey) parts.push('Alt');
-  if (event.shiftKey) parts.push('Shift');
-  if (event.metaKey) parts.push('Meta');
-  const rawKey = event.key.length === 1 ? event.key.toUpperCase() : event.key;
-  const key = rawKey === ' ' ? 'Space' : rawKey;
-  if (!['Control', 'Alt', 'Shift', 'Meta'].includes(key)) parts.push(key);
-  return parts.join('+');
 }
 
 const ACCENTS: { id: AccentMode; label: string; swatch: string }[] = [
@@ -1390,7 +1379,7 @@ export function Settings() {
         setCapturingShortcut(null);
         return;
       }
-      const shortcut = eventToShortcut(event);
+      const shortcut = eventToDisplayShortcut(event);
       if (!shortcut) return;
       if (capturingShortcut === 'search') applyShortcuts({ search: shortcut });
       else if (capturingShortcut === 'create') applyShortcuts({ create: shortcut });

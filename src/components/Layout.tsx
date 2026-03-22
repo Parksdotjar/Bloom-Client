@@ -46,6 +46,7 @@ import {
   type ConsoleLogLevel
 } from '../constants/console';
 import { CONSOLE_MODULES, CONSOLE_THEMES, createConsoleRegistry } from '../console/registry';
+import { eventToNormalizedShortcut, normalizeShortcut } from '../utils/shortcuts';
 import {
   HOST_SERVERS_UNLOCK_EVENT,
   HOST_SERVERS_UNLOCK_KEY,
@@ -185,26 +186,6 @@ const ONBOARDING_ACCENT_OPTIONS: { id: AccentMode; label: string; swatch: string
   { id: 'rose', label: 'Rose', swatch: 'linear-gradient(90deg,#ff5c89,#ff9cb7)' },
   { id: 'rainbow', label: 'Rainbow', swatch: 'linear-gradient(90deg,#ff5f6d,#ffc371,#47e0ff,#60ff9f,#b57bff)' }
 ];
-
-function normalizeShortcut(text: string): string {
-  return text
-    .split('+')
-    .map((part) => part.trim().toLowerCase())
-    .filter(Boolean)
-    .join('+');
-}
-
-function eventToShortcut(event: KeyboardEvent): string {
-  const parts: string[] = [];
-  if (event.ctrlKey) parts.push('ctrl');
-  if (event.altKey) parts.push('alt');
-  if (event.shiftKey) parts.push('shift');
-  if (event.metaKey) parts.push('meta');
-  let key = event.key.length === 1 ? event.key.toLowerCase() : event.key.toLowerCase();
-  if (key === ' ') key = 'space';
-  if (!['control', 'alt', 'shift', 'meta'].includes(key)) parts.push(key);
-  return parts.join('+');
-}
 
 function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
@@ -1063,7 +1044,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      const activeShortcut = normalizeShortcut(eventToShortcut(event));
+      const activeShortcut = eventToNormalizedShortcut(event);
       const isOnboardingToggleCombo = Boolean(
         event.ctrlKey
         && event.shiftKey
@@ -1468,6 +1449,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
     };
     window.addEventListener(UPDATE_SETTINGS_CHANGE_EVENT, syncUpdatePreferences as EventListener);
     return () => window.removeEventListener(UPDATE_SETTINGS_CHANGE_EVENT, syncUpdatePreferences as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const onSocialNotification = (event: Event) => {
+      const custom = event as CustomEvent<{ message?: string }>;
+      if (custom.detail?.message) {
+        setUpdateStatusMessage(custom.detail.message);
+      } else {
+        setUpdateStatusMessage('You have a new social notification.');
+      }
+      setNotificationsOpen(true);
+    };
+    window.addEventListener('bloom-social-notification', onSocialNotification as EventListener);
+    return () => window.removeEventListener('bloom-social-notification', onSocialNotification as EventListener);
   }, []);
 
   useEffect(() => {

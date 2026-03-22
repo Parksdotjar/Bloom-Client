@@ -70,7 +70,7 @@ export function createBloomScriptCommandIndex(commands: ConsoleCommandDefinition
 export function resolveBloomScriptCommand(tokens: BloomScriptToken[], index: BloomScriptCommandIndex): BloomScriptResolvedCommand | null {
   if (tokens.length === 0) return null;
 
-  const maxParts = Math.min(3, tokens.length);
+  const maxParts = tokens.length;
   for (let parts = maxParts; parts >= 1; parts -= 1) {
     const commandTokens = tokens.slice(0, parts);
     if (!commandTokens.every(isCommandToken)) continue;

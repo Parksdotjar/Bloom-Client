@@ -1,7 +1,11 @@
 import type { ConsoleCommandDefinition, ConsoleParseResult, ConsoleResolvedCommand } from './types';
 
 function normalizeToken(value: string) {
-  return value.trim().toLowerCase();
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^[`"'“”‘’([{<]+/, '')
+    .replace(/[`"'“”‘’)\]}>.,!?;:]+$/, '');
 }
 
 export function parseConsoleInput(input: string): ConsoleParseResult {
