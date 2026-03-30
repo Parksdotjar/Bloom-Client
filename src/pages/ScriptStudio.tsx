@@ -25,6 +25,7 @@ import {
   CONSOLE_SHOW_DEV_COMMANDS_KEY,
   type ConsoleLogLevel
 } from '../constants/console';
+import { requestCosmeticsModMenuOpen } from '../constants/cosmeticsModMenu';
 import { readHostServersUnlocked, setHostServersUnlocked as writeHostServersUnlocked } from '../constants/hostServerAccess';
 import { CONSOLE_MODULES, CONSOLE_THEMES, createConsoleRegistry } from '../console/registry';
 import type { ConsoleCommandContext } from '../console/types';
@@ -619,6 +620,10 @@ export function ScriptStudio() {
       const next = enabled ? 'off' : 'standard';
       localStorage.setItem(MOTION_STORAGE_KEY, next);
       window.dispatchEvent(new CustomEvent(MOTION_CHANGE_EVENT, { detail: { motion: next } }));
+    },
+    openCosmeticsModMenu: () => {
+      requestCosmeticsModMenuOpen();
+      navigate('/cosmetics');
     },
     listInstances: async () => {
       await loadInstances();

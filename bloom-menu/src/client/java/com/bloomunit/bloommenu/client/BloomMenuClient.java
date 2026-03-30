@@ -1,8 +1,10 @@
 package com.bloomunit.bloommenu.client;
 
 import com.bloomunit.bloommenu.BloomMenuMod;
+import com.bloomunit.bloommenu.client.cosmetics.BloomCosmeticsManager;
 import com.bloomunit.bloommenu.client.screen.BloomMenuScreen;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
@@ -23,7 +25,9 @@ public final class BloomMenuClient implements ClientModInitializer {
             KeyBinding.Category.create(Identifier.of(BloomMenuMod.MOD_ID, "main"))
         ));
         BloomFeatureController.registerKeybindings();
+        BloomCosmeticsManager.getInstance().initialize();
         ClientTickEvents.END_CLIENT_TICK.register(BloomMenuClient::onEndTick);
+        ClientLifecycleEvents.CLIENT_STOPPING.register((client) -> BloomCosmeticsManager.getInstance().shutdown());
     }
 
     private static void onEndTick(MinecraftClient client) {
@@ -32,6 +36,7 @@ public final class BloomMenuClient implements ClientModInitializer {
         }
 
         BloomFeatureController.tick(client);
+        BloomCosmeticsManager.getInstance().tick(client);
 
         while (openMenuKey.wasPressed()) {
             if (client.currentScreen instanceof BloomMenuScreen) {

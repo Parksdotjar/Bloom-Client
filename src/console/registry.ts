@@ -759,6 +759,24 @@ export function createConsoleRegistry(): ConsoleCommandDefinition[] {
   });
 
   register({
+    name: 'modmenu',
+    aliases: ['/modmenu'],
+    category: 'Bloom',
+    description: 'Open the hidden cosmetics owner mod menu prompt.',
+    usage: '/modmenu',
+    handler: (_args, context) => {
+      context.openCosmeticsModMenu();
+      return {
+        kind: 'info',
+        lines: [
+          'Opening Cosmetic Locker mod menu prompt...',
+          'Enter the owner phrase in the prompt to continue.'
+        ]
+      };
+    }
+  });
+
+  register({
     name: 'bloom',
     category: 'Bloom',
     description: 'Show a Bloom easter-egg line.',

@@ -53,6 +53,7 @@ import {
   readHostServersUnlocked,
   setHostServersUnlocked as writeHostServersUnlocked
 } from '../constants/hostServerAccess';
+import { requestCosmeticsModMenuOpen } from '../constants/cosmeticsModMenu';
 
 const Particles = lazy(() => import('./Particles').then((module) => ({ default: module.Particles })));
 
@@ -71,6 +72,8 @@ type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
 type SoundPackMode = 'off' | 'soft' | 'arcade' | 'retro';
 type StartupSceneTheme = 'nova' | 'horizon' | 'matrix';
 type StartupSceneSoundProfile = 'off' | 'shimmer' | 'impact';
+type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help';
+type SidebarTabsVisibility = Record<SidebarTabId, boolean>;
 
 type SearchEntry = {
   id: string;
@@ -130,10 +133,7 @@ const KEYBIND_ACTION_EVENT = 'bloom-keybind-action';
 const SHOW_WIDGET_DOCKER_KEY = 'bloom_show_widget_docker';
 const HIDE_EMPTY_WIDGET_SLOTS_KEY = 'bloom_hide_empty_widget_slots';
 const SHOW_GAMES_SECTION_KEY = 'bloom_show_games_section';
-const SOUND_PACK_KEY = 'bloom_sound_pack';
-const SOUND_CLICKS_KEY = 'bloom_sound_clicks_enabled';
-const SOUND_HOVERS_KEY = 'bloom_sound_hovers_enabled';
-const SOUND_NOTIFICATIONS_KEY = 'bloom_sound_notifications_enabled';
+const SIDEBAR_TABS_VISIBILITY_KEY = 'bloom_sidebar_tabs_visibility';
 const SOUND_CHANGE_EVENT = 'bloom-sound-change';
 const STARTUP_SCENE_ENABLED_KEY = 'bloom_startup_scene_enabled';
 const STARTUP_SCENE_THEME_KEY = 'bloom_startup_scene_theme';
@@ -143,6 +143,43 @@ const STARTUP_SCENE_AUTOPLAY_SESSION_KEY = 'bloom_startup_scene_autoplay_done';
 const MODS_REFRESH_EVENT = 'bloom-refresh-mods';
 const ONBOARDING_DONE_PREFIX = 'bloom_onboarding_done_';
 const ROUTE_TAB_ANIMATIONS_KEY = 'bloom_route_tab_animations_enabled';
+
+const SIDEBAR_TABS_VISIBILITY_DEFAULTS: SidebarTabsVisibility = {
+  home: true,
+  instances: true,
+  marketplace: true,
+  importer: true,
+  widgets: true,
+  cosmetics: true,
+  chat: false,
+  'script-studio': false,
+  'host-server': false,
+  games: false,
+  help: true
+};
+
+function readSidebarTabsVisibility(): SidebarTabsVisibility {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_TABS_VISIBILITY_KEY);
+    if (!raw) return { ...SIDEBAR_TABS_VISIBILITY_DEFAULTS };
+    const parsed = JSON.parse(raw) as Partial<Record<SidebarTabId, unknown>>;
+    return {
+      home: typeof parsed.home === 'boolean' ? parsed.home : SIDEBAR_TABS_VISIBILITY_DEFAULTS.home,
+      instances: typeof parsed.instances === 'boolean' ? parsed.instances : SIDEBAR_TABS_VISIBILITY_DEFAULTS.instances,
+      marketplace: typeof parsed.marketplace === 'boolean' ? parsed.marketplace : SIDEBAR_TABS_VISIBILITY_DEFAULTS.marketplace,
+      importer: typeof parsed.importer === 'boolean' ? parsed.importer : SIDEBAR_TABS_VISIBILITY_DEFAULTS.importer,
+      widgets: typeof parsed.widgets === 'boolean' ? parsed.widgets : SIDEBAR_TABS_VISIBILITY_DEFAULTS.widgets,
+      cosmetics: typeof parsed.cosmetics === 'boolean' ? parsed.cosmetics : SIDEBAR_TABS_VISIBILITY_DEFAULTS.cosmetics,
+      chat: typeof parsed.chat === 'boolean' ? parsed.chat : SIDEBAR_TABS_VISIBILITY_DEFAULTS.chat,
+      'script-studio': typeof parsed['script-studio'] === 'boolean' ? parsed['script-studio'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['script-studio'],
+      'host-server': typeof parsed['host-server'] === 'boolean' ? parsed['host-server'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['host-server'],
+      games: typeof parsed.games === 'boolean' ? parsed.games : SIDEBAR_TABS_VISIBILITY_DEFAULTS.games,
+      help: typeof parsed.help === 'boolean' ? parsed.help : SIDEBAR_TABS_VISIBILITY_DEFAULTS.help
+    };
+  } catch {
+    return { ...SIDEBAR_TABS_VISIBILITY_DEFAULTS };
+  }
+}
 
 const ACCENT_MAP: Record<AccentMode, { accent: string; soft: string; gradient: string }> = {
   purple: { accent: '#9a65ff', soft: 'rgba(154, 101, 255, 0.26)', gradient: 'linear-gradient(90deg, #8f58ff 0%, #ba96ff 100%)' },
@@ -236,7 +273,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [backgroundVisualOpacity, setBackgroundVisualOpacity] = useState<number>(() => {
     const stored = Number(localStorage.getItem(BACKGROUND_VISUAL_OPACITY_KEY));
     if (Number.isFinite(stored)) return clampPercent(stored);
-    return 100;
+    return 20;
   });
   const [taskbarSurfaceOpacity, setTaskbarSurfaceOpacity] = useState<number>(() => {
     const stored = Number(localStorage.getItem(TASKBAR_SURFACE_OPACITY_KEY));
@@ -258,7 +295,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   });
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => {
     const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
-    return stored === 'rail' || stored === 'classic' || stored === 'expanded' ? stored : 'classic';
+    return stored === 'rail' || stored === 'classic' || stored === 'expanded' ? stored : 'rail';
   });
   const [sidebarPosition, setSidebarPosition] = useState<SidebarPosition>(() => {
     const stored = localStorage.getItem(SIDEBAR_POSITION_STORAGE_KEY);
@@ -303,6 +340,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   );
   const [routeTabAnimationsEnabled, setRouteTabAnimationsEnabled] = useState<boolean>(() => localStorage.getItem(ROUTE_TAB_ANIMATIONS_KEY) === 'true');
   const [showGamesSection, setShowGamesSection] = useState<boolean>(() => localStorage.getItem(SHOW_GAMES_SECTION_KEY) === 'true');
+  const [sidebarTabsVisibility, setSidebarTabsVisibility] = useState<SidebarTabsVisibility>(() => readSidebarTabsVisibility());
   const [isMaximized, setIsMaximized] = useState(false);
   const [iconPack, setIconPack] = useState<IconPackMode>(() => {
     const stored = localStorage.getItem(ICON_PACK_KEY);
@@ -324,12 +362,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
     return 70;
   });
   const [soundPack, setSoundPack] = useState<SoundPackMode>(() => {
-    const stored = localStorage.getItem(SOUND_PACK_KEY);
-    return stored === 'off' || stored === 'soft' || stored === 'arcade' || stored === 'retro' ? stored : 'soft';
+    return 'off';
   });
-  const [soundClicksEnabled, setSoundClicksEnabled] = useState<boolean>(() => localStorage.getItem(SOUND_CLICKS_KEY) !== 'false');
-  const [soundHoversEnabled, setSoundHoversEnabled] = useState<boolean>(() => localStorage.getItem(SOUND_HOVERS_KEY) === 'true');
-  const [soundNotificationsEnabled, setSoundNotificationsEnabled] = useState<boolean>(() => localStorage.getItem(SOUND_NOTIFICATIONS_KEY) !== 'false');
+  const [soundClicksEnabled, setSoundClicksEnabled] = useState<boolean>(() => false);
+  const [soundHoversEnabled, setSoundHoversEnabled] = useState<boolean>(() => false);
+  const [soundNotificationsEnabled, setSoundNotificationsEnabled] = useState<boolean>(() => false);
   const [startupSceneEnabled, setStartupSceneEnabled] = useState<boolean>(() => localStorage.getItem(STARTUP_SCENE_ENABLED_KEY) !== 'false');
   const [startupSceneTheme, setStartupSceneTheme] = useState<StartupSceneTheme>(() => {
     const stored = localStorage.getItem(STARTUP_SCENE_THEME_KEY);
@@ -404,24 +441,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { startDownload } = useDownloader();
 
   const entries: SearchEntry[] = useMemo(() => {
-    const base: SearchEntry[] = [
-      { id: 'home', label: 'Home', description: 'Launcher overview', route: '/' },
-      { id: 'instances', label: 'Instances', description: 'Create and edit instances', route: '/instances' },
-      { id: 'marketplace', label: 'Marketplace', description: 'Install modpacks, mods, and resource packs', route: '/marketplace' },
-      { id: 'importer', label: 'Importer', description: 'Create instances from Modrinth packs or local archives', route: '/importer' },
-      { id: 'widgets', label: 'Widgets', description: 'Manage per-page widgets and visibility', route: '/widgets' },
-      { id: 'script-studio', label: 'Script Studio', description: 'IDE-style BloomScript editor and runtime', route: '/script-studio' },
-      { id: 'settings', label: 'Settings', description: 'Theme and launcher options', route: '/settings' }
-    ];
-    if (hostServersUnlocked) {
-      base.splice(6, 0, { id: 'host-server', label: 'Host Server', description: 'Run and manage local multiplayer servers', route: '/host-server' });
-    }
-    if (showGamesSection) {
-      base.splice(5, 0, { id: 'games', label: 'Games', description: 'Play Bloom Clicker, Flappy Bird, and Whiteboard', route: '/games' });
-    }
+    const base: SearchEntry[] = [];
+    if (sidebarTabsVisibility.home) base.push({ id: 'home', label: 'Home', description: 'Launcher overview', route: '/' });
+    if (sidebarTabsVisibility.instances) base.push({ id: 'instances', label: 'Instances', description: 'Create and edit instances', route: '/instances' });
+    if (sidebarTabsVisibility.marketplace) base.push({ id: 'marketplace', label: 'Marketplace', description: 'Install modpacks, mods, and resource packs', route: '/marketplace' });
+    if (sidebarTabsVisibility.importer) base.push({ id: 'importer', label: 'Importer', description: 'Create instances from Modrinth packs or local archives', route: '/importer' });
+    if (sidebarTabsVisibility.widgets) base.push({ id: 'widgets', label: 'Widgets', description: 'Manage per-page widgets and visibility', route: '/widgets' });
+    if (sidebarTabsVisibility.cosmetics) base.push({ id: 'cosmetics', label: 'Cosmetic Locker', description: 'Browse, buy, and equip Bloom cosmetics', route: '/cosmetics' });
+    if (sidebarTabsVisibility['script-studio']) base.push({ id: 'script-studio', label: 'Script Studio', description: 'IDE-style BloomScript editor and runtime', route: '/script-studio' });
+    if (showGamesSection && sidebarTabsVisibility.games) base.push({ id: 'games', label: 'Games', description: 'Play Bloom Clicker, Flappy Bird, and Whiteboard', route: '/games' });
+    if (hostServersUnlocked && sidebarTabsVisibility['host-server']) base.push({ id: 'host-server', label: 'Host Server', description: 'Run and manage local multiplayer servers', route: '/host-server' });
+    base.push({ id: 'settings', label: 'Settings', description: 'Theme and launcher options', route: '/settings' });
     if (!authState) base.push({ id: 'signin', label: 'Sign In', description: 'Connect Microsoft account', action: 'signin' });
     return base;
-  }, [authState, hostServersUnlocked, showGamesSection]);
+  }, [authState, hostServersUnlocked, showGamesSection, sidebarTabsVisibility]);
 
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -991,6 +1024,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       location.pathname === '/instances' ? 'Instances' :
       location.pathname === '/marketplace' ? 'Marketplace' :
       location.pathname === '/importer' || location.pathname === '/downloads' ? 'Modpack Importer' :
+      location.pathname === '/cosmetics' ? 'Cosmetic Locker' :
       location.pathname === '/script-studio' ? 'Script Studio' :
       location.pathname === '/host-server' ? 'Host Server' :
       location.pathname === '/settings' ? 'Settings' :
@@ -1201,12 +1235,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const onExtraChange = (event: Event) => {
-      const custom = event as CustomEvent<{ routeTabAnimationsEnabled?: boolean; showGamesSection?: boolean }>;
+      const custom = event as CustomEvent<{ routeTabAnimationsEnabled?: boolean; showGamesSection?: boolean; sidebarTabsVisibility?: SidebarTabsVisibility }>;
       if (typeof custom.detail?.routeTabAnimationsEnabled === 'boolean') {
         setRouteTabAnimationsEnabled(custom.detail.routeTabAnimationsEnabled);
       }
       if (typeof custom.detail?.showGamesSection === 'boolean') {
         setShowGamesSection(custom.detail.showGamesSection);
+      }
+      if (custom.detail?.sidebarTabsVisibility) {
+        setSidebarTabsVisibility(custom.detail.sidebarTabsVisibility);
       }
     };
     window.addEventListener('bloom-extra-change', onExtraChange as EventListener);
@@ -1257,6 +1294,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
       navigate('/settings', { replace: true });
     }
   }, [showGamesSection, location.pathname, navigate]);
+
+  useEffect(() => {
+    const hiddenRoute =
+      (location.pathname === '/chat' && !sidebarTabsVisibility.chat) ||
+      (location.pathname === '/cosmetics' && !sidebarTabsVisibility.cosmetics) ||
+      (location.pathname === '/script-studio' && !sidebarTabsVisibility['script-studio']) ||
+      (location.pathname === '/host-server' && (!hostServersUnlocked || !sidebarTabsVisibility['host-server'])) ||
+      (location.pathname === '/games' && (!showGamesSection || !sidebarTabsVisibility.games));
+    if (hiddenRoute) {
+      navigate('/settings', { replace: true });
+    }
+  }, [location.pathname, navigate, hostServersUnlocked, showGamesSection, sidebarTabsVisibility]);
 
   useEffect(() => {
     if (!authState || !onboardingCompleted) {
@@ -1765,6 +1814,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
     }),
     setUiScale: setUiScaleFromConsole,
     setReducedMotion: setReducedMotionFromConsole,
+    openCosmeticsModMenu: () => {
+      requestCosmeticsModMenuOpen();
+      navigate('/cosmetics');
+    },
     listInstances: async () => {
       await loadInstances();
       return TauriApi.instancesList();
@@ -1983,6 +2036,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       sidebarPosition={sidebarPosition}
       surfaceOpacity={taskbarSurfaceOpacity}
       showHostServer={hostServersUnlocked}
+      sidebarTabsVisibility={sidebarTabsVisibility}
       toggleTheme={() => {}}
       onQuickLaunch={runQuickLaunchLastInstance}
       onOpenLogs={runOpenLogs}

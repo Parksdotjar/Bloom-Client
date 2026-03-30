@@ -16,6 +16,7 @@ const Help = lazy(() => import('./pages/Help').then((module) => ({ default: modu
 const ScriptStudio = lazy(() => import('./pages/ScriptStudio').then((module) => ({ default: module.ScriptStudio })));
 const HostServer = lazy(() => import('./pages/HostServer').then((module) => ({ default: module.HostServer })));
 const Chat = lazy(() => import('./pages/Chat').then((module) => ({ default: module.Chat })));
+const CosmeticLocker = lazy(() => import('./pages/CosmeticLocker').then((module) => ({ default: module.CosmeticLocker })));
 
 function App() {
   const [hostServersUnlocked, setHostServersUnlocked] = useState<boolean>(() => readHostServersUnlocked());
@@ -61,6 +62,7 @@ function App() {
             <Route path="/downloads" element={<Navigate to="/importer" replace />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/widgets" element={<Widgets />} />
+            <Route path="/cosmetics" element={<CosmeticLocker />} />
             <Route path="/games" element={<Games />} />
             <Route path="/help" element={<Help />} />
             <Route path="/chat" element={<Chat />} />
