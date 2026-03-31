@@ -17,7 +17,7 @@ type CapeUv = {
 };
 
 type CapeRenderMode = 'atlas' | 'full-image';
-const CAPE_VISUAL_RATIO = 2.0; // 2 vertical : 1 horizontal
+const CAPE_VISUAL_RATIO = 16 / 10; // vanilla cape face ratio
 
 function resolveCapeUv(width: number, height: number): CapeUv {
   const template = resolveMinecraftCapeTemplate(width, height);

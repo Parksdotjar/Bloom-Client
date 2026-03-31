@@ -13,11 +13,12 @@ export type CapeTextureAsset = {
   generatedAt: number;
 };
 
-const CAPE_CACHE_NAME = 'bloom-cape-textures-v2';
+const CAPE_CACHE_NAME = 'bloom-cape-textures-v3';
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47];
+const CAPE_CACHE_VERSION = 'v3';
 
 function keyFor(slug: string, textureUrl: string) {
-  return `${slug.trim().toLowerCase()}::${textureUrl.trim()}`;
+  return `${CAPE_CACHE_VERSION}::${slug.trim().toLowerCase()}::${textureUrl.trim()}`;
 }
 
 function logPrefix(slug: string) {
@@ -56,6 +57,11 @@ function createCanvas(width: number, height: number) {
   canvas.width = width;
   canvas.height = height;
   return canvas;
+}
+
+function normalizeTargetWidth(width: number, height: number) {
+  const base = Math.max(width, height * 2);
+  return Math.max(64, Math.min(4096, Math.ceil(base / 64) * 64));
 }
 
 function drawContain(
@@ -117,50 +123,55 @@ async function normalizeCapeBlob(slug: string, blob: Blob) {
     if (width <= 0 || height <= 0) {
       throw new Error('invalid_dimensions');
     }
+    // Canonical Bloom cape atlas: 2:1 (e.g. 64x32, 2048x1024, 4096x2048).
     if (width === height * 2) {
-      const canvas = createCanvas(width, width);
+      console.debug(`${logPrefix(slug)} atlas_ok size=${width}x${height}`);
+      return {
+        blob,
+        width,
+        height,
+        normalized: false
+      };
+    }
+
+    // Recover older square atlases by taking the top half.
+    if (width === height) {
+      const canvas = createCanvas(width, Math.floor(width / 2));
       const ctx = canvas.getContext('2d', { alpha: true });
-      if (!ctx) throw new Error('cape_normalize_context_unavailable');
-      ctx.clearRect(0, 0, width, width);
+      if (!ctx) throw new Error('cape_square_to_2x1_context_unavailable');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(bitmap, 0, 0, width, height, 0, 0, width, height);
+      ctx.drawImage(bitmap, 0, 0, width, canvas.height, 0, 0, width, canvas.height);
       const normalizedBlob = await canvasToBlob(canvas);
-      console.debug(`${logPrefix(slug)} normalized_legacy_atlas from=${width}x${height} to=${width}x${width}`);
+      console.debug(`${logPrefix(slug)} normalized_square_atlas from=${width}x${height} to=${canvas.width}x${canvas.height}`);
       return {
         blob: normalizedBlob,
-        width,
-        height: width,
+        width: canvas.width,
+        height: canvas.height,
         normalized: true
       };
     }
 
-    if (width !== height) {
-      const targetSize = Math.max(64, Math.min(4096, Math.ceil(Math.max(width, height) / 64) * 64));
-      const canvas = createCanvas(targetSize, targetSize);
-      const ctx = canvas.getContext('2d', { alpha: true });
-      if (!ctx) throw new Error('cape_square_context_unavailable');
-      ctx.clearRect(0, 0, targetSize, targetSize);
-      ctx.imageSmoothingEnabled = false;
+    // Non-atlas face art: build a proper 2:1 cape atlas and map art to front/back.
+    const targetWidth = normalizeTargetWidth(width, height);
+    const targetHeight = Math.floor(targetWidth / 2);
+    const canvas = createCanvas(targetWidth, targetHeight);
+    const ctx = canvas.getContext('2d', { alpha: true });
+    if (!ctx) throw new Error('cape_2x1_context_unavailable');
+    ctx.clearRect(0, 0, targetWidth, targetHeight);
+    ctx.imageSmoothingEnabled = false;
 
-      const template = resolveMinecraftCapeTemplate(targetSize, targetSize);
-      drawContain(ctx, bitmap, width, height, template.front);
-      drawContain(ctx, bitmap, width, height, template.back);
+    const template = resolveMinecraftCapeTemplate(targetWidth, targetHeight);
+    drawContain(ctx, bitmap, width, height, template.front);
+    drawContain(ctx, bitmap, width, height, template.back);
 
-      const squareBlob = await canvasToBlob(canvas);
-      console.debug(`${logPrefix(slug)} normalized_face_art from=${width}x${height} to=${targetSize}x${targetSize}`);
-      return {
-        blob: squareBlob,
-        width: targetSize,
-        height: targetSize,
-        normalized: true
-      };
-    }
-
+    const normalizedBlob = await canvasToBlob(canvas);
+    console.debug(`${logPrefix(slug)} normalized_face_art from=${width}x${height} to=${targetWidth}x${targetHeight}`);
     return {
-      blob,
-      width,
-      height,
-      normalized: false
+      blob: normalizedBlob,
+      width: targetWidth,
+      height: targetHeight,
+      normalized: true
     };
   } finally {
     bitmap.close();

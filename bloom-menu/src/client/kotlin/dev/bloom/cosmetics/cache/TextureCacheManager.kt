@@ -135,7 +135,7 @@ class TextureCacheManager(
                 image.close()
                 return null
             }
-            if (width != height) {
+            if (width != height * 2) {
                 BloomLog.warn(
                     "Texture aspect ratio unexpected key={} kind={} size={}x{} url={}",
                     cacheKey,
@@ -171,37 +171,63 @@ class TextureCacheManager(
         return runCatching {
             val source = ImageIO.read(ByteArrayInputStream(pngBytes)) ?: return pngBytes
             if (source.width > 0 && source.width == source.height * 2) {
-                val normalized = java.awt.image.BufferedImage(source.width, source.width, java.awt.image.BufferedImage.TYPE_INT_ARGB)
-                val graphics = normalized.createGraphics()
+                BloomLog.debug(
+                    "Texture atlas ok key={} size={}x{} url={}",
+                    cacheKey,
+                    source.width,
+                    source.height,
+                    sourceUrl
+                )
+                pngBytes
+            } else if (source.width == source.height) {
+                val targetWidth = source.width.coerceAtLeast(64)
+                val targetHeight = (targetWidth / 2).coerceAtLeast(32)
+                val atlas = java.awt.image.BufferedImage(targetWidth, targetHeight, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+                val graphics = atlas.createGraphics()
                 try {
-                    graphics.drawImage(source, 0, 0, null)
+                    graphics.composite = java.awt.AlphaComposite.Src
+                    graphics.color = java.awt.Color(0, 0, 0, 0)
+                    graphics.fillRect(0, 0, targetWidth, targetHeight)
+                    graphics.drawImage(
+                        source,
+                        0,
+                        0,
+                        targetWidth,
+                        targetHeight,
+                        0,
+                        0,
+                        source.width,
+                        targetHeight.coerceAtMost(source.height),
+                        null
+                    )
                 } finally {
                     graphics.dispose()
                 }
 
                 val out = ByteArrayOutputStream()
-                ImageIO.write(normalized, "png", out)
+                ImageIO.write(atlas, "png", out)
                 BloomLog.debug(
-                    "Texture normalized legacy cape key={} from={}x{} to={}x{} url={}",
+                    "Texture normalized square atlas key={} from={}x{} to={}x{} url={}",
                     cacheKey,
                     source.width,
                     source.height,
-                    normalized.width,
-                    normalized.height,
+                    atlas.width,
+                    atlas.height,
                     sourceUrl
                 )
                 out.toByteArray()
-            } else if (source.width != source.height) {
-                val targetSize = min(4096, max(64, ((max(source.width, source.height) + 63) / 64) * 64))
-                val atlas = java.awt.image.BufferedImage(targetSize, targetSize, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+            } else {
+                val targetWidth = min(4096, max(64, ((max(source.width, source.height * 2) + 63) / 64) * 64))
+                val targetHeight = (targetWidth / 2).coerceAtLeast(32)
+                val atlas = java.awt.image.BufferedImage(targetWidth, targetHeight, java.awt.image.BufferedImage.TYPE_INT_ARGB)
                 val graphics = atlas.createGraphics()
                 try {
                     graphics.composite = java.awt.AlphaComposite.Src
                     graphics.color = java.awt.Color(0, 0, 0, 0)
-                    graphics.fillRect(0, 0, targetSize, targetSize)
+                    graphics.fillRect(0, 0, targetWidth, targetHeight)
 
-                    val front = resolveCapeRegion(targetSize, "front")
-                    val back = resolveCapeRegion(targetSize, "back")
+                    val front = resolveCapeRegion(targetWidth, targetHeight, "front")
+                    val back = resolveCapeRegion(targetWidth, targetHeight, "back")
                     drawContain(graphics, source, front)
                     drawContain(graphics, source, back)
                 } finally {
@@ -220,8 +246,6 @@ class TextureCacheManager(
                     sourceUrl
                 )
                 out.toByteArray()
-            } else {
-                pngBytes
             }
         }.onFailure {
             BloomLog.warn("Texture legacy normalization skipped key={} url={} reason={}", cacheKey, sourceUrl, it.toString())
@@ -230,15 +254,19 @@ class TextureCacheManager(
 
     private data class CapeRegion(val x: Int, val y: Int, val width: Int, val height: Int)
 
-    private fun resolveCapeRegion(size: Int, face: String): CapeRegion {
-        val unit = size.toDouble() / 64.0
-        val width = (10.0 * unit).roundToInt().coerceAtLeast(1)
-        val height = (16.0 * unit).roundToInt().coerceAtLeast(1)
-        val depth = (1.0 * unit).roundToInt().coerceAtLeast(1)
+    private fun resolveCapeRegion(textureWidth: Int, textureHeight: Int, face: String): CapeRegion {
+        val legacyAtlas = textureWidth == textureHeight * 2
+        val textureBaseHeight = if (legacyAtlas) 32.0 else 64.0
+        val unitX = textureWidth.toDouble() / 64.0
+        val unitY = textureHeight.toDouble() / textureBaseHeight
+        val width = (10.0 * unitX).roundToInt().coerceAtLeast(1)
+        val height = (16.0 * unitY).roundToInt().coerceAtLeast(1)
+        val depthX = (1.0 * unitX).roundToInt().coerceAtLeast(1)
+        val depthY = (1.0 * unitY).roundToInt().coerceAtLeast(1)
         return when (face) {
-            "front" -> CapeRegion(depth, depth, width, height)
-            "back" -> CapeRegion(width + (depth * 2), depth, width, height)
-            else -> CapeRegion(depth, depth, width, height)
+            "front" -> CapeRegion(depthX, depthY, width, height)
+            "back" -> CapeRegion(width + (depthX * 2), depthY, width, height)
+            else -> CapeRegion(depthX, depthY, width, height)
         }
     }
 
@@ -278,7 +306,7 @@ class TextureCacheManager(
 
     private fun cacheKey(asset: CosmeticAsset): String {
         val hash = asset.textureHash?.trim().orEmpty()
-        return "${asset.id}|${asset.version}|$hash|${asset.textureUrl.trim()}"
+        return "v2|${asset.id}|${asset.version}|$hash|${asset.textureUrl.trim()}"
     }
 
     private fun isPng(bytes: ByteArray): Boolean {

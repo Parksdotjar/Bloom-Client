@@ -32,6 +32,7 @@ type CropBox = {
 const EXPORT_PRICE_BB = 800;
 const WATERMARK_TEXT = 'Preview Only';
 const ACCEPTED_FILE_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+const VISIBLE_FACE_HEIGHT_TO_WIDTH_RATIO = 2;
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -51,6 +52,10 @@ function formatBytes(bytes: number | null) {
 
 function sanitizeFileName(name: string) {
   return name.replace(/[^\w.-]+/g, '_');
+}
+
+function getCapeAtlasResolutionLabel(exportWidth: number) {
+  return `${exportWidth}x${Math.floor(exportWidth / 2)}`;
 }
 
 async function blobToBytes(blob: Blob) {
@@ -124,10 +129,10 @@ export function CustomCape() {
     const maxWidth = width * 0.86;
     const maxHeight = height * 0.8;
     let frameWidth = maxWidth;
-    let frameHeight = frameWidth * 2;
+    let frameHeight = frameWidth * VISIBLE_FACE_HEIGHT_TO_WIDTH_RATIO;
     if (frameHeight > maxHeight) {
       frameHeight = maxHeight;
-      frameWidth = frameHeight / 2;
+      frameWidth = frameHeight / VISIBLE_FACE_HEIGHT_TO_WIDTH_RATIO;
     }
     return {
       x: (width - frameWidth) / 2,
@@ -582,7 +587,7 @@ export function CustomCape() {
         </div>
         <div className="flex items-center justify-center gap-2">
           <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/80">
-            Visible Face Ratio: 2:1 Vertical
+            Visible Face Ratio (H:W): 2:1
           </div>
         </div>
         <div className="lg:justify-self-end">
@@ -631,7 +636,7 @@ export function CustomCape() {
           <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
             <div className="flex items-center justify-between gap-3">
               <p className="text-[10px] uppercase tracking-[0.12em] font-extrabold text-white/55">Export Resolution</p>
-              <span className="text-xs font-extrabold text-white">{exportWidth}x{exportWidth}</span>
+              <span className="text-xs font-extrabold text-white">{getCapeAtlasResolutionLabel(exportWidth)}</span>
             </div>
             <input
               type="range"
@@ -654,7 +659,7 @@ export function CustomCape() {
                     exportWidth === preset ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03] text-white/72'
                   )}
                 >
-                  {preset}
+                  {getCapeAtlasResolutionLabel(preset)}
                 </button>
               ))}
             </div>
@@ -696,7 +701,7 @@ export function CustomCape() {
             <div className="flex items-center gap-2">
               {cropPixelStats && (
                 <span className="text-[11px] text-white/58">
-                  Crop: {cropPixelStats.width}x{cropPixelStats.height}px
+                  Crop (W x H): {cropPixelStats.width}x{cropPixelStats.height}px | Locked Ratio (H:W): 2:1
                 </span>
               )}
               <button

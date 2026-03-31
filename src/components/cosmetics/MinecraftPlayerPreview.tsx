@@ -46,6 +46,20 @@ function normalizeUuid(value: string | null) {
   return clean.toLowerCase();
 }
 
+async function loadImageDimensions(url: string): Promise<{ width: number; height: number }> {
+  const image = new Image();
+  image.decoding = 'async';
+  image.src = url;
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error('image_dimensions_load_failed'));
+  });
+  return {
+    width: Math.max(1, image.naturalWidth || image.width || 64),
+    height: Math.max(1, image.naturalHeight || image.height || 32)
+  };
+}
+
 function applyMinecraftCapeUvs(viewer: SkinViewer, textureWidth = 64, textureHeight = 64) {
   const capeMesh = (viewer.playerObject as { cape?: { cape?: { geometry?: { attributes?: { uv?: BufferAttribute } } } } }).cape?.cape;
   const uv = capeMesh?.geometry?.attributes?.uv;
@@ -53,8 +67,6 @@ function applyMinecraftCapeUvs(viewer: SkinViewer, textureWidth = 64, textureHei
     uv.set(buildMinecraftCapeUvData(textureWidth, textureHeight));
     uv.needsUpdate = true;
   }
-  const scaleTarget = (capeMesh as unknown as { scale?: { set?: (x: number, y: number, z: number) => void } })?.scale;
-  scaleTarget?.set?.(1, 1.25, 1);
 }
 
 export function MinecraftPlayerPreview({
@@ -117,18 +129,26 @@ export function MinecraftPlayerPreview({
     setAsset(null);
     setCapeFailed(false);
     if (capeTextureObjectUrl?.trim()) {
-      setAsset({
-        cacheKey: `${capeSlug}::inline`,
-        slug: capeSlug,
-        textureUrl: capeTextureObjectUrl,
-        objectUrl: capeTextureObjectUrl,
-        width: 64,
-        height: 64,
-        bytes: 0,
-        fromDiskCache: false,
-        generatedAt: Date.now(),
-        viaDirectUrl: true
-      });
+      void loadImageDimensions(capeTextureObjectUrl)
+        .then(({ width, height }) => {
+          if (cancelled) return;
+          setAsset({
+            cacheKey: `${capeSlug}::inline`,
+            slug: capeSlug,
+            textureUrl: capeTextureObjectUrl,
+            objectUrl: capeTextureObjectUrl,
+            width,
+            height,
+            bytes: 0,
+            fromDiskCache: false,
+            generatedAt: Date.now(),
+            viaDirectUrl: true
+          });
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setCapeFailed(true);
+        });
       return () => {
         cancelled = true;
       };

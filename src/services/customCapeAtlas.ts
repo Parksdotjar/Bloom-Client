@@ -96,24 +96,19 @@ function drawEdgeStrip(
   ctx.drawImage(source, sourceX, sourceY, sourceWidth, sourceHeight, target.x, target.y, target.width, target.height);
 }
 
-function drawImageContain(
+function drawImageFill(
   ctx: CanvasRenderingContext2D,
   source: CanvasImageSource,
   sourceWidth: number,
   sourceHeight: number,
   target: AtlasRegion
 ) {
-  const ratio = Math.min(target.width / sourceWidth, target.height / sourceHeight);
-  const drawWidth = Math.max(1, Math.round(sourceWidth * ratio));
-  const drawHeight = Math.max(1, Math.round(sourceHeight * ratio));
-  const drawX = Math.round(target.x + (target.width - drawWidth) / 2);
-  const drawY = Math.round(target.y + (target.height - drawHeight) / 2);
-  ctx.drawImage(source, 0, 0, sourceWidth, sourceHeight, drawX, drawY, drawWidth, drawHeight);
+  ctx.drawImage(source, 0, 0, sourceWidth, sourceHeight, target.x, target.y, target.width, target.height);
 }
 
 export async function generateCustomCapeAtlas(input: GenerateCustomCapeAtlasInput): Promise<GeneratedCapeAtlas> {
   const exportWidth = normalizeExportWidth(input.exportWidth);
-  const exportHeight = exportWidth;
+  const exportHeight = Math.floor(exportWidth / 2);
   const crop = clampCrop(input.crop);
   const template = resolveMinecraftCapeTemplate(exportWidth, exportHeight);
 
@@ -141,7 +136,8 @@ export async function generateCustomCapeAtlas(input: GenerateCustomCapeAtlasInpu
   croppedSourceCtx.clearRect(0, 0, sourceW, sourceH);
   croppedSourceCtx.imageSmoothingEnabled = false;
   croppedSourceCtx.drawImage(input.image, sourceX, sourceY, sourceW, sourceH, 0, 0, sourceW, sourceH);
-  drawImageContain(faceCtx, croppedSourceCanvas, sourceW, sourceH, {
+  // Fill the visible cape face exactly so crop framing matches final rendered cape area.
+  drawImageFill(faceCtx, croppedSourceCanvas, sourceW, sourceH, {
     x: 0,
     y: 0,
     width: visibleFaceCanvas.width,
