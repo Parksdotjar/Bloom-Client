@@ -99,6 +99,18 @@ export type PartnerGroupRecord = {
   updated_at: string;
 };
 
+export type RarityPresetRecord = {
+  id: string;
+  rarity: string;
+  rarity_label: string | null;
+  color_start: string | null;
+  color_end: string | null;
+  glow: string | null;
+  sort_order: number;
+  is_active: boolean;
+  updated_at: string;
+};
+
 export type PendingCurrencyPurchaseRecord = {
   id: string;
   user_id: string;
@@ -124,6 +136,23 @@ export type UpdateCapeInput = {
   name: string;
   description: string | null;
   partner_group: string | null;
+  texture_url: string;
+  preview_url: string | null;
+  price_bb: number;
+  rarity: string;
+  rarity_label: string | null;
+  rarity_color_start: string | null;
+  rarity_color_end: string | null;
+  rarity_glow: string | null;
+  sort_order: number;
+  is_active: boolean;
+  is_featured: boolean;
+};
+
+export type CreateCapeListingInput = {
+  slug: string;
+  name: string;
+  description: string | null;
   texture_url: string;
   preview_url: string | null;
   price_bb: number;
@@ -226,11 +255,12 @@ export async function ensureCommerceIdentity(mcUuid: string, username: string, d
 
 export async function loadShopCapes(search: string, rarity: string | null) {
   let query = supabase
-    .from('commerce_capes')
+    .from('v_commerce_shop_capes_ordered')
     .select(
       'id,slug,name,description,partner_group,texture_url,preview_url,price_bb,rarity,rarity_label,rarity_color_start,rarity_color_end,rarity_glow,sort_order,is_active,is_featured,created_at,updated_at'
     )
     .eq('is_active', true)
+    .order('rarity_rank', { ascending: true })
     .order('is_featured', { ascending: false })
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: false });
@@ -351,6 +381,43 @@ export async function updateCapeListing(capeId: string, patch: UpdateCapeInput) 
   return data as CapeRecord;
 }
 
+export async function createCapeListing(input: CreateCapeListingInput) {
+  const { data, error } = await supabase.rpc('create_cape_listing', {
+    p_slug: input.slug,
+    p_name: input.name,
+    p_description: input.description,
+    p_texture_url: input.texture_url,
+    p_preview_url: input.preview_url,
+    p_price_bb: input.price_bb,
+    p_rarity: input.rarity,
+    p_rarity_label: input.rarity_label,
+    p_rarity_color_start: input.rarity_color_start,
+    p_rarity_color_end: input.rarity_color_end,
+    p_rarity_glow: input.rarity_glow,
+    p_sort_order: input.sort_order,
+    p_is_active: input.is_active,
+    p_is_featured: input.is_featured
+  });
+  if (error) throw error;
+  if (Array.isArray(data)) {
+    return (data[0] ?? null) as CapeRecord | null;
+  }
+  return (data as CapeRecord | null) ?? null;
+}
+
+export async function setCapePartnerGroup(capeId: string, partnerGroup: string | null) {
+  const { data, error } = await supabase
+    .from('commerce_capes')
+    .update({ partner_group: partnerGroup })
+    .eq('id', capeId)
+    .select(
+      'id,slug,name,description,partner_group,texture_url,preview_url,price_bb,rarity,rarity_label,rarity_color_start,rarity_color_end,rarity_glow,sort_order,is_active,is_featured,created_at,updated_at'
+    )
+    .single();
+  if (error) throw error;
+  return data as CapeRecord;
+}
+
 export async function loadPartnerGroups() {
   const { data, error } = await supabase
     .from('commerce_partner_groups')
@@ -360,6 +427,50 @@ export async function loadPartnerGroups() {
     .order('name', { ascending: true });
   if (error) throw error;
   return (data ?? []) as PartnerGroupRecord[];
+}
+
+export async function loadRarityPresets() {
+  const { data, error } = await supabase
+    .from('commerce_rarity_presets')
+    .select('id,rarity,rarity_label,color_start,color_end,glow,sort_order,is_active,updated_at')
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true })
+    .order('rarity', { ascending: true });
+  if (error) {
+    const code = (error as { code?: string }).code;
+    if (code === '42P01') return [];
+    throw error;
+  }
+  return (data ?? []) as RarityPresetRecord[];
+}
+
+export async function upsertRarityPreset(input: {
+  rarity: string;
+  rarity_label: string | null;
+  color_start: string | null;
+  color_end: string | null;
+  glow: string | null;
+  sort_order: number;
+  is_active?: boolean;
+}) {
+  const { data, error } = await supabase
+    .from('commerce_rarity_presets')
+    .upsert(
+      {
+        rarity: input.rarity.trim().toLowerCase(),
+        rarity_label: input.rarity_label,
+        color_start: input.color_start,
+        color_end: input.color_end,
+        glow: input.glow,
+        sort_order: input.sort_order,
+        is_active: input.is_active ?? true
+      },
+      { onConflict: 'rarity' }
+    )
+    .select('id,rarity,rarity_label,color_start,color_end,glow,sort_order,is_active,updated_at')
+    .single();
+  if (error) throw error;
+  return data as RarityPresetRecord;
 }
 
 export async function createPartnerGroup(name: string) {
@@ -482,6 +593,62 @@ export async function finalizeCustomCapeExport(designId: string, finalAssetPath:
   return rows[0] ?? null;
 }
 
+export async function deleteOwnedCustomCape(capeId: string) {
+  const userId = await getSupabaseUserId();
+  if (!userId) throw new Error('missing_user_session');
+
+  const { data: entitlement, error: entitlementError } = await supabase
+    .from('commerce_cape_entitlements')
+    .select('id,source')
+    .eq('user_id', userId)
+    .eq('cape_id', capeId)
+    .maybeSingle();
+  if (entitlementError) throw entitlementError;
+  if (!entitlement) throw new Error('custom_cape_not_owned');
+  if (!String(entitlement.source ?? '').toLowerCase().includes('custom')) {
+    throw new Error('only_custom_capes_can_be_deleted');
+  }
+
+  const { data: loadout, error: loadoutError } = await supabase
+    .from('commerce_cape_loadout')
+    .select('equipped_cape_id')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (loadoutError) throw loadoutError;
+  if (loadout?.equipped_cape_id === capeId) {
+    await setCapeLoadout(null);
+  }
+
+  const { error: entitlementDeleteError } = await supabase
+    .from('commerce_cape_entitlements')
+    .delete()
+    .eq('user_id', userId)
+    .eq('cape_id', capeId);
+  if (entitlementDeleteError) throw entitlementDeleteError;
+
+  const { error: draftUpdateError } = await supabase
+    .from('commerce_custom_cape_designs')
+    .update({
+      purchased: false,
+      generated_cape_id: null,
+      final_asset_path: null,
+      final_asset_url: null,
+      updated_at: new Date().toISOString()
+    })
+    .eq('user_id', userId)
+    .eq('generated_cape_id', capeId);
+  if (draftUpdateError) throw draftUpdateError;
+
+  const { error: capeDeleteError } = await supabase
+    .from('commerce_capes')
+    .delete()
+    .eq('id', capeId)
+    .eq('created_by', userId);
+  if (capeDeleteError) throw capeDeleteError;
+
+  return true;
+}
+
 export function getCustomCapePublicUrl(path: string) {
   const { data } = supabase.storage.from('custom-capes').getPublicUrl(path);
   return data.publicUrl;
@@ -551,6 +718,17 @@ export function subscribePartnerGroups(onChange: () => void) {
   const channel = supabase
     .channel('commerce-partner-groups')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'commerce_partner_groups' }, () => onChange())
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
+}
+
+export function subscribeRarityPresets(onChange: () => void) {
+  const channel = supabase
+    .channel('commerce-rarity-presets')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'commerce_rarity_presets' }, () => onChange())
     .subscribe();
 
   return () => {

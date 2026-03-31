@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { CircleHelp, Code2, FolderUp, Gamepad2, LayoutDashboard, Layers3, LogIn, MessageSquareMore, Plus, Server, Settings, Shirt, Sparkles, User } from 'lucide-react';
+import { CircleHelp, Code2, FolderUp, Gamepad2, LayoutDashboard, Layers3, LogIn, MessageSquareMore, Newspaper, Plus, Server, Settings, Shirt, Sparkles, User } from 'lucide-react';
 import { animate, remove, set } from 'animejs';
 import { clsx } from 'clsx';
 import logo from '../assets/logo.png';
@@ -27,7 +27,7 @@ type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'o
 type SidebarMode = 'rail' | 'classic' | 'expanded';
 type SidebarPosition = 'left' | 'right' | 'top' | 'bottom';
 type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
-type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help';
+type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'news' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help';
 type SidebarTabsVisibility = Record<SidebarTabId, boolean>;
 
 const EXTRA_CHANGE_EVENT = 'bloom-extra-change';
@@ -49,6 +49,7 @@ const SIDEBAR_TABS_VISIBILITY_DEFAULTS: SidebarTabsVisibility = {
   widgets: true,
   cosmetics: true,
   'custom-cape': true,
+  news: true,
   chat: false,
   'script-studio': false,
   'host-server': false,
@@ -69,6 +70,7 @@ function readSidebarTabsVisibility(): SidebarTabsVisibility {
       widgets: typeof parsed.widgets === 'boolean' ? parsed.widgets : SIDEBAR_TABS_VISIBILITY_DEFAULTS.widgets,
       cosmetics: typeof parsed.cosmetics === 'boolean' ? parsed.cosmetics : SIDEBAR_TABS_VISIBILITY_DEFAULTS.cosmetics,
       'custom-cape': typeof parsed['custom-cape'] === 'boolean' ? parsed['custom-cape'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['custom-cape'],
+      news: typeof parsed.news === 'boolean' ? parsed.news : SIDEBAR_TABS_VISIBILITY_DEFAULTS.news,
       chat: typeof parsed.chat === 'boolean' ? parsed.chat : SIDEBAR_TABS_VISIBILITY_DEFAULTS.chat,
       'script-studio': typeof parsed['script-studio'] === 'boolean' ? parsed['script-studio'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['script-studio'],
       'host-server': typeof parsed['host-server'] === 'boolean' ? parsed['host-server'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['host-server'],
@@ -92,6 +94,24 @@ interface SidebarProps {
   onQuickLaunch?: () => void;
   onOpenLogs?: () => void;
   onRefreshMods?: () => void;
+}
+
+function CapeTabIcon({ size = 16, strokeWidth = 2 }: { size?: number; strokeWidth?: number }) {
+  const w = size;
+  const h = size;
+  const capeH = Math.max(10, Math.round(size * 0.86));
+  const capeW = Math.max(5, Math.round(capeH / 2));
+  const x = Math.round((w - capeW) / 2);
+  const y = Math.round((h - capeH) / 2);
+  const edgeW = Math.max(1, Math.round(capeW * 0.16));
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect x={x + 0.5} y={y + 1} width={capeW - 1} height={capeH - 2} fill="currentColor" opacity="0.22" />
+      <rect x={x + capeW - edgeW + 0.5} y={y + 2} width={edgeW} height={capeH - 4} fill="currentColor" opacity="0.38" />
+      <rect x={x + 0.5} y={y + 0.5} width={capeW - 1} height={capeH - 1} rx="0" stroke="currentColor" strokeWidth={strokeWidth * 0.55} />
+      <line x1={x + 1} y1={y + 1.5} x2={x + capeW - 1} y2={y + 1.5} stroke="currentColor" strokeWidth={strokeWidth * 0.45} opacity="0.9" />
+    </svg>
+  );
 }
 
 export function SidebarRail(props: SidebarProps) {
@@ -160,7 +180,8 @@ export function SidebarRail(props: SidebarProps) {
     ...(activeTabVisibility.importer ? [{ icon: FolderUp, path: '/importer', label: 'Importer' }] : []),
     ...(activeTabVisibility.widgets ? [{ icon: LayoutDashboard, path: '/widgets', label: 'Widgets' }] : []),
     ...(activeTabVisibility.cosmetics ? [{ icon: Shirt, path: '/cosmetics', label: 'Cosmetics' }] : []),
-    ...(activeTabVisibility['custom-cape'] ? [{ icon: Shirt, path: '/custom-cape', label: 'Custom Cape' }] : []),
+    ...(activeTabVisibility['custom-cape'] ? [{ icon: CapeTabIcon, path: '/custom-cape', label: 'Custom Cape' }] : []),
+    ...(activeTabVisibility.news ? [{ icon: Newspaper, path: '/news', label: 'Updates' }] : []),
     ...(activeTabVisibility.chat ? [{ icon: MessageSquareMore, path: '/chat', label: 'Chat' }] : []),
     ...(activeTabVisibility['script-studio'] ? [{ icon: Code2, path: '/script-studio', label: 'Studio' }] : []),
     ...((showHostServer && activeTabVisibility['host-server']) ? [{ icon: Server, path: '/host-server', label: 'Host' }] : []),

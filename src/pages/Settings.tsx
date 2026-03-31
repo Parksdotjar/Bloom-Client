@@ -87,7 +87,7 @@ type AppearancePresetExportFileV1 = {
 
 type SettingsTab = 'general' | 'appearance' | 'keybinds' | 'widgets' | 'updates' | 'extra';
 type AppearanceSection = 'animation' | 'background' | 'sidebar' | 'style' | 'presets';
-type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help';
+type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'news' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help';
 type SidebarTabsVisibility = Record<SidebarTabId, boolean>;
 
 const APPEARANCE_SECTIONS: { id: AppearanceSection; label: string; description: string }[] = [
@@ -106,6 +106,7 @@ const SIDEBAR_TABS_VISIBILITY_DEFAULTS: SidebarTabsVisibility = {
   widgets: true,
   cosmetics: true,
   'custom-cape': true,
+  news: true,
   chat: false,
   'script-studio': false,
   'host-server': false,
@@ -391,6 +392,7 @@ function readSidebarTabsVisibility(): SidebarTabsVisibility {
       widgets: typeof parsed.widgets === 'boolean' ? parsed.widgets : SIDEBAR_TABS_VISIBILITY_DEFAULTS.widgets,
       cosmetics: typeof parsed.cosmetics === 'boolean' ? parsed.cosmetics : SIDEBAR_TABS_VISIBILITY_DEFAULTS.cosmetics,
       'custom-cape': typeof parsed['custom-cape'] === 'boolean' ? parsed['custom-cape'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['custom-cape'],
+      news: typeof parsed.news === 'boolean' ? parsed.news : SIDEBAR_TABS_VISIBILITY_DEFAULTS.news,
       chat: typeof parsed.chat === 'boolean' ? parsed.chat : SIDEBAR_TABS_VISIBILITY_DEFAULTS.chat,
       'script-studio': typeof parsed['script-studio'] === 'boolean' ? parsed['script-studio'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['script-studio'],
       'host-server': typeof parsed['host-server'] === 'boolean' ? parsed['host-server'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['host-server'],
@@ -2210,6 +2212,7 @@ export function Settings() {
                 { id: 'widgets', label: 'Widgets' },
                 { id: 'cosmetics', label: 'Cosmetic Locker' },
                 { id: 'custom-cape', label: 'Custom Cape' },
+                { id: 'news', label: 'Updates' },
                 { id: 'chat', label: 'Chat' },
                 { id: 'script-studio', label: 'Script Studio (IDE)' },
                 { id: 'host-server', label: 'Host Server' },

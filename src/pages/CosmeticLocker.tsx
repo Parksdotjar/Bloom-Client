@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { clsx } from 'clsx';
-import { AlertTriangle, Coins, Search } from 'lucide-react';
+import { AlertTriangle, Coins, Search, Trash2 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { COSMETICS_MOD_MENU_EVENT, consumeCosmeticsModMenuRequest } from '../constants/cosmeticsModMenu';
 import { CapeMeshRenderer } from '../components/cosmetics/CapeMeshRenderer';
 import { MinecraftPlayerPreview } from '../components/cosmetics/MinecraftPlayerPreview';
 import {
   createPartnerGroup,
+  deleteOwnedCustomCape,
   createPendingCurrencyPurchase,
   ensureCommerceIdentity,
   getSupabaseUserId,
@@ -15,6 +16,7 @@ import {
   loadCurrentLoadout,
   loadOwnedCapes,
   loadPartnerGroups,
+  loadRarityPresets,
   loadPreviewAppearance,
   loadShopCapes,
   loadWallet,
@@ -22,10 +24,12 @@ import {
   purchaseCape,
   setCapeLoadout,
   subscribePartnerGroups,
+  subscribeRarityPresets,
   subscribePreviewAppearance,
   subscribeOwnLoadout,
   subscribeOwnWallet,
   upsertPreviewAppearance,
+  upsertRarityPreset,
   updateCapeListing,
   DEFAULT_PREVIEW_APPEARANCE,
   type CapeRecord,
@@ -33,6 +37,7 @@ import {
   type CurrencyPackRecord,
   type OwnedCapeRecord,
   type PartnerGroupRecord,
+  type RarityPresetRecord,
   type PreviewAppearanceRecord,
   type UpdateCapeInput,
   type WalletLedgerRecord
@@ -108,6 +113,12 @@ type TagPreset = {
 type OwnerPreviewContextMenuState = {
   x: number;
   y: number;
+};
+
+type DeleteCustomCapeState = {
+  cape: DisplayCape;
+  confirmText: string;
+  busy: boolean;
 };
 
 type PreviewAppearanceKey =
@@ -288,11 +299,19 @@ function pickRarityLabel(cape: DisplayCape) {
   return (cape.rarity_label?.trim() || fallback).toUpperCase();
 }
 
-function pickRarityGradient(cape: DisplayCape) {
-  const start = cape.rarity_color_start || 'rgba(138, 92, 255, 0.42)';
-  const end = cape.rarity_color_end || 'rgba(37, 27, 63, 0.92)';
-  const glow = cape.rarity_glow || 'rgba(138, 92, 255, 0.34)';
+function pickRarityGradient(cape: DisplayCape, presetsMap: Map<string, RarityPresetRecord>) {
+  const preset = presetsMap.get(normalizeRarityDisplay(cape.rarity || 'common'));
+  const start = preset?.color_start || cape.rarity_color_start || 'rgba(138, 92, 255, 0.42)';
+  const end = preset?.color_end || cape.rarity_color_end || 'rgba(37, 27, 63, 0.92)';
+  const glow = preset?.glow || cape.rarity_glow || 'rgba(138, 92, 255, 0.34)';
   return { start, end, glow };
+}
+
+function getRaritySortRank(rarityRaw: string) {
+  const rarity = normalizeRarityDisplay(rarityRaw);
+  const order = ['partner', 'mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+  const idx = order.indexOf(rarity);
+  return idx === -1 ? 999 : idx;
 }
 
 function toDisplayFromOwned(owned: OwnedCapeRecord): DisplayCape {
@@ -429,12 +448,13 @@ export function CosmeticLocker() {
   const [ownerUnlockError, setOwnerUnlockError] = useState<string | null>(null);
   const [modMenuOpen, setModMenuOpen] = useState(false);
   const [pendingModMenuRequest, setPendingModMenuRequest] = useState(false);
-  const [activeModTool, setActiveModTool] = useState<'cape-sql'>('cape-sql');
+  const [activeModTool, setActiveModTool] = useState<'cape-sql' | 'rarity-presets'>('cape-sql');
   const [capeSqlDraft, setCapeSqlDraft] = useState<OwnerCapeSqlDraft>(DEFAULT_OWNER_CAPE_SQL_DRAFT);
   const [capeSqlCopied, setCapeSqlCopied] = useState(false);
   const [ownerContextMenu, setOwnerContextMenu] = useState<OwnerContextMenuState | null>(null);
   const [ownerPreviewContextMenu, setOwnerPreviewContextMenu] = useState<OwnerPreviewContextMenuState | null>(null);
   const [ownerAppearancePanelOpen, setOwnerAppearancePanelOpen] = useState(false);
+  const [deleteCustomCapeState, setDeleteCustomCapeState] = useState<DeleteCustomCapeState | null>(null);
   const [ownerCapeEditor, setOwnerCapeEditor] = useState<OwnerCapeEditDraft | null>(null);
   const [ownerEditSaving, setOwnerEditSaving] = useState(false);
   const [tagPresets, setTagPresets] = useState<TagPreset[]>([]);
@@ -443,6 +463,8 @@ export function CosmeticLocker() {
   const [creatingPartnerGroup, setCreatingPartnerGroup] = useState(false);
   const [previewAppearance, setPreviewAppearance] = useState<PreviewAppearanceRecord>(DEFAULT_PREVIEW_APPEARANCE);
   const [previewAppearanceSaving, setPreviewAppearanceSaving] = useState(false);
+  const [rarityPresets, setRarityPresets] = useState<RarityPresetRecord[]>([]);
+  const [rarityPresetSaving, setRarityPresetSaving] = useState<string | null>(null);
   const previewAppearanceWriteTimerRef = useRef<number | null>(null);
 
   const ownedIds = useMemo(() => new Set(ownedCapes.map((cape) => cape.cape_id)), [ownedCapes]);
@@ -459,16 +481,37 @@ export function CosmeticLocker() {
 
   const lockerList = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return ownedDisplay.filter((cape) => {
+    const base = ownedDisplay.filter((cape) => {
       if (rarityFilter && cape.rarity.toLowerCase() !== rarityFilter.toLowerCase()) return false;
       if (!q) return true;
       return `${cape.name} ${cape.slug}`.toLowerCase().includes(q);
     });
+    if (rarityFilter !== null) return base;
+    return [...base].sort((a, b) => {
+      const rarityRank = getRaritySortRank(a.rarity) - getRaritySortRank(b.rarity);
+      if (rarityRank !== 0) return rarityRank;
+      const sortRank = (a.sort_order || 0) - (b.sort_order || 0);
+      if (sortRank !== 0) return sortRank;
+      return a.name.localeCompare(b.name);
+    });
   }, [ownedDisplay, rarityFilter, searchQuery]);
 
   const shopList = useMemo(() => {
-    return shopDisplay;
-  }, [shopDisplay]);
+    const base = [...shopDisplay];
+    if (rarityFilter !== null) return base;
+    return base.sort((a, b) => {
+      const rarityRank = getRaritySortRank(a.rarity) - getRaritySortRank(b.rarity);
+      if (rarityRank !== 0) return rarityRank;
+      const sortRank = (a.sort_order || 0) - (b.sort_order || 0);
+      if (sortRank !== 0) return sortRank;
+      return a.name.localeCompare(b.name);
+    });
+  }, [rarityFilter, shopDisplay]);
+
+  const rarityPresetsMap = useMemo(
+    () => new Map(rarityPresets.map((preset) => [normalizeRarityDisplay(preset.rarity), preset])),
+    [rarityPresets]
+  );
 
   const partnerGroups = useMemo(() => {
     const values = partnerGroupRecords.map((group) => group.name.trim()).filter(Boolean);
@@ -503,9 +546,39 @@ export function CosmeticLocker() {
   const rarityOptions = useMemo(() => {
     const base = activeTab === 'locker' ? lockerList : shopDisplay;
     const values = Array.from(new Set(base.map((cape) => cape.rarity.toLowerCase())));
-    values.sort((a, b) => a.localeCompare(b));
+    values.sort((a, b) => {
+      const rarityRank = getRaritySortRank(a) - getRaritySortRank(b);
+      if (rarityRank !== 0) return rarityRank;
+      return a.localeCompare(b);
+    });
     return values;
   }, [activeTab, lockerList, shopDisplay]);
+
+  const rarityPresetEditorRows = useMemo(() => {
+    const ordered = ['partner', 'mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+    const mapped = new Map(rarityPresets.map((preset) => [normalizeRarityDisplay(preset.rarity), preset]));
+    const rows: RarityPresetRecord[] = ordered.map((rarity, index) => {
+      const existing = mapped.get(rarity);
+      if (existing) return existing;
+      return {
+        id: `draft-${rarity}`,
+        rarity,
+        rarity_label: rarity[0].toUpperCase() + rarity.slice(1),
+        color_start: '#a979ff',
+        color_end: '#3a1f68',
+        glow: 'rgba(169, 121, 255, 0.45)',
+        sort_order: index,
+        is_active: true,
+        updated_at: new Date(0).toISOString()
+      };
+    });
+    for (const preset of rarityPresets) {
+      const normalized = normalizeRarityDisplay(preset.rarity);
+      if (ordered.includes(normalized)) continue;
+      rows.push(preset);
+    }
+    return rows;
+  }, [rarityPresets]);
   const isOwner = commerceProfile?.role === 'owner';
   const capeSqlReady =
     capeSqlDraft.slug.trim().length > 0 &&
@@ -680,7 +753,7 @@ export function CosmeticLocker() {
     setErrorMessage(null);
     try {
       const profile = await ensureCommerceIdentity(authState.profile.id, authState.profile.name, authState.profile.name);
-      const [shopData, ownedData, loadoutData, walletData, ledgerData, packsData, userId, appearance, groups] = await Promise.all([
+      const [shopData, ownedData, loadoutData, walletData, ledgerData, packsData, userId, appearance, groups, presetRows] = await Promise.all([
         loadShopCapes(searchQuery, rarityFilter),
         loadOwnedCapes(),
         loadCurrentLoadout(),
@@ -689,7 +762,8 @@ export function CosmeticLocker() {
         loadCurrencyPacks(),
         getSupabaseUserId(),
         loadPreviewAppearance(),
-        loadPartnerGroups()
+        loadPartnerGroups(),
+        loadRarityPresets()
       ]);
 
       setCommerceProfile(profile);
@@ -702,6 +776,7 @@ export function CosmeticLocker() {
       setSupabaseUserId(userId);
       setPreviewAppearance(normalizePreviewAppearance(appearance));
       setPartnerGroupRecords(groups);
+      setRarityPresets(presetRows);
       setStatusMessage(null);
     } catch (error) {
       setCommerceProfile(null);
@@ -790,6 +865,17 @@ export function CosmeticLocker() {
       unsubscribe();
     };
   }, [authState]);
+
+  useEffect(() => {
+    const syncPresets = () => {
+      void loadRarityPresets()
+        .then((rows) => setRarityPresets(rows))
+        .catch(() => {});
+    };
+    syncPresets();
+    const unsubscribe = subscribeRarityPresets(syncPresets);
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (!supabaseUserId) return;
@@ -904,6 +990,27 @@ export function CosmeticLocker() {
       setErrorMessage(formatUiError(error));
     } finally {
       setActionBusy(false);
+    }
+  };
+
+  const handleDeleteCustomCape = async () => {
+    if (!deleteCustomCapeState) return;
+    setDeleteCustomCapeState((current) => (current ? { ...current, busy: true } : current));
+    try {
+      await deleteOwnedCustomCape(deleteCustomCapeState.cape.id);
+      const [ownedData, loadoutData] = await Promise.all([loadOwnedCapes(), loadCurrentLoadout()]);
+      setOwnedCapes(ownedData);
+      setEquippedCapeId(loadoutData?.equipped_cape_id ?? null);
+      const nextSelected =
+        selectedCapeId === deleteCustomCapeState.cape.id
+          ? (ownedData[0]?.cape_id ?? shopDisplay[0]?.id ?? null)
+          : selectedCapeId;
+      setSelectedCapeId(nextSelected);
+      setDeleteCustomCapeState(null);
+      setStatusMessage(`${deleteCustomCapeState.cape.name} deleted.`);
+    } catch (error) {
+      setDeleteCustomCapeState((current) => (current ? { ...current, busy: false } : current));
+      setErrorMessage(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -1177,6 +1284,29 @@ export function CosmeticLocker() {
       setErrorMessage(formatUiError(error));
     } finally {
       setOwnerEditSaving(false);
+    }
+  };
+
+  const handleSaveRarityPreset = async (preset: RarityPresetRecord) => {
+    setRarityPresetSaving(preset.rarity);
+    setErrorMessage(null);
+    try {
+      await upsertRarityPreset({
+        rarity: preset.rarity,
+        rarity_label: preset.rarity_label,
+        color_start: preset.color_start,
+        color_end: preset.color_end,
+        glow: preset.glow,
+        sort_order: preset.sort_order,
+        is_active: preset.is_active
+      });
+      const next = await loadRarityPresets();
+      setRarityPresets(next);
+      setStatusMessage(`Rarity preset synced: ${preset.rarity}`);
+    } catch (error) {
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setRarityPresetSaving(null);
     }
   };
 
@@ -1464,7 +1594,7 @@ export function CosmeticLocker() {
                 <div className="pl-6 pr-2 pb-4 pt-6">
                   <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-3">
                     {activeList.map((cape) => {
-                      const rarityVisual = pickRarityGradient(cape);
+                      const rarityVisual = pickRarityGradient(cape, rarityPresetsMap);
                       const isSelected = cape.id === selectedCapeId;
                       const isEquipped = cape.id === equippedCapeId;
                       return (
@@ -1478,7 +1608,7 @@ export function CosmeticLocker() {
                             setOwnerContextMenu({ x: event.clientX, y: event.clientY, capeId: cape.id });
                           }}
                           className={clsx(
-                            'relative overflow-hidden rounded-xl border text-left transition aspect-square min-w-0',
+                            'group relative overflow-hidden rounded-xl border text-left transition aspect-square min-w-0',
                             isSelected
                               ? 'border-[var(--g-accent)] shadow-[0_0_0_1px_var(--g-accent-soft),0_14px_30px_rgba(0,0,0,0.38)]'
                               : 'border-white/10 hover:border-white/25'
@@ -1494,6 +1624,36 @@ export function CosmeticLocker() {
                               {pickRarityLabel(cape)}
                             </span>
                           </div>
+                          {activeTab === 'locker' && cape.rarity.toLowerCase() === 'custom' && (
+                            <div className="absolute top-1.5 right-1.5 z-[3]">
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                title="Delete custom cape"
+                                className="h-7 w-7 rounded-md border border-white/20 bg-black/45 text-white/75 grid place-items-center opacity-0 transition-all duration-200 group-hover:opacity-100 hover:text-red-200 hover:border-red-300/50 hover:bg-red-500/20"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setDeleteCustomCapeState({
+                                    cape,
+                                    confirmText: '',
+                                    busy: false
+                                  });
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  setDeleteCustomCapeState({
+                                    cape,
+                                    confirmText: '',
+                                    busy: false
+                                  });
+                                }}
+                              >
+                                <Trash2 size={14} />
+                              </div>
+                            </div>
+                          )}
                           <div className="relative p-2 h-full flex flex-col">
                             <div className="flex-1 border border-white/15 bg-black/28 overflow-hidden">
                               <CapeMeshRenderer
@@ -1927,6 +2087,39 @@ export function CosmeticLocker() {
         </div>
       )}
 
+      {deleteCustomCapeState && (
+        <div className="fixed inset-0 z-[640]">
+          <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={() => setDeleteCustomCapeState(null)} />
+          <div className="absolute inset-x-0 top-[20vh] mx-auto w-full max-w-[520px] rounded-2xl border border-red-300/30 bg-[#190d12] p-4 shadow-[0_26px_60px_rgba(0,0,0,0.65)]">
+            <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-red-200/80">Delete Custom Cape</p>
+            <h3 className="mt-1 text-xl font-extrabold text-white">{deleteCustomCapeState.cape.name}</h3>
+            <p className="mt-3 text-sm text-red-100/90">Type "confirm" to delete forever.</p>
+            <input
+              value={deleteCustomCapeState.confirmText}
+              onChange={(event) =>
+                setDeleteCustomCapeState((current) => (current ? { ...current, confirmText: event.target.value } : current))
+              }
+              placeholder='type "confirm"'
+              className="mt-2 h-10 w-full rounded-lg border border-white/15 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none"
+            />
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button onClick={() => setDeleteCustomCapeState(null)} className="g-btn h-9 px-3 text-[10px] uppercase tracking-[0.12em] font-extrabold">
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  void handleDeleteCustomCape();
+                }}
+                disabled={deleteCustomCapeState.busy || deleteCustomCapeState.confirmText.trim().toLowerCase() !== 'confirm'}
+                className="h-9 rounded-lg border border-red-300/45 bg-red-500/20 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] text-red-100 disabled:opacity-45"
+              >
+                {deleteCustomCapeState.busy ? 'Deleting...' : 'Delete Forever'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {modMenuOpen && (
         <div className="fixed inset-0 z-[525] flex items-center justify-center p-4 app-region-no-drag">
           <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" />
@@ -1983,9 +2176,21 @@ export function CosmeticLocker() {
                     >
                       Cape SQL Creator
                     </button>
+                    <button
+                      onClick={() => setActiveModTool('rarity-presets')}
+                      className={clsx(
+                        'w-full rounded-xl border px-3 py-2 text-left text-[11px] font-extrabold uppercase tracking-[0.12em] transition',
+                        activeModTool === 'rarity-presets'
+                          ? 'g-btn-accent'
+                          : 'border-white/10 bg-white/[0.03] text-white/75 hover:bg-white/[0.06]'
+                      )}
+                    >
+                      Rarity Presets
+                    </button>
                   </div>
                 </aside>
 
+                {activeModTool === 'cape-sql' ? (
                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-3">
                   <p className="text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/55">Create Cape Listing SQL</p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -2109,6 +2314,80 @@ export function CosmeticLocker() {
                     </button>
                   </div>
                 </div>
+                ) : (
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-3">
+                    <p className="text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/55">Rarity Presets</p>
+                    <p className="text-xs text-white/60">Edits sync live to all cosmetics using that rarity, including future cape listings.</p>
+                    <div className="space-y-2 max-h-[62vh] overflow-y-auto pr-1">
+                      {rarityPresetEditorRows.map((preset, index) => {
+                        const normalized = normalizeRarityDisplay(preset.rarity);
+                        const upsertLocalPreset = (next: Partial<RarityPresetRecord>) =>
+                          setRarityPresets((current) => {
+                            const hasEntry = current.some((entry) => normalizeRarityDisplay(entry.rarity) === normalized);
+                            if (!hasEntry) return [...current, { ...preset, ...next }];
+                            return current.map((entry) =>
+                              normalizeRarityDisplay(entry.rarity) === normalized ? { ...entry, ...next } : entry
+                            );
+                          });
+
+                        return (
+                          <div key={preset.rarity} className="rounded-xl border border-white/10 bg-white/[0.03] p-2.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/80">{preset.rarity}</p>
+                              <button
+                                onClick={() => {
+                                  void handleSaveRarityPreset({
+                                    ...preset,
+                                    sort_order: Number.isFinite(Number(preset.sort_order)) ? Number(preset.sort_order) : index
+                                  });
+                                }}
+                                disabled={rarityPresetSaving === preset.rarity}
+                                className="g-btn-accent h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-45"
+                              >
+                                {rarityPresetSaving === preset.rarity ? 'Saving...' : 'Save'}
+                              </button>
+                            </div>
+                            <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                              <input
+                                value={preset.rarity_label ?? ''}
+                                onChange={(event) => upsertLocalPreset({ rarity_label: event.target.value })}
+                                placeholder="rarity label"
+                                className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none"
+                              />
+                              <label className="rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 flex flex-col">
+                                <span>sort_order</span>
+                                <input
+                                  type="number"
+                                  value={preset.sort_order ?? index}
+                                  onChange={(event) => upsertLocalPreset({ sort_order: Number(event.target.value) || 0 })}
+                                  className="mt-1 bg-transparent text-sm text-white outline-none normal-case tracking-normal"
+                                />
+                              </label>
+                              <BloomColorInput
+                                label="color_start"
+                                value={preset.color_start ?? '#a979ff'}
+                                onChange={(next) => upsertLocalPreset({ color_start: next })}
+                              />
+                              <BloomColorInput
+                                label="color_end"
+                                value={preset.color_end ?? '#3a1f68'}
+                                onChange={(next) => upsertLocalPreset({ color_end: next })}
+                              />
+                              <div className="md:col-span-2">
+                                <BloomColorInput
+                                  label="glow"
+                                  value={preset.glow ?? 'rgba(169, 121, 255, 0.45)'}
+                                  withAlpha
+                                  onChange={(next) => upsertLocalPreset({ glow: next })}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

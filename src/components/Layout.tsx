@@ -72,7 +72,7 @@ type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
 type SoundPackMode = 'off' | 'soft' | 'arcade' | 'retro';
 type StartupSceneTheme = 'nova' | 'horizon' | 'matrix';
 type StartupSceneSoundProfile = 'off' | 'shimmer' | 'impact';
-type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help';
+type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'news' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help';
 type SidebarTabsVisibility = Record<SidebarTabId, boolean>;
 
 type SearchEntry = {
@@ -152,6 +152,7 @@ const SIDEBAR_TABS_VISIBILITY_DEFAULTS: SidebarTabsVisibility = {
   widgets: true,
   cosmetics: true,
   'custom-cape': true,
+  news: true,
   chat: false,
   'script-studio': false,
   'host-server': false,
@@ -172,6 +173,7 @@ function readSidebarTabsVisibility(): SidebarTabsVisibility {
       widgets: typeof parsed.widgets === 'boolean' ? parsed.widgets : SIDEBAR_TABS_VISIBILITY_DEFAULTS.widgets,
       cosmetics: typeof parsed.cosmetics === 'boolean' ? parsed.cosmetics : SIDEBAR_TABS_VISIBILITY_DEFAULTS.cosmetics,
       'custom-cape': typeof parsed['custom-cape'] === 'boolean' ? parsed['custom-cape'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['custom-cape'],
+      news: typeof parsed.news === 'boolean' ? parsed.news : SIDEBAR_TABS_VISIBILITY_DEFAULTS.news,
       chat: typeof parsed.chat === 'boolean' ? parsed.chat : SIDEBAR_TABS_VISIBILITY_DEFAULTS.chat,
       'script-studio': typeof parsed['script-studio'] === 'boolean' ? parsed['script-studio'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['script-studio'],
       'host-server': typeof parsed['host-server'] === 'boolean' ? parsed['host-server'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['host-server'],
@@ -451,6 +453,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     if (sidebarTabsVisibility.widgets) base.push({ id: 'widgets', label: 'Widgets', description: 'Manage per-page widgets and visibility', route: '/widgets' });
     if (sidebarTabsVisibility.cosmetics) base.push({ id: 'cosmetics', label: 'Cosmetic Locker', description: 'Browse, buy, and equip Bloom cosmetics', route: '/cosmetics' });
     if (sidebarTabsVisibility['custom-cape']) base.push({ id: 'custom-cape', label: 'Custom Cape', description: 'Create, preview, and export custom cape atlases', route: '/custom-cape' });
+    if (sidebarTabsVisibility.news) base.push({ id: 'news', label: 'Updates', description: 'Announcements, devlogs, and changelogs', route: '/news' });
     if (sidebarTabsVisibility['script-studio']) base.push({ id: 'script-studio', label: 'Script Studio', description: 'IDE-style BloomScript editor and runtime', route: '/script-studio' });
     if (showGamesSection && sidebarTabsVisibility.games) base.push({ id: 'games', label: 'Games', description: 'Play Bloom Clicker, Flappy Bird, and Whiteboard', route: '/games' });
     if (hostServersUnlocked && sidebarTabsVisibility['host-server']) base.push({ id: 'host-server', label: 'Host Server', description: 'Run and manage local multiplayer servers', route: '/host-server' });
