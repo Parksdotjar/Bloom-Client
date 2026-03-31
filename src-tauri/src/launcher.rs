@@ -142,6 +142,35 @@ fn detect_required_java_major(mods_dir: &std::path::Path) -> Result<Option<u32>,
     Ok(required_major)
 }
 
+fn parse_mc_version_core(mc_version: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = mc_version
+        .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .find(|chunk| chunk.contains('.'))?
+        .split('.')
+        .filter_map(|value| value.parse::<u32>().ok());
+    let major = parts.next()?;
+    let minor = parts.next().unwrap_or(0);
+    let patch = parts.next().unwrap_or(0);
+    Some((major, minor, patch))
+}
+
+fn detect_required_java_major_for_minecraft(mc_version: &str) -> Option<u32> {
+    let (major, minor, patch) = parse_mc_version_core(mc_version)?;
+    if major > 1 {
+        return Some(21);
+    }
+    if minor >= 21 {
+        return Some(21);
+    }
+    if minor == 20 && patch >= 5 {
+        return Some(21);
+    }
+    if minor >= 18 {
+        return Some(17);
+    }
+    Some(8)
+}
+
 fn managed_java_runtime_dir(paths: &crate::paths::AppPaths, major: u32) -> std::path::PathBuf {
     paths.runtimes.join("java").join(format!("jdk-{}", major))
 }
@@ -1081,11 +1110,19 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
         .join(format!("launch-{}-{}.log", config.instance_id, ts));
 
     let working_dir = instance_dir;
-    let required_java_major = if loader_type == "fabric" {
+    let mod_required_java_major = if loader_type == "fabric" {
         detect_required_java_major(&working_dir.join("mods"))?
     } else {
         None
     };
+    let base_required_java_major = detect_required_java_major_for_minecraft(mc_version);
+    let required_java_major = match (base_required_java_major, mod_required_java_major) {
+        (Some(base), Some(mods)) => Some(base.max(mods)),
+        (Some(base), None) => Some(base),
+        (None, Some(mods)) => Some(mods),
+        (None, None) => None,
+    };
+
     let launch_candidates = build_java_launch_candidates(&config.java_path, required_java_major);
     let requested_java_is_generic = config.java_path.trim().is_empty()
         || config.java_path.eq_ignore_ascii_case("java")
