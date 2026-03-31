@@ -345,6 +345,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [routeTabAnimationsEnabled, setRouteTabAnimationsEnabled] = useState<boolean>(() => localStorage.getItem(ROUTE_TAB_ANIMATIONS_KEY) === 'true');
   const [showGamesSection, setShowGamesSection] = useState<boolean>(() => localStorage.getItem(SHOW_GAMES_SECTION_KEY) === 'true');
   const [sidebarTabsVisibility, setSidebarTabsVisibility] = useState<SidebarTabsVisibility>(() => readSidebarTabsVisibility());
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const [iconPack, setIconPack] = useState<IconPackMode>(() => {
     const stored = localStorage.getItem(ICON_PACK_KEY);
@@ -1016,13 +1017,38 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const checkMax = async () => {
+    const checkWindowState = async () => {
       const windowRef = getCurrentWindow();
-      const max = await windowRef.isMaximized();
-      setIsMaximized(max);
+      const fullscreen = await windowRef.isFullscreen();
+      const maximized = await windowRef.isMaximized();
+      setIsFullscreen(fullscreen);
+      setIsMaximized(maximized);
     };
-    void checkMax();
+    void checkWindowState();
   }, []);
+
+  const toggleWindowFill = async () => {
+    const windowRef = getCurrentWindow();
+    try {
+      const fullscreen = await windowRef.isFullscreen();
+      const maximized = await windowRef.isMaximized();
+
+      if (fullscreen || maximized) {
+        if (fullscreen) await windowRef.setFullscreen(false);
+        if (maximized) await windowRef.unmaximize();
+      } else {
+        await windowRef.maximize();
+        const confirmedMax = await windowRef.isMaximized();
+        if (!confirmedMax) {
+          await windowRef.setFullscreen(true);
+        }
+      }
+      setIsFullscreen(await windowRef.isFullscreen());
+      setIsMaximized(await windowRef.isMaximized());
+    } catch (error) {
+      console.error('Failed to toggle filled window state:', error);
+    }
+  };
 
   useEffect(() => {
     const pageName =
@@ -1978,7 +2004,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
       }
       setUpdateStatusMessage(`Update available: v${update.version}`);
       if (updatePreferences.notifications || source === 'manual') {
-        setUpdateNoticeVisible(true);
         setNotificationsOpen(true);
       }
     } finally {
@@ -2281,16 +2306,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <Move size={13} strokeWidth={iconStrokeWidth} />
             </button>
             <button
-              onClick={async () => {
-                const windowRef = getCurrentWindow();
-                await windowRef.toggleMaximize();
-                const max = await windowRef.isMaximized();
-                setIsMaximized(max);
+              onClick={() => {
+                void toggleWindowFill();
               }}
               className="g-window-btn"
-              title={isMaximized ? 'Restore' : 'Maximize'}
+              title={isFullscreen || isMaximized ? 'Restore' : 'Fullscreen'}
             >
-              <Maximize2 size={13} strokeWidth={iconStrokeWidth} className={isMaximized ? 'opacity-60' : ''} />
+              <Maximize2 size={13} strokeWidth={iconStrokeWidth} className={isFullscreen || isMaximized ? 'opacity-60' : ''} />
             </button>
             <button onClick={() => { void getCurrentWindow().close(); }} className="g-window-btn g-window-btn-danger" title="Close">
               <X size={14} strokeWidth={iconStrokeWidth} />

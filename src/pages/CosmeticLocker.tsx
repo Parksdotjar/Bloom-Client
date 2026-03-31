@@ -523,6 +523,7 @@ export function CosmeticLocker() {
     const q = searchQuery.trim().toLowerCase();
     return shopDisplay.filter((cape) => {
       const group = (cape.partner_group || '').trim();
+      if (!group) return false;
       if (selectedPartnerGroup !== 'all' && group.toLowerCase() !== selectedPartnerGroup.toLowerCase()) {
         return false;
       }
@@ -1375,6 +1376,20 @@ export function CosmeticLocker() {
       {errorMessage && (
         <div className="rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-2 text-xs font-bold text-red-200">
           {errorMessage}
+        </div>
+      )}
+
+      {activeTab === 'wallet' && selectedCape && (
+        <div className="fixed left-[-9999px] top-[-9999px] h-px w-px overflow-hidden opacity-0 pointer-events-none" aria-hidden>
+          <MinecraftPlayerPreview
+            playerUuid={authState?.profile.id ?? null}
+            playerName={authState?.profile.name ?? 'Player'}
+            playerSkinUrl={authState?.profile.skinUrl ?? null}
+            capeSlug={selectedCape.slug}
+            capeTextureUrl={selectedCape.texture_url}
+            appearance={previewAppearance}
+            className="h-[320px] w-[240px]"
+          />
         </div>
       )}
 
