@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { clsx } from 'clsx';
 import { AlertTriangle, Coins, Search, Trash2 } from 'lucide-react';
@@ -958,6 +958,32 @@ export function CosmeticLocker() {
     }
   };
 
+  const handleBuyCape = async (cape: DisplayCape) => {
+    if (cape.owned) return;
+    setActionBusy(true);
+    setErrorMessage(null);
+    try {
+      await purchaseCape(cape.slug, false);
+      const [ownedData, walletData, ledgerData, loadoutData] = await Promise.all([
+        loadOwnedCapes(),
+        loadWallet(),
+        loadWalletLedger(25),
+        loadCurrentLoadout()
+      ]);
+      setOwnedCapes(ownedData);
+      setWalletBalance(walletData?.balance_bb ?? 0);
+      setWalletLedger(ledgerData);
+      setEquippedCapeId(loadoutData?.equipped_cape_id ?? null);
+      setSelectedCapeId(cape.id);
+      setStatusMessage(`${cape.name} purchased.`);
+      if (activeTab !== 'locker') setActiveTab('locker');
+    } catch (error) {
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
   const handleEquip = async () => {
     if (!selectedCape) return;
     if (!selectedCape.owned) return;
@@ -1426,7 +1452,7 @@ export function CosmeticLocker() {
                     <div key={pack.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                       <p className="text-[11px] uppercase tracking-[0.13em] font-extrabold text-white/62">{pack.name}</p>
                       <p className="text-xl font-extrabold text-white mt-1">{pack.total_bb.toLocaleString()} BB</p>
-                      <p className="text-xs text-white/55 mt-1">${Number(pack.price_usd).toFixed(2)} • base {pack.base_bb.toLocaleString()} + bonus {pack.bonus_bb.toLocaleString()}</p>
+                      <p className="text-xs text-white/55 mt-1">${Number(pack.price_usd).toFixed(2)} â€¢ base {pack.base_bb.toLocaleString()} + bonus {pack.bonus_bb.toLocaleString()}</p>
                       {ready ? (
                         <p className="mt-2 text-[11px] text-emerald-200 font-bold">Approved email: {approved.email}</p>
                       ) : (
@@ -1687,8 +1713,19 @@ export function CosmeticLocker() {
                                   <span className="rounded-md border border-emerald-300/45 bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.1em] text-emerald-100">Equipped</span>
                                 ) : cape.owned ? (
                                   <span className="rounded-md border border-emerald-300/45 bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.1em] text-emerald-100">Owned</span>
+                                ) : isSelected ? (
+                                  <button
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void handleBuyCape(cape);
+                                    }}
+                                    disabled={actionBusy}
+                                    className="g-btn-accent h-6 px-2 text-[9px] font-black uppercase tracking-[0.1em] disabled:opacity-55"
+                                  >
+                                    Buy
+                                  </button>
                                 ) : (
-                                  <span className="rounded-md border border-white/20 bg-white/10 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.1em] text-white/70">
+                                  <span className="rounded-md border border-white/20 bg-black/35 px-1.5 py-0.5 text-[9px] font-black text-white/70">
                                     {cape.price_bb.toLocaleString()} BB
                                   </span>
                                 )}
@@ -1738,7 +1775,20 @@ export function CosmeticLocker() {
               {selectedCape ? (
                 <>
                   <p className="text-sm font-extrabold text-white">{selectedCape.name}</p>
-                  <p className="text-[11px] text-white/58 mt-1">{pickRarityLabel(selectedCape)} • {selectedCape.slug}</p>
+                  <div className="mt-1 flex items-center justify-between gap-2">
+                    <p className="text-[11px] text-white/58">{pickRarityLabel(selectedCape)} • {selectedCape.slug}</p>
+                    {!selectedOwned && (
+                      <button
+                        onClick={() => {
+                          void handleBuy();
+                        }}
+                        disabled={actionBusy}
+                        className="g-btn-accent h-8 px-2.5 text-[10px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-55 shrink-0"
+                      >
+                        Buy • {selectedCape.price_bb.toLocaleString()} BB
+                      </button>
+                    )}
+                  </div>
                   <p className="text-xs text-white/65 mt-2">{selectedCape.description || 'No description.'}</p>
                   <div className="mt-3 flex gap-2">
                     {selectedOwned ? (
@@ -1762,17 +1812,7 @@ export function CosmeticLocker() {
                           Unequip
                         </button>
                       </>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          void handleBuy();
-                        }}
-                        disabled={actionBusy}
-                        className="g-btn-accent h-10 w-full text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-55"
-                      >
-                        Buy • {selectedCape.price_bb.toLocaleString()} BB
-                      </button>
-                    )}
+                     ) : null}
                   </div>
                 </>
               ) : (
@@ -2486,5 +2526,6 @@ export function CosmeticLocker() {
     </div>
   );
 }
+
 
 

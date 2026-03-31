@@ -1,6 +1,6 @@
 [package]
 name = "bloom-client"
-version = "0.7.1"
+version = "0.7.2"
 description = "Bloom Client"
 authors = ["you"]
 edition = "2021"
@@ -34,5 +34,4 @@ discord-rich-presence = "0.2.5"
 axum = { version = "0.8.4", features = ["ws"] }
 uuid = { version = "1.18.1", features = ["v4"] }
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
-
 
