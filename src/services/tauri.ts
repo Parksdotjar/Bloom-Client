@@ -262,5 +262,7 @@ export const TauriApi = {
     launcherBackgroundLoad: () =>
         invoke<string | null>('launcher_background_load'),
     launcherBackgroundClear: () =>
-        invoke<void>('launcher_background_clear')
+        invoke<void>('launcher_background_clear'),
+    saveBinaryFile: (path: string, data: number[]) =>
+        invoke<void>('save_binary_file', { path, data })
 };

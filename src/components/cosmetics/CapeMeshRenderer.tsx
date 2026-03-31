@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { capeTextureLoader, type CapeTextureAsset } from '../../services/capeTextures';
+import { resolveMinecraftCapeTemplate } from '../../services/minecraftCapeLayout';
 
 type CapeMeshRendererProps = {
   slug: string;
@@ -15,12 +16,14 @@ type CapeUv = {
   side: { x: number; y: number; w: number; h: number };
 };
 
+type CapeRenderMode = 'atlas' | 'full-image';
+const CAPE_VISUAL_RATIO = 2.0; // 2 vertical : 1 horizontal
+
 function resolveCapeUv(width: number, height: number): CapeUv {
-  const unitX = width / 64;
-  const unitY = height / 32;
+  const template = resolveMinecraftCapeTemplate(width, height);
   return {
-    front: { x: unitX, y: unitY, w: unitX * 10, h: unitY * 16 },
-    side: { x: 0, y: unitY, w: Math.max(unitX, 1), h: unitY * 16 }
+    front: { x: template.front.x, y: template.front.y, w: template.front.width, h: template.front.height },
+    side: { x: template.right.x, y: template.right.y, w: Math.max(template.right.width, 1), h: template.right.height }
   };
 }
 
@@ -28,7 +31,7 @@ function drawPlaceholder(ctx: CanvasRenderingContext2D, width: number, height: n
   ctx.clearRect(0, 0, width, height);
   ctx.imageSmoothingEnabled = false;
   const capeW = Math.floor(width * 0.36);
-  const capeH = Math.floor(capeW * 1.6);
+  const capeH = Math.floor(capeW * CAPE_VISUAL_RATIO);
   const x = Math.floor((width - capeW) / 2);
   const y = Math.floor((height - capeH) / 2);
   ctx.fillStyle = 'rgba(255,255,255,0.08)';
@@ -49,14 +52,15 @@ function drawCapeMesh(
   width: number,
   height: number,
   glowColor: string | null,
-  phase: number
+  phase: number,
+  mode: CapeRenderMode
 ) {
   ctx.clearRect(0, 0, width, height);
   ctx.imageSmoothingEnabled = false;
 
   const uv = resolveCapeUv(texture.naturalWidth || texture.width, texture.naturalHeight || texture.height);
   const capeW = Math.floor(width * 0.38);
-  const capeH = Math.floor(capeW * 1.6);
+  const capeH = Math.floor(capeW * CAPE_VISUAL_RATIO);
   const baseX = Math.floor((width - capeW) / 2);
   const y = Math.floor((height - capeH) / 2);
   const swayX = Math.round(Math.sin(phase) * 1.5);
@@ -76,16 +80,32 @@ function drawCapeMesh(
   ctx.fillStyle = 'rgba(0,0,0,0.45)';
   ctx.fillRect(x + 3, y + 5, capeW, capeH);
 
-  ctx.drawImage(texture, uv.front.x, uv.front.y, uv.front.w, uv.front.h, x, y, capeW, capeH);
+  if (mode === 'atlas') {
+    ctx.drawImage(texture, uv.front.x, uv.front.y, uv.front.w, uv.front.h, x, y, capeW, capeH);
+  } else {
+    ctx.drawImage(texture, 0, 0, texture.naturalWidth || texture.width, texture.naturalHeight || texture.height, x, y, capeW, capeH);
+  }
   ctx.strokeStyle = 'rgba(255,255,255,0.22)';
   ctx.lineWidth = 1;
   ctx.strokeRect(x + 0.5, y + 0.5, capeW - 1, capeH - 1);
 
-  ctx.globalAlpha = 0.9;
-  ctx.drawImage(texture, uv.side.x, uv.side.y, uv.side.w, uv.side.h, x + capeW - 1, y + 1, sideW, capeH - 2);
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  ctx.fillRect(x + capeW - 1, y + 1, sideW, capeH - 2);
+  if (mode === 'atlas') {
+    ctx.globalAlpha = 0.9;
+    ctx.drawImage(texture, uv.side.x, uv.side.y, uv.side.w, uv.side.h, x + capeW - 1, y + 1, sideW, capeH - 2);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(x + capeW - 1, y + 1, sideW, capeH - 2);
+  }
+}
+
+function detectRenderMode(texture: HTMLImageElement): CapeRenderMode {
+  const width = texture.naturalWidth || texture.width;
+  const height = texture.naturalHeight || texture.height;
+  if (!width || !height) return 'full-image';
+  // Generated Minecraft cape atlases are square (64x64 scaled). Legacy/non-atlas
+  // cape URLs (often raw art) should be rendered as a full image fallback.
+  if ((width === height || width === height * 2) && width >= 64) return 'atlas';
+  return 'full-image';
 }
 
 export function CapeMeshRenderer({ slug, textureUrl, name, className, glowColor, sway = true }: CapeMeshRendererProps) {
@@ -164,7 +184,7 @@ export function CapeMeshRenderer({ slug, textureUrl, name, className, glowColor,
         image.src = asset.objectUrl;
       }
       if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
-        drawCapeMesh(ctx, image, width, height, glowColor ?? null, phase);
+        drawCapeMesh(ctx, image, width, height, glowColor ?? null, phase, detectRenderMode(image));
       } else {
         drawPlaceholder(ctx, width, height, 'Loading cape');
       }

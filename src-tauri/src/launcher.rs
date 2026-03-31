@@ -324,7 +324,8 @@ fn build_java_launch_candidates(requested: &str, required_major: Option<u32>) ->
 
 #[tauri::command]
 pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(), String> {
-    use crate::bloom_mod::ensure_bloom_menu_mod;
+    use crate::bloom_bridge::{ensure_launcher_bridge, LaunchBridgeBootstrap};
+    use crate::bloom_mod::ensure_bloom_cosmetics_mod;
     use crate::paths::{paths_get, AppPaths};
     use std::collections::HashMap;
     use std::fs;
@@ -350,7 +351,14 @@ pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(),
     let loader_type = instance_json["loader"].as_str().unwrap_or("vanilla");
     let instance_dir = paths.instances.join(&config.instance_id);
 
-    ensure_bloom_menu_mod(&instance_dir, loader_type, mc_version)?;
+    ensure_bloom_cosmetics_mod(&instance_dir, loader_type, mc_version)?;
+
+    let bridge_runtime = ensure_launcher_bridge(LaunchBridgeBootstrap {
+        minecraft_uuid: config.uuid.clone(),
+        username: config.username.clone(),
+        mc_access_token: config.access_token.clone(),
+    })
+    .await?;
 
     // Guard against broken mod files that would crash Fabric with ZipException.
     if loader_type == "fabric" {
@@ -981,6 +989,9 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
 
         match Command::new(&candidate)
             .args(&args)
+            .env("BLOOM_BRIDGE_HOST", &bridge_runtime.host)
+            .env("BLOOM_BRIDGE_PORT", bridge_runtime.port.to_string())
+            .env("BLOOM_BRIDGE_TOKEN", &bridge_runtime.token)
             .stdout(Stdio::from(stdout_handle))
             .stderr(Stdio::from(stderr_handle))
             .current_dir(&working_dir)

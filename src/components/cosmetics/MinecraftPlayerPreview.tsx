@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { IdleAnimation, SkinViewer } from 'skinview3d';
-import { Mesh } from 'three';
+import { BufferAttribute, Mesh } from 'three';
+import { Pause, Play } from 'lucide-react';
 import { capeTextureLoader, type CapeTextureAsset } from '../../services/capeTextures';
 import { CapeMeshRenderer } from './CapeMeshRenderer';
+import { buildMinecraftCapeUvData } from '../../services/minecraftCapeLayout';
 
 type MinecraftPlayerPreviewProps = {
   playerUuid: string | null;
@@ -10,6 +12,7 @@ type MinecraftPlayerPreviewProps = {
   playerSkinUrl?: string | null;
   capeSlug: string;
   capeTextureUrl: string;
+  capeTextureObjectUrl?: string | null;
   appearance?: {
     exposure: number;
     brightness: number;
@@ -43,12 +46,24 @@ function normalizeUuid(value: string | null) {
   return clean.toLowerCase();
 }
 
+function applyMinecraftCapeUvs(viewer: SkinViewer, textureWidth = 64, textureHeight = 64) {
+  const capeMesh = (viewer.playerObject as { cape?: { cape?: { geometry?: { attributes?: { uv?: BufferAttribute } } } } }).cape?.cape;
+  const uv = capeMesh?.geometry?.attributes?.uv;
+  if (uv) {
+    uv.set(buildMinecraftCapeUvData(textureWidth, textureHeight));
+    uv.needsUpdate = true;
+  }
+  const scaleTarget = (capeMesh as unknown as { scale?: { set?: (x: number, y: number, z: number) => void } })?.scale;
+  scaleTarget?.set?.(1, 1.25, 1);
+}
+
 export function MinecraftPlayerPreview({
   playerUuid,
   playerName,
   playerSkinUrl,
   capeSlug,
   capeTextureUrl,
+  capeTextureObjectUrl,
   appearance,
   className
 }: MinecraftPlayerPreviewProps) {
@@ -59,6 +74,8 @@ export function MinecraftPlayerPreview({
   const [viewerReady, setViewerReady] = useState(false);
   const [viewerFailed, setViewerFailed] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [autoSpinEnabled, setAutoSpinEnabled] = useState(true);
+  const autoSpinEnabledRef = useRef(true);
   const resolvedAppearance = useMemo(
     () => ({
       exposure: clampNumber(appearance?.exposure ?? DEFAULT_APPEARANCE.exposure, 0.8, 3.1),
@@ -99,6 +116,23 @@ export function MinecraftPlayerPreview({
     let cancelled = false;
     setAsset(null);
     setCapeFailed(false);
+    if (capeTextureObjectUrl?.trim()) {
+      setAsset({
+        cacheKey: `${capeSlug}::inline`,
+        slug: capeSlug,
+        textureUrl: capeTextureObjectUrl,
+        objectUrl: capeTextureObjectUrl,
+        width: 64,
+        height: 64,
+        bytes: 0,
+        fromDiskCache: false,
+        generatedAt: Date.now(),
+        viaDirectUrl: true
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
     void capeTextureLoader
       .loadFull(capeSlug, capeTextureUrl)
       .then((next) => {
@@ -112,7 +146,11 @@ export function MinecraftPlayerPreview({
     return () => {
       cancelled = true;
     };
-  }, [capeSlug, capeTextureUrl]);
+  }, [capeSlug, capeTextureObjectUrl, capeTextureUrl]);
+
+  useEffect(() => {
+    autoSpinEnabledRef.current = autoSpinEnabled;
+  }, [autoSpinEnabled]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -139,6 +177,7 @@ export function MinecraftPlayerPreview({
       viewer.playerObject.backEquipment = 'cape';
       viewer.playerObject.skin.visible = true;
       viewer.playerObject.cape.visible = true;
+      applyMinecraftCapeUvs(viewer);
       viewer.controls.enableZoom = false;
       viewer.controls.enablePan = false;
       viewer.controls.enableRotate = true;
@@ -184,7 +223,7 @@ export function MinecraftPlayerPreview({
       const onPointerUp = () => {
         setDragging(false);
         window.setTimeout(() => {
-          if (viewerRef.current === viewer) viewer.autoRotate = true;
+          if (viewerRef.current === viewer && autoSpinEnabledRef.current) viewer.autoRotate = true;
         }, 650);
       };
 
@@ -245,6 +284,7 @@ export function MinecraftPlayerPreview({
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || !asset) return;
+    applyMinecraftCapeUvs(viewer, asset.width, asset.height);
     void viewer.loadCape(asset.objectUrl, { backEquipment: 'cape' }).catch(() => {
       setCapeFailed(true);
     });
@@ -258,6 +298,12 @@ export function MinecraftPlayerPreview({
     viewer.cameraLight.intensity = resolvedAppearance.camera_light_intensity;
     viewer.globalLight.intensity = resolvedAppearance.global_light_intensity;
   }, [resolvedAppearance]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    viewer.autoRotate = autoSpinEnabled && !dragging;
+  }, [autoSpinEnabled, dragging]);
 
   const previewFilter = `brightness(${resolvedAppearance.brightness}) contrast(${resolvedAppearance.contrast}) saturate(${resolvedAppearance.saturation})`;
 
@@ -282,6 +328,15 @@ export function MinecraftPlayerPreview({
         style={{ filter: previewFilter }}
         aria-label={`${playerName} minecraft player preview`}
       />
+      <button
+        type="button"
+        onClick={() => setAutoSpinEnabled((current) => !current)}
+        className="absolute right-2 top-2 h-7 w-7 rounded-md border border-white/18 bg-black/45 text-white/85 transition hover:border-white/35 hover:bg-black/60 flex items-center justify-center"
+        aria-label={autoSpinEnabled ? 'Pause preview spin' : 'Play preview spin'}
+        title={autoSpinEnabled ? 'Pause spin' : 'Resume spin'}
+      >
+        {autoSpinEnabled ? <Pause size={12} /> : <Play size={12} className="translate-x-[0.5px]" />}
+      </button>
       {capeFailed && viewerReady && (
         <div className="pointer-events-none absolute inset-0 grid place-items-end pb-2">
           <span className="bg-black/45 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.1em] text-white/65">

@@ -27,7 +27,7 @@ type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'o
 type SidebarMode = 'rail' | 'classic' | 'expanded';
 type SidebarPosition = 'left' | 'right' | 'top' | 'bottom';
 type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
-type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help';
+type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help';
 type SidebarTabsVisibility = Record<SidebarTabId, boolean>;
 
 const EXTRA_CHANGE_EVENT = 'bloom-extra-change';
@@ -48,6 +48,7 @@ const SIDEBAR_TABS_VISIBILITY_DEFAULTS: SidebarTabsVisibility = {
   importer: true,
   widgets: true,
   cosmetics: true,
+  'custom-cape': true,
   chat: false,
   'script-studio': false,
   'host-server': false,
@@ -67,6 +68,7 @@ function readSidebarTabsVisibility(): SidebarTabsVisibility {
       importer: typeof parsed.importer === 'boolean' ? parsed.importer : SIDEBAR_TABS_VISIBILITY_DEFAULTS.importer,
       widgets: typeof parsed.widgets === 'boolean' ? parsed.widgets : SIDEBAR_TABS_VISIBILITY_DEFAULTS.widgets,
       cosmetics: typeof parsed.cosmetics === 'boolean' ? parsed.cosmetics : SIDEBAR_TABS_VISIBILITY_DEFAULTS.cosmetics,
+      'custom-cape': typeof parsed['custom-cape'] === 'boolean' ? parsed['custom-cape'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['custom-cape'],
       chat: typeof parsed.chat === 'boolean' ? parsed.chat : SIDEBAR_TABS_VISIBILITY_DEFAULTS.chat,
       'script-studio': typeof parsed['script-studio'] === 'boolean' ? parsed['script-studio'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['script-studio'],
       'host-server': typeof parsed['host-server'] === 'boolean' ? parsed['host-server'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['host-server'],
@@ -158,6 +160,7 @@ export function SidebarRail(props: SidebarProps) {
     ...(activeTabVisibility.importer ? [{ icon: FolderUp, path: '/importer', label: 'Importer' }] : []),
     ...(activeTabVisibility.widgets ? [{ icon: LayoutDashboard, path: '/widgets', label: 'Widgets' }] : []),
     ...(activeTabVisibility.cosmetics ? [{ icon: Shirt, path: '/cosmetics', label: 'Cosmetics' }] : []),
+    ...(activeTabVisibility['custom-cape'] ? [{ icon: Shirt, path: '/custom-cape', label: 'Custom Cape' }] : []),
     ...(activeTabVisibility.chat ? [{ icon: MessageSquareMore, path: '/chat', label: 'Chat' }] : []),
     ...(activeTabVisibility['script-studio'] ? [{ icon: Code2, path: '/script-studio', label: 'Studio' }] : []),
     ...((showHostServer && activeTabVisibility['host-server']) ? [{ icon: Server, path: '/host-server', label: 'Host' }] : []),

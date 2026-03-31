@@ -360,6 +360,24 @@ function formatEntryType(value: string) {
     .join(' ');
 }
 
+function formatUiError(error: unknown) {
+  if (error instanceof Error) return error.message || 'unknown_error';
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    const record = error as Record<string, unknown>;
+    const message =
+      (typeof record.message === 'string' && record.message) ||
+      (typeof record.error === 'string' && record.error) ||
+      (typeof record.error_description === 'string' && record.error_description) ||
+      null;
+    const code = typeof record.code === 'string' ? record.code : null;
+    const details = typeof record.details === 'string' ? record.details : null;
+    const hint = typeof record.hint === 'string' ? record.hint : null;
+    return [message, code, details, hint].filter(Boolean).join(' | ') || JSON.stringify(record);
+  }
+  return String(error);
+}
+
 function normalizePreviewAppearance(value: PreviewAppearanceRecord): PreviewAppearanceRecord {
   return {
     ...value,
@@ -687,7 +705,7 @@ export function CosmeticLocker() {
       setStatusMessage(null);
     } catch (error) {
       setCommerceProfile(null);
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(formatUiError(error));
     } finally {
       setLoading(false);
     }
@@ -707,7 +725,7 @@ export function CosmeticLocker() {
         if (!cancelled) setShopCapes(data);
       })
       .catch((error) => {
-        if (!cancelled) setErrorMessage(error instanceof Error ? error.message : String(error));
+        if (!cancelled) setErrorMessage(formatUiError(error));
       })
       .finally(() => {
         if (!cancelled) setShopLoading(false);
@@ -726,7 +744,7 @@ export function CosmeticLocker() {
         if (!cancelled) setShopCapes(data);
       })
       .catch((error) => {
-        if (!cancelled) setErrorMessage(error instanceof Error ? error.message : String(error));
+        if (!cancelled) setErrorMessage(formatUiError(error));
       })
       .finally(() => {
         if (!cancelled) setShopLoading(false);
@@ -744,7 +762,7 @@ export function CosmeticLocker() {
         if (!cancelled) setCurrencyPacks(packs);
       })
       .catch((error) => {
-        if (!cancelled) setErrorMessage(error instanceof Error ? error.message : String(error));
+        if (!cancelled) setErrorMessage(formatUiError(error));
       });
     return () => {
       cancelled = true;
@@ -762,7 +780,7 @@ export function CosmeticLocker() {
         })
         .catch((error) => {
           if (cancelled) return;
-          setErrorMessage(error instanceof Error ? error.message : String(error));
+          setErrorMessage(formatUiError(error));
         });
     };
     syncGroups();
@@ -807,7 +825,7 @@ export function CosmeticLocker() {
         })
         .catch((error) => {
           if (cancelled) return;
-          setErrorMessage(error instanceof Error ? error.message : String(error));
+          setErrorMessage(formatUiError(error));
         });
     };
     syncAppearance();
@@ -847,7 +865,7 @@ export function CosmeticLocker() {
       setStatusMessage(`${selectedCape.name} purchased.`);
       if (activeTab !== 'locker') setActiveTab('locker');
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(formatUiError(error));
     } finally {
       setActionBusy(false);
     }
@@ -859,11 +877,16 @@ export function CosmeticLocker() {
     setActionBusy(true);
     setErrorMessage(null);
     try {
-      const updated = await setCapeLoadout(selectedCape.slug);
-      setEquippedCapeId(updated?.equipped_cape_id ?? null);
+      await setCapeLoadout(selectedCape.slug);
+      const authoritative = await loadCurrentLoadout();
+      const equippedId = authoritative?.equipped_cape_id ?? null;
+      setEquippedCapeId(equippedId);
+      if (equippedId !== selectedCape.id) {
+        throw new Error('Equip did not persist on server. Check set_cape_loadout SQL function.');
+      }
       setStatusMessage(`${selectedCape.name} equipped.`);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(formatUiError(error));
     } finally {
       setActionBusy(false);
     }
@@ -873,11 +896,12 @@ export function CosmeticLocker() {
     setActionBusy(true);
     setErrorMessage(null);
     try {
-      const updated = await setCapeLoadout(null);
-      setEquippedCapeId(updated?.equipped_cape_id ?? null);
+      await setCapeLoadout(null);
+      const authoritative = await loadCurrentLoadout();
+      setEquippedCapeId(authoritative?.equipped_cape_id ?? null);
       setStatusMessage('Cape unequipped.');
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(formatUiError(error));
     } finally {
       setActionBusy(false);
     }
@@ -923,7 +947,7 @@ export function CosmeticLocker() {
     } catch (error) {
       setGuardState((current) =>
         current
-          ? { ...current, saving: false, error: error instanceof Error ? error.message : String(error) }
+          ? { ...current, saving: false, error: formatUiError(error) }
           : current
       );
     }
@@ -995,7 +1019,7 @@ export function CosmeticLocker() {
           setPreviewAppearance(normalizePreviewAppearance(saved));
         })
         .catch((error) => {
-          setErrorMessage(error instanceof Error ? error.message : String(error));
+          setErrorMessage(formatUiError(error));
         })
         .finally(() => {
           setPreviewAppearanceSaving(false);
@@ -1100,7 +1124,7 @@ export function CosmeticLocker() {
       setNewPartnerGroupInput('');
       setSelectedPartnerGroup(created.name);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(formatUiError(error));
     } finally {
       setCreatingPartnerGroup(false);
     }
@@ -1150,7 +1174,7 @@ export function CosmeticLocker() {
         is_featured: updatedCape.is_featured
       });
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(formatUiError(error));
     } finally {
       setOwnerEditSaving(false);
     }
@@ -2168,4 +2192,5 @@ export function CosmeticLocker() {
     </div>
   );
 }
+
 

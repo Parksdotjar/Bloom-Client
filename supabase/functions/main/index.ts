@@ -10,6 +10,7 @@ const CORS_HEADERS = {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 const KOFI_VERIFICATION_TOKEN = Deno.env.get("KOFI_VERIFICATION_TOKEN") ?? "";
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -103,6 +104,167 @@ async function readPayload(request: Request): Promise<JsonObject> {
   const nestedData = params.get("data");
   if (nestedData) return JSON.parse(nestedData) as JsonObject;
   return Object.fromEntries(params.entries());
+}
+
+function getBearerToken(request: Request): string | null {
+  const raw = request.headers.get("authorization");
+  if (!raw) return null;
+  const match = raw.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
+function createUserScopedClient(token: string) {
+  if (!SUPABASE_ANON_KEY) {
+    throw new Error("SUPABASE_ANON_KEY_missing");
+  }
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false },
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  });
+}
+
+async function handleCustomCapeDraft(request: Request) {
+  const token = getBearerToken(request);
+  if (!token) {
+    return jsonResponse(401, { ok: false, error: "missing_authorization" });
+  }
+
+  let payload: JsonObject;
+  try {
+    payload = await readPayload(request);
+  } catch (error) {
+    return jsonResponse(400, {
+      ok: false,
+      error: "invalid_payload",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  let userClient;
+  try {
+    userClient = createUserScopedClient(token);
+  } catch (error) {
+    return jsonResponse(503, {
+      ok: false,
+      error: "server_misconfigured",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const { data, error } = await userClient.rpc("commerce_create_or_update_custom_cape_draft", {
+    p_design_id: asString(payload.design_id),
+    p_source_image_path: asString(payload.source_image_path),
+    p_source_image_url: asString(payload.source_image_url),
+    p_crop_x: typeof payload.crop_x === "number" ? payload.crop_x : null,
+    p_crop_y: typeof payload.crop_y === "number" ? payload.crop_y : null,
+    p_crop_width: typeof payload.crop_width === "number" ? payload.crop_width : null,
+    p_crop_height: typeof payload.crop_height === "number" ? payload.crop_height : null,
+    p_export_width: typeof payload.export_width === "number" ? Math.round(payload.export_width) : 2048,
+  });
+
+  if (error) {
+    return jsonResponse(400, {
+      ok: false,
+      error: "draft_rpc_failed",
+      message: error.message,
+    });
+  }
+
+  return jsonResponse(200, { ok: true, draft: data as JsonObject | null });
+}
+
+async function handleCustomCapeDraftLatest(request: Request) {
+  const token = getBearerToken(request);
+  if (!token) {
+    return jsonResponse(401, { ok: false, error: "missing_authorization" });
+  }
+
+  let userClient;
+  try {
+    userClient = createUserScopedClient(token);
+  } catch (error) {
+    return jsonResponse(503, {
+      ok: false,
+      error: "server_misconfigured",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const { data, error } = await userClient.rpc("commerce_get_latest_custom_cape_design");
+  if (error) {
+    return jsonResponse(400, {
+      ok: false,
+      error: "draft_latest_rpc_failed",
+      message: error.message,
+    });
+  }
+  return jsonResponse(200, { ok: true, draft: data as JsonObject | null });
+}
+
+async function handleCustomCapeFinalize(request: Request) {
+  const token = getBearerToken(request);
+  if (!token) {
+    return jsonResponse(401, { ok: false, error: "missing_authorization" });
+  }
+
+  let payload: JsonObject;
+  try {
+    payload = await readPayload(request);
+  } catch (error) {
+    return jsonResponse(400, {
+      ok: false,
+      error: "invalid_payload",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  let userClient;
+  try {
+    userClient = createUserScopedClient(token);
+  } catch (error) {
+    return jsonResponse(503, {
+      ok: false,
+      error: "server_misconfigured",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const designId = asString(payload.design_id);
+  const finalAssetPath = asString(payload.final_asset_path);
+  const finalAssetUrl = asString(payload.final_asset_url);
+  const idempotencyKey = asString(payload.idempotency_key);
+
+  if (!designId || !finalAssetPath || !finalAssetUrl || !idempotencyKey) {
+    return jsonResponse(400, {
+      ok: false,
+      error: "missing_required_fields",
+    });
+  }
+
+  const { data, error } = await userClient.rpc("commerce_finalize_custom_cape_export", {
+    p_design_id: designId,
+    p_final_asset_path: finalAssetPath,
+    p_final_asset_url: finalAssetUrl,
+    p_idempotency_key: idempotencyKey,
+  });
+
+  if (error) {
+    return jsonResponse(400, {
+      ok: false,
+      error: "finalize_rpc_failed",
+      message: error.message,
+    });
+  }
+
+  const rows = Array.isArray(data) ? data : [];
+  return jsonResponse(200, {
+    ok: true,
+    result: rows[0] ?? null,
+  });
 }
 
 async function resolvePackageSlug(payload: JsonObject): Promise<{ slug: string | null; reason?: string }> {
@@ -216,6 +378,20 @@ Deno.serve(async (request) => {
   }
 
   const url = new URL(request.url);
+  const route = url.pathname.replace(/^.*\/functions\/v1\/main/, "") || "/";
+
+  if (request.method === "GET" && route === "/custom-cape/draft/latest") {
+    return handleCustomCapeDraftLatest(request);
+  }
+
+  if (request.method === "POST" && route === "/custom-cape/draft") {
+    return handleCustomCapeDraft(request);
+  }
+
+  if (request.method === "POST" && route === "/custom-cape/finalize") {
+    return handleCustomCapeFinalize(request);
+  }
+
   if (request.method === "GET") {
     return jsonResponse(200, {
       ok: true,

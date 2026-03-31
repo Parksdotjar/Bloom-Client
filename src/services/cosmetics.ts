@@ -150,6 +150,47 @@ export type PreviewAppearanceRecord = {
   updated_at: string;
 };
 
+export type CustomCapeDesignRecord = {
+  id: string;
+  user_id: string;
+  source_image_path: string | null;
+  source_image_url: string | null;
+  crop_x: number;
+  crop_y: number;
+  crop_width: number;
+  crop_height: number;
+  export_width: number;
+  export_height: number;
+  preview_watermarked: boolean;
+  purchased: boolean;
+  final_asset_path: string | null;
+  final_asset_url: string | null;
+  generated_cape_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreateOrUpdateCustomCapeDraftInput = {
+  design_id?: string | null;
+  source_image_path?: string | null;
+  source_image_url?: string | null;
+  crop_x?: number;
+  crop_y?: number;
+  crop_width?: number;
+  crop_height?: number;
+  export_width?: number;
+};
+
+export type FinalizeCustomCapeExportResult = {
+  design_id: string;
+  charged_bb: number;
+  new_balance_bb: number;
+  final_asset_url: string;
+  generated_cape_id: string | null;
+  exported_at: string;
+  transaction_status: string;
+};
+
 export const DEFAULT_PREVIEW_APPEARANCE: PreviewAppearanceRecord = {
   scope: 'global',
   exposure: 1.9,
@@ -264,8 +305,11 @@ export async function setCapeLoadout(slug: string | null) {
     p_cape_slug: slug
   });
   if (error) throw error;
-  const rows = (data ?? []) as LoadoutRecord[];
-  return rows[0] ?? null;
+  if (Array.isArray(data)) {
+    const rows = data as LoadoutRecord[];
+    return rows[0] ?? null;
+  }
+  return (data as LoadoutRecord | null) ?? null;
 }
 
 export async function createPendingCurrencyPurchase(email: string, packageSlug: string, ttlSeconds = 1800) {
@@ -372,6 +416,90 @@ export async function getSupabaseUserId() {
   const { data, error } = await supabase.auth.getUser();
   if (error) throw error;
   return data.user?.id ?? null;
+}
+
+export async function loadLatestCustomCapeDraft() {
+  const { data, error } = await supabase.rpc('commerce_get_latest_custom_cape_design');
+  if (error) throw error;
+  return (data as CustomCapeDesignRecord | null) ?? null;
+}
+
+export async function createOrUpdateCustomCapeDraft(input: CreateOrUpdateCustomCapeDraftInput) {
+  const { data, error } = await supabase.rpc('commerce_create_or_update_custom_cape_draft', {
+    p_design_id: input.design_id ?? null,
+    p_source_image_path: input.source_image_path ?? null,
+    p_source_image_url: input.source_image_url ?? null,
+    p_crop_x: input.crop_x ?? null,
+    p_crop_y: input.crop_y ?? null,
+    p_crop_width: input.crop_width ?? null,
+    p_crop_height: input.crop_height ?? null,
+    p_export_width: input.export_width ?? 2048
+  });
+  if (error) throw error;
+  return data as CustomCapeDesignRecord | null;
+}
+
+export async function uploadCustomCapeSourceImage(userId: string, file: File) {
+  const extension = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() ?? 'png' : 'png';
+  const objectPath = `${userId}/source/${crypto.randomUUID()}.${extension}`;
+  const { error } = await supabase.storage.from('custom-capes').upload(objectPath, file, {
+    contentType: file.type || 'application/octet-stream',
+    cacheControl: '3600',
+    upsert: false
+  });
+  if (error) throw error;
+  const { data } = supabase.storage.from('custom-capes').getPublicUrl(objectPath);
+  return {
+    path: objectPath,
+    publicUrl: data.publicUrl
+  };
+}
+
+export async function uploadCustomCapeFinalAtlas(userId: string, designId: string, blob: Blob) {
+  const objectPath = `${userId}/final/${designId}-${Date.now()}.png`;
+  const { error } = await supabase.storage.from('custom-capes').upload(objectPath, blob, {
+    contentType: 'image/png',
+    cacheControl: '31536000',
+    upsert: false
+  });
+  if (error) throw error;
+  const { data } = supabase.storage.from('custom-capes').getPublicUrl(objectPath);
+  return {
+    path: objectPath,
+    publicUrl: data.publicUrl
+  };
+}
+
+export async function finalizeCustomCapeExport(designId: string, finalAssetPath: string, finalAssetUrl: string, idempotencyKey: string) {
+  const { data, error } = await supabase.rpc('commerce_finalize_custom_cape_export', {
+    p_design_id: designId,
+    p_final_asset_path: finalAssetPath,
+    p_final_asset_url: finalAssetUrl,
+    p_idempotency_key: idempotencyKey
+  });
+  if (error) throw error;
+  const rows = (data ?? []) as FinalizeCustomCapeExportResult[];
+  return rows[0] ?? null;
+}
+
+export function getCustomCapePublicUrl(path: string) {
+  const { data } = supabase.storage.from('custom-capes').getPublicUrl(path);
+  return data.publicUrl;
+}
+
+export function subscribeOwnCustomCapeDrafts(userId: string, onChange: () => void) {
+  const channel = supabase
+    .channel(`commerce-custom-cape-designs-${userId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'commerce_custom_cape_designs', filter: `user_id=eq.${userId}` },
+      () => onChange()
+    )
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
 }
 
 export function subscribeOwnLoadout(userId: string, onChange: () => void) {

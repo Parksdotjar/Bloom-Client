@@ -1,5 +1,6 @@
 mod auth;
 mod backgrounds;
+mod bloom_bridge;
 mod bloom_mod;
 mod discord_presence;
 mod downloader;
@@ -72,6 +73,7 @@ pub fn run() {
             backgrounds::launcher_background_save,
             backgrounds::launcher_background_load,
             backgrounds::launcher_background_clear,
+            backgrounds::save_binary_file,
             servers::hosted_servers_list,
             servers::hosted_servers_get,
             servers::hosted_servers_create,

@@ -1,3 +1,5 @@
+import { resolveMinecraftCapeTemplate, type AtlasRegion } from './minecraftCapeLayout';
+
 export type CapeTextureAsset = {
   cacheKey: string;
   slug: string;
@@ -56,6 +58,27 @@ function createCanvas(width: number, height: number) {
   return canvas;
 }
 
+function drawContain(
+  ctx: CanvasRenderingContext2D,
+  source: CanvasImageSource,
+  sourceWidth: number,
+  sourceHeight: number,
+  target: AtlasRegion
+) {
+  const scale = Math.min(target.width / sourceWidth, target.height / sourceHeight);
+  const drawWidth = Math.max(1, Math.round(sourceWidth * scale));
+  const drawHeight = Math.max(1, Math.round(sourceHeight * scale));
+  const drawX = Math.round(target.x + (target.width - drawWidth) / 2);
+  const drawY = Math.round(target.y + (target.height - drawHeight) / 2);
+  ctx.drawImage(source, 0, 0, sourceWidth, sourceHeight, drawX, drawY, drawWidth, drawHeight);
+}
+
+async function canvasToBlob(canvas: HTMLCanvasElement) {
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png', 1));
+  if (!blob) throw new Error('cape_canvas_encode_failed');
+  return blob;
+}
+
 async function blobToBitmap(blob: Blob): Promise<ImageBitmap> {
   if (typeof createImageBitmap === 'function') {
     try {
@@ -83,6 +106,64 @@ async function blobToBitmap(blob: Blob): Promise<ImageBitmap> {
     throw new Error('image_bitmap_unavailable');
   } finally {
     URL.revokeObjectURL(url);
+  }
+}
+
+async function normalizeCapeBlob(slug: string, blob: Blob) {
+  const bitmap = await blobToBitmap(blob);
+  try {
+    const width = bitmap.width;
+    const height = bitmap.height;
+    if (width <= 0 || height <= 0) {
+      throw new Error('invalid_dimensions');
+    }
+    if (width === height * 2) {
+      const canvas = createCanvas(width, width);
+      const ctx = canvas.getContext('2d', { alpha: true });
+      if (!ctx) throw new Error('cape_normalize_context_unavailable');
+      ctx.clearRect(0, 0, width, width);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(bitmap, 0, 0, width, height, 0, 0, width, height);
+      const normalizedBlob = await canvasToBlob(canvas);
+      console.debug(`${logPrefix(slug)} normalized_legacy_atlas from=${width}x${height} to=${width}x${width}`);
+      return {
+        blob: normalizedBlob,
+        width,
+        height: width,
+        normalized: true
+      };
+    }
+
+    if (width !== height) {
+      const targetSize = Math.max(64, Math.min(4096, Math.ceil(Math.max(width, height) / 64) * 64));
+      const canvas = createCanvas(targetSize, targetSize);
+      const ctx = canvas.getContext('2d', { alpha: true });
+      if (!ctx) throw new Error('cape_square_context_unavailable');
+      ctx.clearRect(0, 0, targetSize, targetSize);
+      ctx.imageSmoothingEnabled = false;
+
+      const template = resolveMinecraftCapeTemplate(targetSize, targetSize);
+      drawContain(ctx, bitmap, width, height, template.front);
+      drawContain(ctx, bitmap, width, height, template.back);
+
+      const squareBlob = await canvasToBlob(canvas);
+      console.debug(`${logPrefix(slug)} normalized_face_art from=${width}x${height} to=${targetSize}x${targetSize}`);
+      return {
+        blob: squareBlob,
+        width: targetSize,
+        height: targetSize,
+        normalized: true
+      };
+    }
+
+    return {
+      blob,
+      width,
+      height,
+      normalized: false
+    };
+  } finally {
+    bitmap.close();
   }
 }
 
@@ -128,17 +209,16 @@ class CapeTextureLoader {
     }
 
     const blob = await response.blob();
-    const bytes = blob.size;
     const bodyBytes = new Uint8Array(await blob.arrayBuffer());
+    const bytes = bodyBytes.byteLength;
     if (!hasPngSignature(bodyBytes)) {
       console.error(`${logPrefix(slug)} non_png_payload status=${status} bytes=${bytes} url=${textureUrl}`);
       throw new Error('not_png');
     }
 
-    const bitmap = await blobToBitmap(blob);
-    const width = bitmap.width;
-    const height = bitmap.height;
-    bitmap.close();
+    const normalized = await normalizeCapeBlob(slug, blob);
+    const width = normalized.width;
+    const height = normalized.height;
     if (!plausibleCapeDimensions(width, height)) {
       console.error(`${logPrefix(slug)} invalid_dimensions=${width}x${height} status=${status} bytes=${bytes} url=${textureUrl}`);
       throw new Error('invalid_dimensions');
@@ -147,7 +227,7 @@ class CapeTextureLoader {
     console.debug(
       `${logPrefix(slug)} cache_miss status=${status} bytes=${bytes} decoded=${width}x${height} ms=${Math.round(performance.now() - started)} url=${textureUrl}`
     );
-    return blob;
+    return normalized.blob;
   }
 
   async loadFull(slug: string, textureUrl: string): Promise<CapeTextureAsset> {

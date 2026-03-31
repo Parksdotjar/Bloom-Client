@@ -41,3 +41,15 @@ pub fn launcher_background_clear(app: AppHandle) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[tauri::command]
+pub fn save_binary_file(path: String, data: Vec<u8>) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    if target.as_os_str().is_empty() {
+        return Err("invalid_save_path".to_string());
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create save directory: {e}"))?;
+    }
+    fs::write(&target, data).map_err(|e| format!("Failed to save file: {e}"))
+}
