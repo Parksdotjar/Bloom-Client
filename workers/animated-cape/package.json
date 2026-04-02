@@ -1,0 +1,14 @@
+{
+  "name": "bloom-animated-cape-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
+    "sharp": "^0.34.4"
+  }
+}

@@ -53,6 +53,8 @@ import {
   readHostServersUnlocked,
   setHostServersUnlocked as writeHostServersUnlocked
 } from '../constants/hostServerAccess';
+import { requestCosmeticsModMenuOpen } from '../constants/cosmeticsModMenu';
+import { ownerSetWalletBalance, secretSetOwnWalletBalance } from '../services/cosmetics';
 
 const Particles = lazy(() => import('./Particles').then((module) => ({ default: module.Particles })));
 
@@ -71,6 +73,8 @@ type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
 type SoundPackMode = 'off' | 'soft' | 'arcade' | 'retro';
 type StartupSceneTheme = 'nova' | 'horizon' | 'matrix';
 type StartupSceneSoundProfile = 'off' | 'shimmer' | 'impact';
+type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'news' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help';
+type SidebarTabsVisibility = Record<SidebarTabId, boolean>;
 
 type SearchEntry = {
   id: string;
@@ -130,10 +134,7 @@ const KEYBIND_ACTION_EVENT = 'bloom-keybind-action';
 const SHOW_WIDGET_DOCKER_KEY = 'bloom_show_widget_docker';
 const HIDE_EMPTY_WIDGET_SLOTS_KEY = 'bloom_hide_empty_widget_slots';
 const SHOW_GAMES_SECTION_KEY = 'bloom_show_games_section';
-const SOUND_PACK_KEY = 'bloom_sound_pack';
-const SOUND_CLICKS_KEY = 'bloom_sound_clicks_enabled';
-const SOUND_HOVERS_KEY = 'bloom_sound_hovers_enabled';
-const SOUND_NOTIFICATIONS_KEY = 'bloom_sound_notifications_enabled';
+const SIDEBAR_TABS_VISIBILITY_KEY = 'bloom_sidebar_tabs_visibility';
 const SOUND_CHANGE_EVENT = 'bloom-sound-change';
 const STARTUP_SCENE_ENABLED_KEY = 'bloom_startup_scene_enabled';
 const STARTUP_SCENE_THEME_KEY = 'bloom_startup_scene_theme';
@@ -143,6 +144,47 @@ const STARTUP_SCENE_AUTOPLAY_SESSION_KEY = 'bloom_startup_scene_autoplay_done';
 const MODS_REFRESH_EVENT = 'bloom-refresh-mods';
 const ONBOARDING_DONE_PREFIX = 'bloom_onboarding_done_';
 const ROUTE_TAB_ANIMATIONS_KEY = 'bloom_route_tab_animations_enabled';
+
+const SIDEBAR_TABS_VISIBILITY_DEFAULTS: SidebarTabsVisibility = {
+  home: true,
+  instances: true,
+  marketplace: true,
+  importer: true,
+  widgets: true,
+  cosmetics: true,
+  'custom-cape': true,
+  news: true,
+  chat: false,
+  'script-studio': false,
+  'host-server': false,
+  games: false,
+  help: true
+};
+
+function readSidebarTabsVisibility(): SidebarTabsVisibility {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_TABS_VISIBILITY_KEY);
+    if (!raw) return { ...SIDEBAR_TABS_VISIBILITY_DEFAULTS };
+    const parsed = JSON.parse(raw) as Partial<Record<SidebarTabId, unknown>>;
+    return {
+      home: typeof parsed.home === 'boolean' ? parsed.home : SIDEBAR_TABS_VISIBILITY_DEFAULTS.home,
+      instances: typeof parsed.instances === 'boolean' ? parsed.instances : SIDEBAR_TABS_VISIBILITY_DEFAULTS.instances,
+      marketplace: typeof parsed.marketplace === 'boolean' ? parsed.marketplace : SIDEBAR_TABS_VISIBILITY_DEFAULTS.marketplace,
+      importer: typeof parsed.importer === 'boolean' ? parsed.importer : SIDEBAR_TABS_VISIBILITY_DEFAULTS.importer,
+      widgets: typeof parsed.widgets === 'boolean' ? parsed.widgets : SIDEBAR_TABS_VISIBILITY_DEFAULTS.widgets,
+      cosmetics: typeof parsed.cosmetics === 'boolean' ? parsed.cosmetics : SIDEBAR_TABS_VISIBILITY_DEFAULTS.cosmetics,
+      'custom-cape': typeof parsed['custom-cape'] === 'boolean' ? parsed['custom-cape'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['custom-cape'],
+      news: typeof parsed.news === 'boolean' ? parsed.news : SIDEBAR_TABS_VISIBILITY_DEFAULTS.news,
+      chat: typeof parsed.chat === 'boolean' ? parsed.chat : SIDEBAR_TABS_VISIBILITY_DEFAULTS.chat,
+      'script-studio': typeof parsed['script-studio'] === 'boolean' ? parsed['script-studio'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['script-studio'],
+      'host-server': typeof parsed['host-server'] === 'boolean' ? parsed['host-server'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['host-server'],
+      games: typeof parsed.games === 'boolean' ? parsed.games : SIDEBAR_TABS_VISIBILITY_DEFAULTS.games,
+      help: typeof parsed.help === 'boolean' ? parsed.help : SIDEBAR_TABS_VISIBILITY_DEFAULTS.help
+    };
+  } catch {
+    return { ...SIDEBAR_TABS_VISIBILITY_DEFAULTS };
+  }
+}
 
 const ACCENT_MAP: Record<AccentMode, { accent: string; soft: string; gradient: string }> = {
   purple: { accent: '#9a65ff', soft: 'rgba(154, 101, 255, 0.26)', gradient: 'linear-gradient(90deg, #8f58ff 0%, #ba96ff 100%)' },
@@ -236,7 +278,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [backgroundVisualOpacity, setBackgroundVisualOpacity] = useState<number>(() => {
     const stored = Number(localStorage.getItem(BACKGROUND_VISUAL_OPACITY_KEY));
     if (Number.isFinite(stored)) return clampPercent(stored);
-    return 100;
+    return 20;
   });
   const [taskbarSurfaceOpacity, setTaskbarSurfaceOpacity] = useState<number>(() => {
     const stored = Number(localStorage.getItem(TASKBAR_SURFACE_OPACITY_KEY));
@@ -258,7 +300,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   });
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => {
     const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
-    return stored === 'rail' || stored === 'classic' || stored === 'expanded' ? stored : 'classic';
+    return stored === 'rail' || stored === 'classic' || stored === 'expanded' ? stored : 'rail';
   });
   const [sidebarPosition, setSidebarPosition] = useState<SidebarPosition>(() => {
     const stored = localStorage.getItem(SIDEBAR_POSITION_STORAGE_KEY);
@@ -303,6 +345,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   );
   const [routeTabAnimationsEnabled, setRouteTabAnimationsEnabled] = useState<boolean>(() => localStorage.getItem(ROUTE_TAB_ANIMATIONS_KEY) === 'true');
   const [showGamesSection, setShowGamesSection] = useState<boolean>(() => localStorage.getItem(SHOW_GAMES_SECTION_KEY) === 'true');
+  const [sidebarTabsVisibility, setSidebarTabsVisibility] = useState<SidebarTabsVisibility>(() => readSidebarTabsVisibility());
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const [iconPack, setIconPack] = useState<IconPackMode>(() => {
     const stored = localStorage.getItem(ICON_PACK_KEY);
@@ -324,12 +368,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
     return 70;
   });
   const [soundPack, setSoundPack] = useState<SoundPackMode>(() => {
-    const stored = localStorage.getItem(SOUND_PACK_KEY);
-    return stored === 'off' || stored === 'soft' || stored === 'arcade' || stored === 'retro' ? stored : 'soft';
+    return 'off';
   });
-  const [soundClicksEnabled, setSoundClicksEnabled] = useState<boolean>(() => localStorage.getItem(SOUND_CLICKS_KEY) !== 'false');
-  const [soundHoversEnabled, setSoundHoversEnabled] = useState<boolean>(() => localStorage.getItem(SOUND_HOVERS_KEY) === 'true');
-  const [soundNotificationsEnabled, setSoundNotificationsEnabled] = useState<boolean>(() => localStorage.getItem(SOUND_NOTIFICATIONS_KEY) !== 'false');
+  const [soundClicksEnabled, setSoundClicksEnabled] = useState<boolean>(() => false);
+  const [soundHoversEnabled, setSoundHoversEnabled] = useState<boolean>(() => false);
+  const [soundNotificationsEnabled, setSoundNotificationsEnabled] = useState<boolean>(() => false);
   const [startupSceneEnabled, setStartupSceneEnabled] = useState<boolean>(() => localStorage.getItem(STARTUP_SCENE_ENABLED_KEY) !== 'false');
   const [startupSceneTheme, setStartupSceneTheme] = useState<StartupSceneTheme>(() => {
     const stored = localStorage.getItem(STARTUP_SCENE_THEME_KEY);
@@ -356,7 +399,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [updatePreferences, setUpdatePreferences] = useState<UpdatePreferences>(() => readUpdatePreferences());
   const [availableLauncherUpdate, setAvailableLauncherUpdate] = useState<ExternalUpdate | null>(null);
-  const [updateNoticeVisible, setUpdateNoticeVisible] = useState(false);
   const [updateStatusMessage, setUpdateStatusMessage] = useState<string | null>(null);
   const [checkingLauncherUpdate, setCheckingLauncherUpdate] = useState(false);
   const [installingLauncherUpdate, setInstallingLauncherUpdate] = useState(false);
@@ -404,24 +446,23 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { startDownload } = useDownloader();
 
   const entries: SearchEntry[] = useMemo(() => {
-    const base: SearchEntry[] = [
-      { id: 'home', label: 'Home', description: 'Launcher overview', route: '/' },
-      { id: 'instances', label: 'Instances', description: 'Create and edit instances', route: '/instances' },
-      { id: 'marketplace', label: 'Marketplace', description: 'Install modpacks, mods, and resource packs', route: '/marketplace' },
-      { id: 'importer', label: 'Importer', description: 'Create instances from Modrinth packs or local archives', route: '/importer' },
-      { id: 'widgets', label: 'Widgets', description: 'Manage per-page widgets and visibility', route: '/widgets' },
-      { id: 'script-studio', label: 'Script Studio', description: 'IDE-style BloomScript editor and runtime', route: '/script-studio' },
-      { id: 'settings', label: 'Settings', description: 'Theme and launcher options', route: '/settings' }
-    ];
-    if (hostServersUnlocked) {
-      base.splice(6, 0, { id: 'host-server', label: 'Host Server', description: 'Run and manage local multiplayer servers', route: '/host-server' });
-    }
-    if (showGamesSection) {
-      base.splice(5, 0, { id: 'games', label: 'Games', description: 'Play Bloom Clicker, Flappy Bird, and Whiteboard', route: '/games' });
-    }
+    const base: SearchEntry[] = [];
+    if (sidebarTabsVisibility.home) base.push({ id: 'home', label: 'Home', description: 'Launcher overview', route: '/' });
+    if (sidebarTabsVisibility.instances) base.push({ id: 'instances', label: 'Instances', description: 'Create and edit instances', route: '/instances' });
+    if (sidebarTabsVisibility.marketplace) base.push({ id: 'marketplace', label: 'Marketplace', description: 'Install modpacks, mods, and resource packs', route: '/marketplace' });
+    if (sidebarTabsVisibility.importer) base.push({ id: 'importer', label: 'Importer', description: 'Create instances from Modrinth packs or local archives', route: '/importer' });
+    if (sidebarTabsVisibility.widgets) base.push({ id: 'widgets', label: 'Widgets', description: 'Manage per-page widgets and visibility', route: '/widgets' });
+    if (sidebarTabsVisibility.cosmetics) base.push({ id: 'cosmetics', label: 'Cosmetic Locker', description: 'Browse, buy, and equip Bloom cosmetics', route: '/cosmetics' });
+    if (sidebarTabsVisibility['custom-cape']) base.push({ id: 'custom-cape', label: 'Custom Cape', description: 'Create, preview, and export custom cape atlases', route: '/custom-cape' });
+    if (sidebarTabsVisibility['custom-cape']) base.push({ id: 'custom-cape-animated', label: 'Animated Cape Studio', description: 'Upload GIF/MP4 and process paid animated capes', route: '/animated-cape-studio' });
+    if (sidebarTabsVisibility.news) base.push({ id: 'news', label: 'Updates', description: 'Announcements, devlogs, and changelogs', route: '/news' });
+    if (sidebarTabsVisibility['script-studio']) base.push({ id: 'script-studio', label: 'Script Studio', description: 'IDE-style BloomScript editor and runtime', route: '/script-studio' });
+    if (showGamesSection && sidebarTabsVisibility.games) base.push({ id: 'games', label: 'Games', description: 'Play Bloom Clicker, Flappy Bird, and Whiteboard', route: '/games' });
+    if (hostServersUnlocked && sidebarTabsVisibility['host-server']) base.push({ id: 'host-server', label: 'Host Server', description: 'Run and manage local multiplayer servers', route: '/host-server' });
+    base.push({ id: 'settings', label: 'Settings', description: 'Theme and launcher options', route: '/settings' });
     if (!authState) base.push({ id: 'signin', label: 'Sign In', description: 'Connect Microsoft account', action: 'signin' });
     return base;
-  }, [authState, hostServersUnlocked, showGamesSection]);
+  }, [authState, hostServersUnlocked, showGamesSection, sidebarTabsVisibility]);
 
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -977,13 +1018,38 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const checkMax = async () => {
+    const checkWindowState = async () => {
       const windowRef = getCurrentWindow();
-      const max = await windowRef.isMaximized();
-      setIsMaximized(max);
+      const fullscreen = await windowRef.isFullscreen();
+      const maximized = await windowRef.isMaximized();
+      setIsFullscreen(fullscreen);
+      setIsMaximized(maximized);
     };
-    void checkMax();
+    void checkWindowState();
   }, []);
+
+  const toggleWindowFill = async () => {
+    const windowRef = getCurrentWindow();
+    try {
+      const fullscreen = await windowRef.isFullscreen();
+      const maximized = await windowRef.isMaximized();
+
+      if (fullscreen || maximized) {
+        if (fullscreen) await windowRef.setFullscreen(false);
+        if (maximized) await windowRef.unmaximize();
+      } else {
+        await windowRef.maximize();
+        const confirmedMax = await windowRef.isMaximized();
+        if (!confirmedMax) {
+          await windowRef.setFullscreen(true);
+        }
+      }
+      setIsFullscreen(await windowRef.isFullscreen());
+      setIsMaximized(await windowRef.isMaximized());
+    } catch (error) {
+      console.error('Failed to toggle filled window state:', error);
+    }
+  };
 
   useEffect(() => {
     const pageName =
@@ -991,6 +1057,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
       location.pathname === '/instances' ? 'Instances' :
       location.pathname === '/marketplace' ? 'Marketplace' :
       location.pathname === '/importer' || location.pathname === '/downloads' ? 'Modpack Importer' :
+      location.pathname === '/cosmetics' ? 'Cosmetic Locker' :
+      location.pathname === '/custom-cape' ? 'Custom Cape' :
+      location.pathname === '/animated-cape-studio' ? 'Animated Cape Studio' :
       location.pathname === '/script-studio' ? 'Script Studio' :
       location.pathname === '/host-server' ? 'Host Server' :
       location.pathname === '/settings' ? 'Settings' :
@@ -1201,12 +1270,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const onExtraChange = (event: Event) => {
-      const custom = event as CustomEvent<{ routeTabAnimationsEnabled?: boolean; showGamesSection?: boolean }>;
+      const custom = event as CustomEvent<{ routeTabAnimationsEnabled?: boolean; showGamesSection?: boolean; sidebarTabsVisibility?: SidebarTabsVisibility }>;
       if (typeof custom.detail?.routeTabAnimationsEnabled === 'boolean') {
         setRouteTabAnimationsEnabled(custom.detail.routeTabAnimationsEnabled);
       }
       if (typeof custom.detail?.showGamesSection === 'boolean') {
         setShowGamesSection(custom.detail.showGamesSection);
+      }
+      if (custom.detail?.sidebarTabsVisibility) {
+        setSidebarTabsVisibility(custom.detail.sidebarTabsVisibility);
       }
     };
     window.addEventListener('bloom-extra-change', onExtraChange as EventListener);
@@ -1257,6 +1329,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
       navigate('/settings', { replace: true });
     }
   }, [showGamesSection, location.pathname, navigate]);
+
+  useEffect(() => {
+    const hiddenRoute =
+      (location.pathname === '/chat' && !sidebarTabsVisibility.chat) ||
+      (location.pathname === '/cosmetics' && !sidebarTabsVisibility.cosmetics) ||
+      (location.pathname === '/custom-cape' && !sidebarTabsVisibility['custom-cape']) ||
+      (location.pathname === '/animated-cape-studio' && !sidebarTabsVisibility['custom-cape']) ||
+      (location.pathname === '/script-studio' && !sidebarTabsVisibility['script-studio']) ||
+      (location.pathname === '/host-server' && (!hostServersUnlocked || !sidebarTabsVisibility['host-server'])) ||
+      (location.pathname === '/games' && (!showGamesSection || !sidebarTabsVisibility.games));
+    if (hiddenRoute) {
+      navigate('/settings', { replace: true });
+    }
+  }, [location.pathname, navigate, hostServersUnlocked, showGamesSection, sidebarTabsVisibility]);
 
   useEffect(() => {
     if (!authState || !onboardingCompleted) {
@@ -1765,6 +1851,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
     }),
     setUiScale: setUiScaleFromConsole,
     setReducedMotion: setReducedMotionFromConsole,
+    openCosmeticsModMenu: () => {
+      requestCosmeticsModMenuOpen();
+      navigate('/cosmetics');
+    },
     listInstances: async () => {
       await loadInstances();
       return TauriApi.instancesList();
@@ -1798,7 +1888,27 @@ export function Layout({ children }: { children: React.ReactNode }) {
       setUpdateStatusMessage('Console notification test ping.');
       setNotificationsOpen(true);
     },
-    inspectTheme: inspectConsoleTheme
+    inspectTheme: inspectConsoleTheme,
+    setOwnWalletBalance: async (amount: number, mcUuid?: string | null) => {
+      const result = await ownerSetWalletBalance(amount, mcUuid ?? authState?.profile.id ?? null);
+      if (!result) {
+        throw new Error('Wallet update returned no result.');
+      }
+      return {
+        userId: result.user_id,
+        balanceBb: result.balance_bb
+      };
+    },
+    setSecretOwnWalletBalance: async (amount: number) => {
+      const result = await secretSetOwnWalletBalance(amount);
+      if (!result) {
+        throw new Error('Wallet update returned no result.');
+      }
+      return {
+        userId: result.user_id,
+        balanceBb: result.balance_bb
+      };
+    }
   }), [
     location.pathname,
     motionMode,
@@ -1910,14 +2020,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
       }
       setAvailableLauncherUpdate(update);
       if (!update) {
-        setUpdateNoticeVisible(false);
         setUpdateStatusMessage(source === 'manual' ? 'You are up to date.' : null);
         if (source === 'manual') setNotificationsOpen(true);
         return;
       }
       setUpdateStatusMessage(`Update available: v${update.version}`);
       if (updatePreferences.notifications || source === 'manual') {
-        setUpdateNoticeVisible(true);
         setNotificationsOpen(true);
       }
     } finally {
@@ -1943,7 +2051,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const openUpdatesSettings = () => {
     navigate('/settings');
     setNotificationsOpen(false);
-    setUpdateNoticeVisible(false);
     window.dispatchEvent(new CustomEvent('bloom-settings-open-tab', { detail: { tab: 'updates' } }));
   };
 
@@ -1983,6 +2090,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       sidebarPosition={sidebarPosition}
       surfaceOpacity={taskbarSurfaceOpacity}
       showHostServer={hostServersUnlocked}
+      sidebarTabsVisibility={sidebarTabsVisibility}
       toggleTheme={() => {}}
       onQuickLaunch={runQuickLaunchLastInstance}
       onOpenLogs={runOpenLogs}
@@ -2219,52 +2327,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <Move size={13} strokeWidth={iconStrokeWidth} />
             </button>
             <button
-              onClick={async () => {
-                const windowRef = getCurrentWindow();
-                await windowRef.toggleMaximize();
-                const max = await windowRef.isMaximized();
-                setIsMaximized(max);
+              onClick={() => {
+                void toggleWindowFill();
               }}
               className="g-window-btn"
-              title={isMaximized ? 'Restore' : 'Maximize'}
+              title={isFullscreen || isMaximized ? 'Restore' : 'Fullscreen'}
             >
-              <Maximize2 size={13} strokeWidth={iconStrokeWidth} className={isMaximized ? 'opacity-60' : ''} />
+              <Maximize2 size={13} strokeWidth={iconStrokeWidth} className={isFullscreen || isMaximized ? 'opacity-60' : ''} />
             </button>
             <button onClick={() => { void getCurrentWindow().close(); }} className="g-window-btn g-window-btn-danger" title="Close">
               <X size={14} strokeWidth={iconStrokeWidth} />
             </button>
           </div>
         </header>
-
-        {availableLauncherUpdate && updateNoticeVisible && (
-          <div className="absolute right-5 z-[210] w-[360px] app-region-no-drag" style={{ top: `${density.headerHeight + 14}px` }}>
-            <div className="rounded-2xl border border-white/12 bg-[var(--g-panel)]/95 p-4 shadow-[0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] g-accent-text">Update Available</p>
-                  <h3 className="mt-1 text-lg font-extrabold text-white">Bloom v{availableLauncherUpdate.version}</h3>
-                  <p className="mt-1 text-sm text-white/62">A newer launcher build is available. Install it from inside Bloom.</p>
-                </div>
-                <button onClick={() => setUpdateNoticeVisible(false)} className="h-8 w-8 rounded-lg border border-white/10 bg-white/[0.03] text-white/60 inline-flex items-center justify-center">
-                  <X size={14} strokeWidth={iconStrokeWidth} />
-                </button>
-              </div>
-              <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/55">Installer Asset</p>
-                <p className="mt-1 text-xs text-white/68">{availableLauncherUpdate.assetName}</p>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <button onClick={openUpdatesSettings} className="g-btn h-10 text-xs font-extrabold uppercase tracking-[0.12em]">
-                  Open Updates
-                </button>
-                <button onClick={() => { void runLauncherUpdateInstall(); }} disabled={installingLauncherUpdate} className="g-btn-accent h-10 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50">
-                  {installingLauncherUpdate ? 'Installing...' : 'Install Update'}
-                </button>
-              </div>
-              {updateStatusMessage && <p className="mt-2 text-[11px] text-white/50">{updateStatusMessage}</p>}
-            </div>
-          </div>
-        )}
 
         <main ref={mainRef} className="flex-1 min-h-0 overflow-y-auto app-region-no-drag" style={{ padding: density.mainPadding }}>
           <div className="min-h-full">{children}</div>

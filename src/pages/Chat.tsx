@@ -339,8 +339,7 @@ export function Chat() {
         const sessionRes = await supabase.auth.getSession();
         if (sessionRes.error) throw sessionRes.error;
         if (!sessionRes.data.session) {
-          const anonRes = await supabase.auth.signInAnonymously();
-          if (anonRes.error) throw anonRes.error;
+          throw new Error('Auth session missing! Please sign in again from Bloom Client.');
         }
 
         const syncRes = await supabase.rpc('chat_sync_identity', {

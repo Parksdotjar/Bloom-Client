@@ -33,7 +33,6 @@ type ButtonThemeMode = 'default' | 'simple' | 'cartoon' | 'glass' | 'neon' | 'pi
 type MotionMode = 'off' | 'subtle' | 'standard' | 'cinematic';
 type MotionEasingPreset = 'out-quad' | 'out-cubic' | 'in-out-cubic' | 'out-back' | 'out-elastic' | 'linear' | 'custom';
 type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
-type SoundPackMode = 'off' | 'soft' | 'arcade' | 'retro';
 type StartupSceneTheme = 'nova' | 'horizon' | 'matrix';
 type StartupSceneSoundProfile = 'off' | 'shimmer' | 'impact';
 type InstanceInstallLoadingStyle = 'orbit' | 'bars' | 'prism' | 'pulse';
@@ -87,6 +86,33 @@ type AppearancePresetExportFileV1 = {
 };
 
 type SettingsTab = 'general' | 'appearance' | 'keybinds' | 'widgets' | 'updates' | 'extra';
+type AppearanceSection = 'animation' | 'background' | 'sidebar' | 'style' | 'presets';
+type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'news' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help';
+type SidebarTabsVisibility = Record<SidebarTabId, boolean>;
+
+const APPEARANCE_SECTIONS: { id: AppearanceSection; label: string; description: string }[] = [
+  { id: 'animation', label: 'Animation', description: 'FPS, easing, and motion profile settings.' },
+  { id: 'background', label: 'Background', description: 'Background mode, opacity, and custom image controls.' },
+  { id: 'sidebar', label: 'Sidebar', description: 'Sidebar style, position, and dock visuals.' },
+  { id: 'style', label: 'Style', description: 'Buttons, roundness, card style, icon pack, and glass.' },
+  { id: 'presets', label: 'Presets', description: 'Save, import, export, and apply appearance presets.' }
+];
+
+const SIDEBAR_TABS_VISIBILITY_DEFAULTS: SidebarTabsVisibility = {
+  home: true,
+  instances: true,
+  marketplace: true,
+  importer: true,
+  widgets: true,
+  cosmetics: true,
+  'custom-cape': true,
+  news: true,
+  chat: false,
+  'script-studio': false,
+  'host-server': false,
+  games: false,
+  help: true
+};
 
 const THEME_STORAGE_KEY = 'bloom_theme_mode';
 const THEME_CHANGE_EVENT = 'bloom-theme-change';
@@ -137,6 +163,7 @@ const SIDEBAR_DOCK_HOVER_ENABLED_KEY = 'bloom_sidebar_dock_hover_enabled';
 const SIDEBAR_DOCK_GROW_SIZE_KEY = 'bloom_sidebar_dock_grow_size';
 const SIDEBAR_DOCK_GROW_SPEED_KEY = 'bloom_sidebar_dock_grow_speed';
 const SIDEBAR_TAB_GAP_KEY = 'bloom_sidebar_tab_gap';
+const SIDEBAR_TABS_VISIBILITY_KEY = 'bloom_sidebar_tabs_visibility';
 const UI_ASSET_PIXEL_LEVEL_KEY = 'bloom_ui_asset_pixel_level';
 const UI_ASSET_PIXEL_LEVEL_CHANGE_EVENT = 'bloom-ui-asset-pixel-level-change';
 const ICON_PACK_KEY = 'bloom_icon_pack';
@@ -153,11 +180,6 @@ const SHORTCUT_SETTINGS_KEY = 'bloom_shortcut_settings';
 const SHORTCUT_REPLAY_STARTUP_SCENE_KEY = 'bloom_shortcut_replay_startup_scene';
 const SHORTCUTS_CHANGE_EVENT = 'bloom-shortcuts-change';
 const EXTRA_KEYBINDS_STORAGE_KEY = 'bloom_extra_keybinds';
-const SOUND_PACK_KEY = 'bloom_sound_pack';
-const SOUND_CLICKS_KEY = 'bloom_sound_clicks_enabled';
-const SOUND_HOVERS_KEY = 'bloom_sound_hovers_enabled';
-const SOUND_NOTIFICATIONS_KEY = 'bloom_sound_notifications_enabled';
-const SOUND_CHANGE_EVENT = 'bloom-sound-change';
 const STARTUP_SCENE_ENABLED_KEY = 'bloom_startup_scene_enabled';
 const STARTUP_SCENE_THEME_KEY = 'bloom_startup_scene_theme';
 const STARTUP_SCENE_SOUND_PROFILE_KEY = 'bloom_startup_scene_sound_profile';
@@ -213,13 +235,6 @@ const BUTTON_THEMES: { id: ButtonThemeMode; label: string; description: string }
   { id: 'pill', label: 'Pill', description: 'Rounded capsule controls.' },
   { id: 'terminal', label: 'Terminal', description: 'Mono dashed command style.' },
   { id: 'arcade', label: 'Arcade', description: 'Punchy cabinet-button depth.' }
-];
-
-const SOUND_PACKS: { id: SoundPackMode; label: string; description: string }[] = [
-  { id: 'off', label: 'Off', description: 'Disable UI sounds.' },
-  { id: 'soft', label: 'Soft', description: 'Subtle clean cues.' },
-  { id: 'arcade', label: 'Arcade', description: 'Bright digital sounds.' },
-  { id: 'retro', label: 'Retro', description: 'Crunchier 8-bit style.' }
 ];
 
 const STARTUP_SCENE_THEMES: { id: StartupSceneTheme; label: string; description: string }[] = [
@@ -362,6 +377,31 @@ function clampUiAssetPixelLevel(value: number) {
 
 function clampRoundness(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function readSidebarTabsVisibility(): SidebarTabsVisibility {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_TABS_VISIBILITY_KEY);
+    if (!raw) return { ...SIDEBAR_TABS_VISIBILITY_DEFAULTS };
+    const parsed = JSON.parse(raw) as Partial<Record<SidebarTabId, unknown>>;
+    return {
+      home: typeof parsed.home === 'boolean' ? parsed.home : SIDEBAR_TABS_VISIBILITY_DEFAULTS.home,
+      instances: typeof parsed.instances === 'boolean' ? parsed.instances : SIDEBAR_TABS_VISIBILITY_DEFAULTS.instances,
+      marketplace: typeof parsed.marketplace === 'boolean' ? parsed.marketplace : SIDEBAR_TABS_VISIBILITY_DEFAULTS.marketplace,
+      importer: typeof parsed.importer === 'boolean' ? parsed.importer : SIDEBAR_TABS_VISIBILITY_DEFAULTS.importer,
+      widgets: typeof parsed.widgets === 'boolean' ? parsed.widgets : SIDEBAR_TABS_VISIBILITY_DEFAULTS.widgets,
+      cosmetics: typeof parsed.cosmetics === 'boolean' ? parsed.cosmetics : SIDEBAR_TABS_VISIBILITY_DEFAULTS.cosmetics,
+      'custom-cape': typeof parsed['custom-cape'] === 'boolean' ? parsed['custom-cape'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['custom-cape'],
+      news: typeof parsed.news === 'boolean' ? parsed.news : SIDEBAR_TABS_VISIBILITY_DEFAULTS.news,
+      chat: typeof parsed.chat === 'boolean' ? parsed.chat : SIDEBAR_TABS_VISIBILITY_DEFAULTS.chat,
+      'script-studio': typeof parsed['script-studio'] === 'boolean' ? parsed['script-studio'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['script-studio'],
+      'host-server': typeof parsed['host-server'] === 'boolean' ? parsed['host-server'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['host-server'],
+      games: typeof parsed.games === 'boolean' ? parsed.games : SIDEBAR_TABS_VISIBILITY_DEFAULTS.games,
+      help: typeof parsed.help === 'boolean' ? parsed.help : SIDEBAR_TABS_VISIBILITY_DEFAULTS.help
+    };
+  } catch {
+    return { ...SIDEBAR_TABS_VISIBILITY_DEFAULTS };
+  }
 }
 
 function clampGlassAmount(value: number) {
@@ -523,7 +563,7 @@ function readStoredAppearancePresets(): AppearancePresetRecord[] {
 function AppearanceDropdown(props: { title: string; description: string; children: ReactNode }) {
   const { title, description, children } = props;
   return (
-    <details className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+    <details open className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
       <summary className="cursor-pointer list-none">
         <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">{title}</p>
         <p className="text-xs g-muted mt-1">{description}</p>
@@ -635,6 +675,7 @@ function serializeKeybindMap(map: Record<string, string>) {
 
 export function Settings() {
   const [tab, setTab] = useState<SettingsTab>('general');
+  const [appearanceSection, setAppearanceSection] = useState<AppearanceSection>('animation');
   const [showWidgetDocker, setShowWidgetDocker] = useState<boolean>(() => localStorage.getItem(SHOW_WIDGET_DOCKER_KEY) === 'true');
   const [hideEmptyWidgetSlots, setHideEmptyWidgetSlots] = useState<boolean>(() => localStorage.getItem(HIDE_EMPTY_WIDGET_SLOTS_KEY) === 'true');
   const [showGamesSection, setShowGamesSection] = useState<boolean>(() => localStorage.getItem(SHOW_GAMES_SECTION_KEY) === 'true');
@@ -655,6 +696,7 @@ export function Settings() {
     if (Number.isFinite(stored)) return clampSidebarTabGap(stored);
     return 8;
   });
+  const [sidebarTabsVisibility, setSidebarTabsVisibility] = useState<SidebarTabsVisibility>(() => readSidebarTabsVisibility());
   const [uiAssetPixelLevel, setUiAssetPixelLevel] = useState<number>(() => {
     const stored = Number(localStorage.getItem(UI_ASSET_PIXEL_LEVEL_KEY));
     if (Number.isFinite(stored)) return clampUiAssetPixelLevel(stored);
@@ -713,13 +755,6 @@ export function Settings() {
   const [capturingShortcut, setCapturingShortcut] = useState<string | null>(null);
   const [keybindSaveState, setKeybindSaveState] = useState<'idle' | 'saved'>('idle');
   const [savingOverlayOpen, setSavingOverlayOpen] = useState(false);
-  const [soundPack, setSoundPack] = useState<SoundPackMode>(() => {
-    const stored = localStorage.getItem(SOUND_PACK_KEY);
-    return stored === 'off' || stored === 'soft' || stored === 'arcade' || stored === 'retro' ? stored : 'soft';
-  });
-  const [soundClicksEnabled, setSoundClicksEnabled] = useState<boolean>(() => localStorage.getItem(SOUND_CLICKS_KEY) !== 'false');
-  const [soundHoversEnabled, setSoundHoversEnabled] = useState<boolean>(() => localStorage.getItem(SOUND_HOVERS_KEY) === 'true');
-  const [soundNotificationsEnabled, setSoundNotificationsEnabled] = useState<boolean>(() => localStorage.getItem(SOUND_NOTIFICATIONS_KEY) !== 'false');
   const [startupSceneEnabled, setStartupSceneEnabled] = useState<boolean>(() => localStorage.getItem(STARTUP_SCENE_ENABLED_KEY) !== 'false');
   const [startupSceneTheme, setStartupSceneTheme] = useState<StartupSceneTheme>(() => {
     const stored = localStorage.getItem(STARTUP_SCENE_THEME_KEY);
@@ -778,7 +813,7 @@ export function Settings() {
   const [backgroundVisualOpacity, setBackgroundVisualOpacity] = useState<number>(() => {
     const stored = Number(localStorage.getItem(BACKGROUND_VISUAL_OPACITY_KEY));
     if (Number.isFinite(stored)) return clampPercent(stored);
-    return 100;
+    return 20;
   });
   const [taskbarSurfaceOpacity, setTaskbarSurfaceOpacity] = useState<number>(() => {
     const stored = Number(localStorage.getItem(TASKBAR_SURFACE_OPACITY_KEY));
@@ -800,7 +835,7 @@ export function Settings() {
   });
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => {
     const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
-    return stored === 'rail' || stored === 'classic' || stored === 'expanded' ? stored : 'classic';
+    return stored === 'rail' || stored === 'classic' || stored === 'expanded' ? stored : 'rail';
   });
   const [sidebarPosition, setSidebarPosition] = useState<SidebarPosition>(() => {
     const stored = localStorage.getItem(SIDEBAR_POSITION_STORAGE_KEY);
@@ -1004,29 +1039,6 @@ export function Settings() {
         showStartupTip: nextShowStartupTip,
         showDevCommands: nextShowDevCommands
       }
-    }));
-  };
-
-  const applySound = (partial: {
-    pack?: SoundPackMode;
-    clicks?: boolean;
-    hovers?: boolean;
-    notifications?: boolean;
-  }) => {
-    const nextPack = partial.pack ?? soundPack;
-    const nextClicks = partial.clicks ?? soundClicksEnabled;
-    const nextHovers = partial.hovers ?? soundHoversEnabled;
-    const nextNotifications = partial.notifications ?? soundNotificationsEnabled;
-    setSoundPack(nextPack);
-    setSoundClicksEnabled(nextClicks);
-    setSoundHoversEnabled(nextHovers);
-    setSoundNotificationsEnabled(nextNotifications);
-    localStorage.setItem(SOUND_PACK_KEY, nextPack);
-    localStorage.setItem(SOUND_CLICKS_KEY, nextClicks ? 'true' : 'false');
-    localStorage.setItem(SOUND_HOVERS_KEY, nextHovers ? 'true' : 'false');
-    localStorage.setItem(SOUND_NOTIFICATIONS_KEY, nextNotifications ? 'true' : 'false');
-    window.dispatchEvent(new CustomEvent(SOUND_CHANGE_EVENT, {
-      detail: { pack: nextPack, clicks: nextClicks, hovers: nextHovers, notifications: nextNotifications }
     }));
   };
 
@@ -1580,6 +1592,7 @@ export function Settings() {
     sidebarDockGrowSize?: number;
     sidebarDockGrowSpeed?: number;
     sidebarTabGap?: number;
+    sidebarTabsVisibility?: SidebarTabsVisibility;
   }) => {
     window.dispatchEvent(
       new CustomEvent(EXTRA_CHANGE_EVENT, {
@@ -1591,7 +1604,8 @@ export function Settings() {
           sidebarDockHoverEnabled: partial.sidebarDockHoverEnabled ?? sidebarDockHoverEnabled,
           sidebarDockGrowSize: partial.sidebarDockGrowSize ?? sidebarDockGrowSize,
           sidebarDockGrowSpeed: partial.sidebarDockGrowSpeed ?? sidebarDockGrowSpeed,
-          sidebarTabGap: partial.sidebarTabGap ?? sidebarTabGap
+          sidebarTabGap: partial.sidebarTabGap ?? sidebarTabGap,
+          sidebarTabsVisibility: partial.sidebarTabsVisibility ?? sidebarTabsVisibility
         }
       })
     );
@@ -1648,8 +1662,16 @@ export function Settings() {
     dispatchExtraChange({ sidebarTabGap: clamped });
   };
 
+  const applySidebarTabVisibility = (tabId: SidebarTabId, visible: boolean) => {
+    const next = { ...sidebarTabsVisibility, [tabId]: visible };
+    setSidebarTabsVisibility(next);
+    localStorage.setItem(SIDEBAR_TABS_VISIBILITY_KEY, JSON.stringify(next));
+    dispatchExtraChange({ sidebarTabsVisibility: next });
+  };
+
   const curvePath = `M 0 100 C ${motionEasingX1 * 100} ${100 - motionEasingY1 * 100}, ${motionEasingX2 * 100} ${100 - motionEasingY2 * 100}, 100 0`;
   const curveCss = `cubic-bezier(${motionEasingX1}, ${motionEasingY1}, ${motionEasingX2}, ${motionEasingY2})`;
+  const activeAppearanceSection = APPEARANCE_SECTIONS.find((section) => section.id === appearanceSection) ?? APPEARANCE_SECTIONS[0];
 
   return (
     <div className="max-w-[1100px] mx-auto min-h-full space-y-4">
@@ -1688,7 +1710,35 @@ export function Settings() {
 
         </section>
       ) : tab === 'appearance' ? (
-        <section className="g-panel p-6 space-y-6">
+        <section className="g-panel p-4 md:p-6">
+          <div className="grid grid-cols-1 xl:grid-cols-[240px_1fr] gap-4">
+            <aside className="rounded-xl border border-white/10 bg-white/[0.03] p-3 h-fit">
+              <p className="px-2 text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Appearance Groups</p>
+              <div className="mt-2 space-y-1">
+                {APPEARANCE_SECTIONS.map((section) => (
+                  <button
+                    key={section.id}
+                    onClick={() => setAppearanceSection(section.id)}
+                    className={clsx(
+                      'w-full rounded-lg border px-3 py-2.5 text-left transition',
+                      appearanceSection === section.id
+                        ? 'border-[var(--g-accent)] bg-white/[0.06] shadow-[0_0_0_1px_var(--g-accent-soft)]'
+                        : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.04]'
+                    )}
+                  >
+                    <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-white">{section.label}</p>
+                  </button>
+                ))}
+              </div>
+            </aside>
+            <div className="space-y-4">
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Active Group</p>
+                <h2 className="mt-1 text-xl font-extrabold text-white">{activeAppearanceSection.label}</h2>
+                <p className="mt-1 text-xs g-muted">{activeAppearanceSection.description}</p>
+              </div>
+
+              {appearanceSection === 'presets' && (
           <AppearanceDropdown title="Appearance Presets" description="Save, apply, export, and import full launcher look presets to share with others.">
             <input
               ref={appearanceImportRef}
@@ -1758,7 +1808,10 @@ export function Settings() {
               )}
             </div>
           </AppearanceDropdown>
+              )}
 
+              {appearanceSection === 'style' && (
+                <>
           <AppearanceDropdown title="Theme Mode" description="Pick the overall visual theme for the launcher.">
             <div className="flex justify-center">
               <button
@@ -1904,7 +1957,10 @@ export function Settings() {
               ))}
             </div>
           </AppearanceDropdown>
+                </>
+              )}
 
+              {appearanceSection === 'background' && (
           <AppearanceDropdown title="Background" description="Pick animated/background texture style.">
             <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
               {([ 
@@ -1949,33 +2005,52 @@ export function Settings() {
             </div>
 
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Custom Background</p>
-                  <p className="text-xs g-muted mt-1">Bloom outputs a 16:9 render. Images under 4K are rendered at 1920x1080. 4K sources render at 3840x2160.</p>
+                  <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Custom Background Editor</p>
+                  <p className="text-xs g-muted mt-1">Upload, drag to position, then save the final 16:9 render Bloom uses.</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <label className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] inline-flex items-center justify-center cursor-pointer">
                     Upload Image
                     <input type="file" accept="image/*" onChange={(event) => { void onCustomBackgroundFile(event); }} className="hidden" />
                   </label>
-                  <button onClick={() => { void saveCustomBackground(); }} disabled={!customBackgroundSource || customBackgroundSaving} className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50">
-                    {customBackgroundSaving ? 'Saving...' : 'Save Background'}
+                  <button
+                    onClick={() => { void saveCustomBackground(); }}
+                    disabled={!customBackgroundSource || customBackgroundSaving}
+                    className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                  >
+                    {customBackgroundSaving ? 'Saving...' : 'Save'}
                   </button>
-                  <button onClick={() => { void clearCustomBackground(); }} disabled={!customBackgroundSaved && !customBackgroundSource} className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50">
+                  <button
+                    onClick={() => {
+                      setCustomBackgroundPanX(0);
+                      setCustomBackgroundPanY(0);
+                      setCustomBackgroundZoom(1);
+                    }}
+                    disabled={!customBackgroundSource}
+                    className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                  >
+                    Reset View
+                  </button>
+                  <button
+                    onClick={() => { void clearCustomBackground(); }}
+                    disabled={!customBackgroundSaved && !customBackgroundSource}
+                    className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                  >
                     Clear
                   </button>
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-3 text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/55">
+              <div className="flex flex-wrap items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/55">
                 <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">Output {customBackgroundTarget.width}x{customBackgroundTarget.height}</span>
-                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">{customBackgroundSaved ? 'Saved to Bloom' : 'Not saved yet'}</span>
+                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">{customBackgroundSaved ? 'Saved' : 'Not Saved'}</span>
+                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">Zoom {customBackgroundZoom.toFixed(2)}x</span>
               </div>
 
-              <div className="grid grid-cols-1 xl:grid-cols-[1.25fr_0.9fr] gap-4">
+              <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_0.85fr] gap-4">
                 <div className="space-y-3">
-                  <p className="text-[11px] uppercase tracking-[0.12em] font-extrabold text-white/55">Position and Zoom</p>
                   <div
                     onPointerDown={onCustomBackgroundPointerDown}
                     onPointerMove={onCustomBackgroundPointerMove}
@@ -1995,21 +2070,37 @@ export function Settings() {
                         />
                         <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.06)_1px,transparent_1px)] [background-size:10%_10%]" />
                         <div className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-white/60 shadow-[0_0_0_9999px_rgba(0,0,0,0.28)]" />
+                        <div className="pointer-events-none absolute bottom-2 left-2 rounded-md border border-white/15 bg-black/45 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white/80">
+                          Drag to Pan
+                        </div>
                       </>
                     ) : (
-                      <div className="absolute inset-0 flex items-center justify-center text-sm font-bold text-white/38">Upload an image to position it</div>
+                      <div className="absolute inset-0 flex items-center justify-center text-sm font-bold text-white/38">Upload an image to start editing</div>
                     )}
                   </div>
+
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <label className="text-xs text-white/68">Horizontal
+                    <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-white/70">Horizontal</p>
+                        <span className="text-[11px] font-bold text-white/75">{customBackgroundPanX.toFixed(2)}</span>
+                      </div>
                       <input type="range" min={-1} max={1} step={0.01} value={customBackgroundPanX} onChange={(event) => setCustomBackgroundPanX(Number(event.target.value))} className="mt-2 w-full g-range" />
-                    </label>
-                    <label className="text-xs text-white/68">Vertical
+                    </div>
+                    <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-white/70">Vertical</p>
+                        <span className="text-[11px] font-bold text-white/75">{customBackgroundPanY.toFixed(2)}</span>
+                      </div>
                       <input type="range" min={-1} max={1} step={0.01} value={customBackgroundPanY} onChange={(event) => setCustomBackgroundPanY(Number(event.target.value))} className="mt-2 w-full g-range" />
-                    </label>
-                    <label className="text-xs text-white/68">Zoom
+                    </div>
+                    <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-white/70">Zoom</p>
+                        <span className="text-[11px] font-bold text-white/75">{customBackgroundZoom.toFixed(2)}x</span>
+                      </div>
                       <input type="range" min={1} max={2.8} step={0.01} value={customBackgroundZoom} onChange={(event) => setCustomBackgroundZoom(Number(event.target.value))} className="mt-2 w-full g-range" />
-                    </label>
+                    </div>
                   </div>
                 </div>
 
@@ -2023,7 +2114,7 @@ export function Settings() {
                         <div className="flex h-full items-center justify-center text-sm font-bold text-white/38">Saved output preview appears here</div>
                       )}
                     </div>
-                    <p className="mt-3 text-xs g-muted">This preview is rendered from the same canvas output Bloom will use for the launcher background.</p>
+                    <p className="mt-3 text-xs g-muted">This preview is rendered from the same output Bloom will save and use as your launcher background.</p>
                   </div>
                 </div>
               </div>
@@ -2031,7 +2122,10 @@ export function Settings() {
               {customBackgroundError && <p className="text-sm text-red-300">{customBackgroundError}</p>}
             </div>
           </AppearanceDropdown>
+              )}
 
+              {appearanceSection === 'sidebar' && (
+                <>
           <AppearanceDropdown title="Layout Density" description="Controls overall spacing and scale.">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {([
@@ -2108,6 +2202,41 @@ export function Settings() {
             </div>
           </AppearanceDropdown>
 
+          <AppearanceDropdown title="Sidebar Tabs" description="Toggle which tabs appear in the sidebar navigation.">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {([
+                { id: 'home', label: 'Home' },
+                { id: 'instances', label: 'Instances' },
+                { id: 'marketplace', label: 'Marketplace' },
+                { id: 'importer', label: 'Importer' },
+                { id: 'widgets', label: 'Widgets' },
+                { id: 'cosmetics', label: 'Cosmetic Locker' },
+                { id: 'custom-cape', label: 'Custom Cape' },
+                { id: 'news', label: 'Updates' },
+                { id: 'chat', label: 'Chat' },
+                { id: 'script-studio', label: 'Script Studio (IDE)' },
+                { id: 'host-server', label: 'Host Server' },
+                { id: 'games', label: 'Games' },
+                { id: 'help', label: 'Help' }
+              ] as { id: SidebarTabId; label: string }[]).map((tabOption) => (
+                <div key={tabOption.id} className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2.5 flex items-center justify-between gap-3">
+                  <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-white/78">{tabOption.label}</p>
+                  <button
+                    data-on={sidebarTabsVisibility[tabOption.id]}
+                    onClick={() => applySidebarTabVisibility(tabOption.id, !sidebarTabsVisibility[tabOption.id])}
+                    className="g-toggle"
+                    aria-label={`Toggle ${tabOption.label} tab`}
+                  />
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] g-muted">Default hidden tabs: Games, Script Studio, Chat, and Host Server.</p>
+          </AppearanceDropdown>
+                </>
+              )}
+
+              {appearanceSection === 'animation' && (
+                <>
           <AppearanceDropdown title="Motion Profile" description="Controls animation amount and pacing.">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
               {([
@@ -2270,6 +2399,10 @@ export function Settings() {
               <input type="range" min={-70} max={70} step={1} value={motionOffsetY} onChange={(event) => applyMotionTuning({ offsetY: Number(event.target.value) })} className="w-full mt-1 g-range" />
             </div>
           </AppearanceDropdown>
+                </>
+              )}
+            </div>
+          </div>
         </section>
       ) : tab === 'keybinds' ? (
         <section className="g-panel p-6 space-y-4">
@@ -2533,29 +2666,6 @@ export function Settings() {
                   ))}
                 </div>
               </div>
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">UI Sound Pack</p>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-              {SOUND_PACKS.map((pack) => (
-                <button key={pack.id} onClick={() => applySound({ pack: pack.id })} className={clsx('rounded-lg border p-2 text-left', soundPack === pack.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}>
-                  <p className="text-xs font-extrabold text-white uppercase tracking-[0.12em]">{pack.label}</p>
-                  <p className="text-[10px] g-muted mt-1">{pack.description}</p>
-                </button>
-              ))}
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              <button onClick={() => applySound({ clicks: !soundClicksEnabled })} className="g-btn w-full h-10 rounded-lg px-3 inline-flex items-center justify-between text-xs font-extrabold uppercase tracking-[0.12em]">
-                Clicks <span>{soundClicksEnabled ? 'On' : 'Off'}</span>
-              </button>
-              <button onClick={() => applySound({ hovers: !soundHoversEnabled })} className="g-btn w-full h-10 rounded-lg px-3 inline-flex items-center justify-between text-xs font-extrabold uppercase tracking-[0.12em]">
-                Hovers <span>{soundHoversEnabled ? 'On' : 'Off'}</span>
-              </button>
-              <button onClick={() => applySound({ notifications: !soundNotificationsEnabled })} className="g-btn w-full h-10 rounded-lg px-3 inline-flex items-center justify-between text-xs font-extrabold uppercase tracking-[0.12em]">
-                Notifications <span>{soundNotificationsEnabled ? 'On' : 'Off'}</span>
-              </button>
             </div>
           </div>
 

@@ -9,3 +9,18 @@ script = ""
 name = "Run"
 icon = "run"
 command = "npm run tauri dev"
+
+[[actions]]
+name = "supabase functions deploy main"
+icon = "tool"
+command = "supabase functions deploy main"
+
+[[actions]]
+name = "s"
+icon = "tool"
+command = '''
+const { data, error } = await supabase.auth.getSession();
+console.log('error:', error);
+console.log('access_token:', data?.session?.access_token);
+console.log('anon_key:', import.meta.env.VITE_SUPABASE_ANON_KEY);
+'''

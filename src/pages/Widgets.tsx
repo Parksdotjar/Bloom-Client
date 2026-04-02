@@ -19,13 +19,13 @@ type WidgetPageDef = {
 const WIDGET_PAGES: WidgetPageDef[] = [
   {
     pageKey: 'home',
-    label: 'Account',
+    label: 'Home',
     route: '/',
     storageType: 'home',
     widgets: [
       { id: 'hero', title: 'Hero', description: 'Main account header and quick launch panel.' },
       { id: 'instances', title: 'Instances', description: 'Instance cards and quick status.' },
-      { id: 'account', title: 'Account', description: 'Account controls and launch target selector.' },
+      { id: 'account', title: 'News', description: 'Published announcements, devlogs, and changelogs feed.' },
       { id: 'metrics', title: 'Metrics', description: 'Theme and launcher status cards.' },
       { id: 'clock', title: 'Clock', description: 'PC-synced clock and date.' },
       { id: 'stopwatch', title: 'Stopwatch', description: 'Start/pause/reset stopwatch widget.' }

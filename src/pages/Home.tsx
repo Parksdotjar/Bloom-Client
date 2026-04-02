@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Eye, EyeOff, GripVertical, Play, Shield, Sparkles, UserRound } from 'lucide-react';
+import { Eye, EyeOff, GripVertical, Play, Shield, Sparkles, Star, UserRound } from 'lucide-react';
 import { useInstances } from '../hooks/useInstances';
 import { useAuth } from '../hooks/useAuth';
 import { useDownloader } from '../hooks/useDownloader';
 import { TauriApi } from '../services/tauri';
+import { listNewsPosts, subscribeNewsPosts, type NewsPostRecord } from '../services/news';
 
 type HomeWidgetId = 'hero' | 'instances' | 'account' | 'metrics' | 'clock' | 'stopwatch';
 type HomeWidget = { id: HomeWidgetId; visible: boolean };
@@ -12,9 +13,9 @@ type WidgetSlot = 'hero' | 'leftTop' | 'rightTop' | 'leftBottom' | 'rightBottom'
 
 const WIDGETS_STORAGE_KEY = 'bloom_home_widgets';
 const WIDGET_LAYOUT_STORAGE_KEY = 'bloom_home_widget_layout';
-const ACCOUNT_LAUNCH_INSTANCE_KEY = 'bloom_account_launch_instance';
 const SHOW_WIDGET_DOCKER_KEY = 'bloom_show_widget_docker';
 const HIDE_EMPTY_WIDGET_SLOTS_KEY = 'bloom_hide_empty_widget_slots';
+const HOME_FAVORITE_INSTANCES_KEY = 'bloom_home_favorite_instances';
 const EXTRA_CHANGE_EVENT = 'bloom-extra-change';
 
 const SLOT_LABELS: Record<WidgetSlot, string> = {
@@ -27,8 +28,8 @@ const SLOT_LABELS: Record<WidgetSlot, string> = {
 
 const DEFAULT_LAYOUT: Record<HomeWidgetId, WidgetSlot> = {
   hero: 'hero',
-  instances: 'leftTop',
-  account: 'rightTop',
+  instances: 'leftBottom',
+  account: 'rightBottom',
   metrics: 'leftBottom',
   clock: 'rightBottom',
   stopwatch: 'rightBottom'
@@ -45,25 +46,44 @@ export function Home() {
   const [draggingWidget, setDraggingWidget] = useState<HomeWidgetId | null>(null);
   const [contextMenu, setContextMenu] = useState<{ widgetId: HomeWidgetId; x: number; y: number } | null>(null);
   const [showWidgetDocker, setShowWidgetDocker] = useState<boolean>(() => localStorage.getItem(SHOW_WIDGET_DOCKER_KEY) === 'true');
-  const [hideEmptyWidgetSlots, setHideEmptyWidgetSlots] = useState<boolean>(() => localStorage.getItem(HIDE_EMPTY_WIDGET_SLOTS_KEY) === 'true');
-  const [accountLaunchInstanceId, setAccountLaunchInstanceId] = useState<string>(() => localStorage.getItem(ACCOUNT_LAUNCH_INSTANCE_KEY) || '');
-  const [selectedCoverDataUrl, setSelectedCoverDataUrl] = useState<string | undefined>(undefined);
+  const [hideEmptyWidgetSlots, setHideEmptyWidgetSlots] = useState<boolean>(() => {
+    const stored = localStorage.getItem(HIDE_EMPTY_WIDGET_SLOTS_KEY);
+    if (stored === null) return true;
+    return stored === 'true';
+  });
+  const [newsPosts, setNewsPosts] = useState<NewsPostRecord[]>([]);
+  const [favoriteInstanceIds, setFavoriteInstanceIds] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(HOME_FAVORITE_INSTANCES_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((item) => typeof item === 'string').slice(0, 3);
+    } catch {
+      return [];
+    }
+  });
+  const [heroCoverDataUrls, setHeroCoverDataUrls] = useState<Record<string, string | undefined>>({});
   const [now, setNow] = useState<Date>(() => new Date());
   const [stopwatchRunning, setStopwatchRunning] = useState(false);
   const [stopwatchElapsedMs, setStopwatchElapsedMs] = useState(0);
 
-  const chips = useMemo(
-    () => [selected?.loader?.toUpperCase() || 'VANILLA', selected?.mcVersion || '1.21.1', authState ? authState.profile.name : 'OFFLINE'],
-    [selected, authState]
-  );
+  const favoriteInstances = useMemo(() => {
+    const byId = new Map(instances.map((instance) => [instance.id, instance]));
+    return favoriteInstanceIds.map((id) => byId.get(id)).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)).slice(0, 3);
+  }, [favoriteInstanceIds, instances]);
+  const heroInstances = useMemo(() => {
+    if (favoriteInstances.length > 0) return favoriteInstances;
+    return selected ? [selected] : [];
+  }, [favoriteInstances, selected]);
 
   const [widgets, setWidgets] = useState<HomeWidget[]>(() => {
     const defaults: HomeWidget[] = [
       { id: 'hero', visible: true },
       { id: 'instances', visible: true },
       { id: 'account', visible: true },
-      { id: 'metrics', visible: true },
-      { id: 'clock', visible: true },
+      { id: 'metrics', visible: false },
+      { id: 'clock', visible: false },
       { id: 'stopwatch', visible: false }
     ];
 
@@ -142,44 +162,54 @@ export function Home() {
   }, [contextMenu]);
 
   useEffect(() => {
-    if (instances.length === 0) {
-      setAccountLaunchInstanceId('');
-      localStorage.removeItem(ACCOUNT_LAUNCH_INSTANCE_KEY);
+    const sync = () => {
+      void listNewsPosts(5, false)
+        .then((rows) => setNewsPosts(rows))
+        .catch(() => {
+          // ignore feed errors on home
+        });
+    };
+    sync();
+    const off = subscribeNewsPosts(sync);
+    return () => off();
+  }, []);
+
+  useEffect(() => {
+    const validIds = favoriteInstanceIds.filter((id) => instances.some((instance) => instance.id === id)).slice(0, 3);
+    if (validIds.length !== favoriteInstanceIds.length || validIds.some((id, index) => id !== favoriteInstanceIds[index])) {
+      setFavoriteInstanceIds(validIds);
       return;
     }
-
-    const stillExists = instances.some((inst) => inst.id === accountLaunchInstanceId);
-    if (!stillExists) {
-      const next = instances[0].id;
-      setAccountLaunchInstanceId(next);
-      localStorage.setItem(ACCOUNT_LAUNCH_INSTANCE_KEY, next);
-      return;
-    }
-
-    localStorage.setItem(ACCOUNT_LAUNCH_INSTANCE_KEY, accountLaunchInstanceId);
-  }, [accountLaunchInstanceId, instances]);
+    localStorage.setItem(HOME_FAVORITE_INSTANCES_KEY, JSON.stringify(validIds));
+  }, [favoriteInstanceIds, instances]);
 
   useEffect(() => {
     let active = true;
-    if (!selected?.id) {
-      setSelectedCoverDataUrl(undefined);
+    if (heroInstances.length === 0) {
+      setHeroCoverDataUrls({});
       return () => {
         active = false;
       };
     }
-
-    void TauriApi.instancesGet(selected.id)
-      .then((instance) => {
-        if (active) setSelectedCoverDataUrl(instance.coverDataUrl);
+    void Promise.all(
+      heroInstances.map(async (instance) => {
+        try {
+          const row = await TauriApi.instancesGet(instance.id);
+          return [instance.id, row.coverDataUrl] as const;
+        } catch {
+          return [instance.id, undefined] as const;
+        }
       })
-      .catch(() => {
-        if (active) setSelectedCoverDataUrl(undefined);
-      });
-
+    ).then((pairs) => {
+      if (!active) return;
+      const next: Record<string, string | undefined> = {};
+      for (const [id, cover] of pairs) next[id] = cover;
+      setHeroCoverDataUrls(next);
+    });
     return () => {
       active = false;
     };
-  }, [selected?.id]);
+  }, [heroInstances]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
@@ -271,12 +301,21 @@ export function Home() {
     localStorage.setItem(WIDGETS_STORAGE_KEY, JSON.stringify(next));
   };
 
+  const toggleFavoriteInstance = (instanceId: string) => {
+    setFavoriteInstanceIds((current) => {
+      if (current.includes(instanceId)) {
+        return current.filter((id) => id !== instanceId);
+      }
+      const next = [instanceId, ...current];
+      return next.slice(0, 3);
+    });
+  };
+
   const isWidgetVisible = (id: HomeWidgetId) => widgets.find((widget) => widget.id === id)?.visible ?? false;
-  const accountLaunchInstance = instances.find((inst) => inst.id === accountLaunchInstanceId) ?? selected;
   const widgetTitles: Record<HomeWidgetId, string> = {
     hero: 'Hero',
     instances: 'Instances',
-    account: 'Account',
+    account: 'News',
     metrics: 'Metrics',
     clock: 'Clock',
     stopwatch: 'Stopwatch'
@@ -293,52 +332,67 @@ export function Home() {
 
   const widgetMap: Record<HomeWidgetId, ReactNode> = {
     hero: (
-      <section className="g-panel-strong p-6 relative overflow-hidden h-full">
-        {selectedCoverDataUrl && <img src={selectedCoverDataUrl} className="absolute inset-0 w-full h-full object-cover opacity-30" />}
-        <div className="relative">
-          <p className="text-[10px] font-extrabold tracking-[0.2em] uppercase g-accent-text">Welcome</p>
-          <div className="mt-2 flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
-            <div>
-              <h1 className="text-5xl font-extrabold leading-[0.95] text-white">{selected ? selected.name : 'Create your first instance'}</h1>
-              <p className="mt-2 text-sm g-muted">Dark control panel style with launcher logic intact.</p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {chips.map((chip) => (
-                  <span key={chip} className="g-chip px-3 py-1 text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/80">{chip}</span>
-                ))}
-                {selected?.colorTag && <span className="g-chip px-3 py-1 text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/80" style={{ borderColor: selected.colorTag }}>{selected.colorTag}</span>}
+      <section className="space-y-3 h-full">
+        {heroInstances.map((instance) => (
+          <div key={`hero-card-${instance.id}`} className="g-panel-strong p-6 relative overflow-hidden">
+            {heroCoverDataUrls[instance.id] && <img src={heroCoverDataUrls[instance.id]} className="absolute inset-0 w-full h-full object-cover opacity-30" />}
+            <div className="relative">
+              <p className="text-[10px] font-extrabold tracking-[0.2em] uppercase g-accent-text">Welcome</p>
+              <div className="mt-2 flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+                <div>
+                  <h1 className="text-5xl font-extrabold leading-[0.95] text-white">{instance.name}</h1>
+                  <p className="mt-2 text-sm g-muted">Dark control panel style with launcher logic intact.</p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {[
+                      instance.loader?.toUpperCase() || 'VANILLA',
+                      instance.mcVersion || '1.21.1',
+                      authState ? authState.profile.name : 'OFFLINE'
+                    ].map((chip) => (
+                      <span key={`${instance.id}-${chip}`} className="g-chip px-3 py-1 text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/80">{chip}</span>
+                    ))}
+                    {instance.colorTag && <span className="g-chip px-3 py-1 text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/80" style={{ borderColor: instance.colorTag }}>{instance.colorTag}</span>}
+                    <span className="inline-flex items-center gap-1 rounded-md border border-amber-300/45 bg-amber-500/18 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-amber-100">
+                      <Star size={11} className="fill-current" />
+                      {instance.name}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      void startDownload(instance, authState);
+                    }}
+                    className="g-btn-accent h-11 px-5 text-sm font-extrabold uppercase tracking-[0.12em] inline-flex items-center gap-2"
+                  >
+                    <Play size={14} /> Launch
+                  </button>
+                  <Link to={`/instance-editor?id=${encodeURIComponent(instance.id)}`} className="g-btn h-11 px-5 text-sm font-extrabold uppercase tracking-[0.12em] inline-flex items-center gap-2">
+                    Manage
+                  </Link>
+                </div>
               </div>
-            </div>
-            <div className="flex gap-2">
-              <button
-                disabled={!selected}
-                onClick={() => selected && startDownload(selected, authState)}
-                className="g-btn-accent h-11 px-5 text-sm font-extrabold uppercase tracking-[0.12em] inline-flex items-center gap-2 disabled:opacity-45"
-              >
-                <Play size={14} /> Launch
-              </button>
-              <Link to="/instances" className="g-btn h-11 px-5 text-sm font-extrabold uppercase tracking-[0.12em] inline-flex items-center gap-2">Manage</Link>
             </div>
           </div>
-          {download && (
-            <div className="mt-4 rounded-xl border border-white/12 bg-white/[0.03] p-3">
-              <div className="h-2 rounded-full bg-[var(--g-track)] overflow-hidden">
-                <div className="h-full g-accent-grad" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
-              </div>
-              <div className="mt-2 flex items-center justify-between text-[11px] font-bold text-white/70">
-                <span>{download.status}</span>
-                <span>{Math.floor(progress)}%</span>
-              </div>
-              {download.remediation === 'disable_essential_conflict' && selected && (
-                <button
-                  onClick={() => { void disableIncompatibleMods(selected.id); }}
-                  className="mt-3 g-btn h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] text-red-200 border-red-300/40"
-                >
-                  Disable incompatible mods
-                </button>
-              )}
+        ))}
+        {download && (
+          <div className="rounded-xl border border-white/12 bg-white/[0.03] p-3">
+            <div className="h-2 rounded-full bg-[var(--g-track)] overflow-hidden">
+              <div className="h-full g-accent-grad" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
             </div>
-          )}
-        </div>
+            <div className="mt-2 flex items-center justify-between text-[11px] font-bold text-white/70">
+              <span>{download.status}</span>
+              <span>{Math.floor(progress)}%</span>
+            </div>
+            {download.remediation === 'disable_essential_conflict' && selected && (
+              <button
+                onClick={() => { void disableIncompatibleMods(selected.id); }}
+                className="mt-3 g-btn h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] text-red-200 border-red-300/40"
+              >
+                Disable incompatible mods
+              </button>
+            )}
+          </div>
+        )}
       </section>
     ),
     instances: (
@@ -349,7 +403,7 @@ export function Home() {
         </div>
         <div className="mt-4 space-y-2">
           {instances.slice(0, 6).map((instance) => (
-            <Link key={instance.id} to={`/instance-editor?id=${encodeURIComponent(instance.id)}`} className="block rounded-xl border border-white/10 bg-white/[0.03] p-3 hover:bg-white/[0.06]">
+            <Link key={instance.id} to={`/instance-editor?id=${encodeURIComponent(instance.id)}`} className="group block rounded-xl border border-white/10 bg-white/[0.03] p-3 hover:bg-white/[0.06]">
               <div className="flex items-center gap-3">
                 <div
                   className={
@@ -367,6 +421,29 @@ export function Home() {
                   <p className="text-lg font-extrabold text-white">{instance.name}</p>
                   <p className="text-xs g-muted mt-1">{instance.loader.toUpperCase()} {instance.mcVersion}</p>
                 </div>
+                <div className="ml-auto inline-flex items-center gap-1.5">
+                  <button
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      toggleFavoriteInstance(instance.id);
+                    }}
+                    className="h-8 w-8 rounded-md border border-white/20 bg-black/25 grid place-items-center opacity-0 group-hover:opacity-100 transition-opacity hover:border-amber-300/55"
+                    title="Pin to hero (max 3)"
+                  >
+                    <Star size={14} className={favoriteInstanceIds.includes(instance.id) ? 'text-amber-300 fill-amber-300' : 'text-white/75'} />
+                  </button>
+                  <button
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void startDownload(instance, authState);
+                    }}
+                    className="g-btn-accent h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    Launch
+                  </button>
+                </div>
               </div>
             </Link>
           ))}
@@ -376,28 +453,23 @@ export function Home() {
     ),
     account: (
       <section className="g-panel p-4 h-full">
-        <div className="inline-flex items-center gap-2 text-white/75"><UserRound size={15} /><p className="text-xs font-extrabold uppercase tracking-[0.14em]">Account</p></div>
-        <p className="mt-2 text-xl font-extrabold text-white">{authState ? authState.profile.name : 'Not signed in'}</p>
-        <p className="mt-1 text-xs g-muted">{accountLaunchInstance ? `Launch target: ${accountLaunchInstance.name}` : 'No instance selected yet.'}</p>
-        <div className="mt-3 space-y-2">
-          <select
-            value={accountLaunchInstanceId}
-            onChange={(event) => setAccountLaunchInstanceId(event.target.value)}
-            className="w-full h-10 rounded-lg border border-white/12 bg-white/[0.04] px-3 text-sm font-bold text-white outline-none"
-          >
-            {instances.map((inst) => (
-              <option key={inst.id} value={inst.id} className="text-black">
-                {inst.name} - {inst.loader.toUpperCase()} {inst.mcVersion}
-              </option>
-            ))}
-          </select>
-          <button
-            disabled={!accountLaunchInstance}
-            onClick={() => accountLaunchInstance && startDownload(accountLaunchInstance, authState)}
-            className="w-full g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] inline-flex items-center justify-center gap-2 disabled:opacity-45"
-          >
-            <Play size={13} /> Launch Instance
-          </button>
+        <div className="inline-flex items-center gap-2 text-white/75"><UserRound size={15} /><p className="text-xs font-extrabold uppercase tracking-[0.14em]">News</p></div>
+        <p className="mt-2 text-xl font-extrabold text-white">Latest Updates</p>
+        <div className="mt-3 space-y-2 max-h-[220px] overflow-y-auto pr-1">
+          {newsPosts.length === 0 ? (
+            <p className="text-xs g-muted">No published updates yet.</p>
+          ) : (
+            newsPosts.map((post) => (
+              <Link key={post.id} to="/news" className="block rounded-lg border border-white/10 bg-white/[0.03] p-2 hover:bg-white/[0.06]">
+                <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-white/65">{post.post_type}</p>
+                <p className="mt-1 text-sm font-bold text-white truncate">{post.title}</p>
+                <p className="text-[11px] text-white/50 mt-1">{new Date(post.published_at || post.updated_at).toLocaleString()}</p>
+              </Link>
+            ))
+          )}
+          <Link to="/news" className="w-full g-btn-accent h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] inline-flex items-center justify-center gap-2">
+            Open News
+          </Link>
         </div>
       </section>
     ),

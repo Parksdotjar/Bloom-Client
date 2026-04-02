@@ -47,6 +47,7 @@ export type ConsoleCommandContext = {
   getAppearanceSnapshot: () => Record<string, string>;
   setUiScale: (value: number) => { mappedDensity: string };
   setReducedMotion: (enabled: boolean) => void;
+  openCosmeticsModMenu: () => void;
   listInstances: () => Promise<Instance[]>;
   createInstance: (name: string) => Promise<Instance>;
   removeInstance: (instanceId: string) => Promise<void>;
@@ -73,6 +74,8 @@ export type ConsoleCommandContext = {
   resetLayout: () => void;
   mockNotification: () => void;
   inspectTheme: () => Record<string, string>;
+  setOwnWalletBalance: (amount: number, mcUuid?: string | null) => Promise<{ userId: string; balanceBb: number }>;
+  setSecretOwnWalletBalance: (amount: number) => Promise<{ userId: string; balanceBb: number }>;
 };
 
 export type ConsoleCommandResult = {

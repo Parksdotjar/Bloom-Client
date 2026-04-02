@@ -39,6 +39,78 @@ npm run tauri build
 ```
 Binaries will be output to `src-tauri/target/release/bundle`.
 
+## Animated Cape Studio (Paid GIF/MP4 -> Runtime Atlas)
+
+This repo now includes a full Animated Cape Studio flow:
+
+- SQL + RLS + RPCs: `supabase/migrations/20260331193000_animated_cape_studio.sql`
+- Edge orchestration routes: `supabase/functions/main/index.ts`
+- Studio UI: `src/pages/AnimatedCapeStudio.tsx`
+- Runtime preview player: `src/services/animatedCapeRuntime.ts`
+- Worker (ffmpeg/ffprobe/sharp): `workers/animated-cape/`
+- Detailed contracts/setup: `docs/animated-cape-studio.md`
+
+### Local dev quick start
+1. Copy `.env.example` and fill Supabase keys.
+2. Apply migration in Supabase.
+3. Deploy/update the `main` edge function.
+4. Set `ANIMATED_CAPE_WORKER_SECRET` in edge function env.
+5. Run worker:
+   ```bash
+   cd workers/animated-cape
+   npm install
+   npm run dev
+   ```
+6. Run client:
+   ```bash
+   npm run dev
+   ```
+7. Open route: `/animated-cape-studio`.
+
+### Animated Worker Deployment (Coolify)
+Create a separate service from this repo using base directory:
+
+`workers/animated-cape`
+
+Required env vars:
+
+- `SUPABASE_URL` (example: `https://sb.bloomclient.org`)
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `BLOOM_MAIN_EDGE_URL` (example: `https://sb.bloomclient.org/functions/v1/main`)
+- `ANIMATED_CAPE_WORKER_SECRET` (must exactly match edge function env)
+- `POLL_INTERVAL_MS` (optional, default `2500`)
+- `CLAIM_LEASE_SECONDS` (optional, default `300`)
+
+Start command:
+
+`npm start`
+
+### How animated cape processing works end to end
+1. User uploads GIF/MP4 in Animated Cape Studio.
+2. Client requests signed upload ticket from edge route.
+3. Source media uploads to private bucket path scoped to user.
+4. Client registers upload metadata and submits paid order request.
+5. Server RPC validates FPS/duration tier and computes authoritative price.
+6. Server atomically debits wallet and writes ledger + order + queued job.
+7. Worker claims job, runs ffprobe/ffmpeg pipeline, packs atlas pages, generates manifest + thumbnail/preview.
+8. Worker uploads processed outputs and completes order through worker-only edge route.
+9. Completion writes cosmetic ownership/equip state and animation asset metadata.
+10. Client receives realtime updates, previews the processed animation, and can equip.
+
+### How Bloom Bucks charging/refunds stay atomic
+- Charging is performed inside a single server-side SQL transaction (`commerce_create_animated_cape_order`).
+- Wallet row is locked before debit to prevent race/double-spend.
+- Client price is ignored; server resolves tier price from `commerce_animated_cape_tiers`.
+- Ledger entries are written for each debit/refund with idempotency keys.
+- Worker failure path can call refund RPC (`commerce_refund_animated_cape_order`) to credit wallet and append a refund ledger entry atomically.
+
+### How to plug this into the Bloom in-game cosmetics renderer
+- Read equipped runtime data from `v_commerce_equipped_cape_runtime`.
+- For animated capes, fetch `manifest_storage_path` and preload `atlas_pages`.
+- Step frames using `durationMs` from manifest and choose `{page,x,y,w,h}` per tick.
+- Bind atlas textures once and reuse (no GIF decode in game, no per-frame network fetch).
+- Invalidate local cache when equipped cape or runtime asset changes.
+
 ## Auto-Updates (No New EXE Sharing)
 
 Bloom Client is now wired for Tauri updater releases.

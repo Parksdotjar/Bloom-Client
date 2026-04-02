@@ -1,0 +1,13 @@
+{
+  "providers": [
+    {
+      "type": "bitmap",
+      "file": "bloomcosmetics:textures/font/badges.png",
+      "ascent": 9,
+      "height": 10,
+      "chars": [
+        "\uE000"
+      ]
+    }
+  ]
+}

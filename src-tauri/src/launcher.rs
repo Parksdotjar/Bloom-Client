@@ -4,6 +4,8 @@ use tauri::AppHandle;
 const ORACLE_JAVA_25_PAGE: &str = "https://www.oracle.com/java/technologies/javase-downloads.html";
 const ORACLE_JAVA_25_WINDOWS_X64_EXE: &str =
     "https://download.oracle.com/java/25/latest/jdk-25_windows-x64_bin.exe";
+const ADOPTIUM_BINARY_ENDPOINT: &str =
+    "https://api.adoptium.net/v3/binary/latest/{major}/ga/windows/x64/jdk/hotspot/normal/eclipse";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LaunchConfig {
@@ -138,6 +140,175 @@ fn detect_required_java_major(mods_dir: &std::path::Path) -> Result<Option<u32>,
     }
 
     Ok(required_major)
+}
+
+fn parse_mc_version_core(mc_version: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = mc_version
+        .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .find(|chunk| chunk.contains('.'))?
+        .split('.')
+        .filter_map(|value| value.parse::<u32>().ok());
+    let major = parts.next()?;
+    let minor = parts.next().unwrap_or(0);
+    let patch = parts.next().unwrap_or(0);
+    Some((major, minor, patch))
+}
+
+fn detect_required_java_major_for_minecraft(mc_version: &str) -> Option<u32> {
+    let (major, minor, patch) = parse_mc_version_core(mc_version)?;
+    if major > 1 {
+        return Some(21);
+    }
+    if minor >= 21 {
+        return Some(21);
+    }
+    if minor == 20 && patch >= 5 {
+        return Some(21);
+    }
+    if minor >= 18 {
+        return Some(17);
+    }
+    Some(8)
+}
+
+fn managed_java_runtime_dir(paths: &crate::paths::AppPaths, major: u32) -> std::path::PathBuf {
+    paths.runtimes.join("java").join(format!("jdk-{}", major))
+}
+
+fn find_java_binary_under(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    for exe in ["javaw.exe", "java.exe"] {
+        let candidate = root.join("bin").join(exe);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    let entries = std::fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        for exe in ["javaw.exe", "java.exe"] {
+            let candidate = path.join("bin").join(exe);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
+async fn ensure_managed_java_runtime(
+    paths: &crate::paths::AppPaths,
+    required_major: u32,
+) -> Result<String, String> {
+    if !cfg!(target_os = "windows") {
+        return Err("Automatic Java install is currently supported on Windows only.".to_string());
+    }
+
+    let install_dir = managed_java_runtime_dir(paths, required_major);
+    if install_dir.exists() {
+        if let Some(existing) = find_java_binary_under(&install_dir) {
+            let existing_str = existing.to_string_lossy().to_string();
+            if detect_java_major(&existing_str).is_some_and(|major| major >= required_major) {
+                return Ok(existing_str);
+            }
+        }
+        let _ = std::fs::remove_dir_all(&install_dir);
+    }
+
+    std::fs::create_dir_all(install_dir.parent().unwrap_or(&paths.runtimes))
+        .map_err(|e| format!("Failed to create Java runtime directory: {}", e))?;
+
+    let download_url = ADOPTIUM_BINARY_ENDPOINT.replace("{major}", &required_major.to_string());
+    let response = reqwest::get(&download_url)
+        .await
+        .map_err(|e| format!("Failed downloading Java {} runtime: {}", required_major, e))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Failed downloading Java {} runtime (HTTP {})",
+            required_major,
+            response.status()
+        ));
+    }
+
+    let archive_bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed reading Java runtime archive: {}", e))?
+        .to_vec();
+    if archive_bytes.len() < 4
+        || archive_bytes[0] != 0x50
+        || archive_bytes[1] != 0x4B
+        || archive_bytes[2] != 0x03
+        || archive_bytes[3] != 0x04
+    {
+        return Err("Java runtime download was not a valid ZIP archive.".to_string());
+    }
+
+    let staging_dir = install_dir.with_extension("staging");
+    if staging_dir.exists() {
+        let _ = std::fs::remove_dir_all(&staging_dir);
+    }
+    std::fs::create_dir_all(&staging_dir)
+        .map_err(|e| format!("Failed to create Java staging directory: {}", e))?;
+
+    let cursor = std::io::Cursor::new(archive_bytes);
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|e| format!("Failed opening Java runtime ZIP: {}", e))?;
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|e| format!("Failed reading Java ZIP entry: {}", e))?;
+        let Some(enclosed) = entry.enclosed_name() else {
+            continue;
+        };
+        let out_path = staging_dir.join(enclosed);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out_path)
+                .map_err(|e| format!("Failed creating Java directory {}: {}", out_path.display(), e))?;
+            continue;
+        }
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed creating Java directory {}: {}", parent.display(), e))?;
+        }
+        let mut out = std::fs::File::create(&out_path)
+            .map_err(|e| format!("Failed writing Java file {}: {}", out_path.display(), e))?;
+        std::io::copy(&mut entry, &mut out)
+            .map_err(|e| format!("Failed extracting Java file {}: {}", out_path.display(), e))?;
+    }
+
+    let extracted_java_bin = find_java_binary_under(&staging_dir)
+        .ok_or_else(|| "Downloaded Java archive did not contain javaw.exe/java.exe.".to_string())?;
+    let extracted_home = extracted_java_bin
+        .parent()
+        .and_then(|p| p.parent())
+        .ok_or_else(|| "Failed to resolve extracted Java home directory.".to_string())?
+        .to_path_buf();
+
+    if install_dir.exists() {
+        let _ = std::fs::remove_dir_all(&install_dir);
+    }
+    std::fs::rename(&extracted_home, &install_dir)
+        .map_err(|e| format!("Failed installing Java runtime to {}: {}", install_dir.display(), e))?;
+    let _ = std::fs::remove_dir_all(&staging_dir);
+
+    let installed_java = find_java_binary_under(&install_dir)
+        .ok_or_else(|| "Installed Java runtime missing javaw.exe/java.exe.".to_string())?;
+    let installed_java_str = installed_java.to_string_lossy().to_string();
+    let major = detect_java_major(&installed_java_str)
+        .ok_or_else(|| "Installed Java runtime could not be detected.".to_string())?;
+    if major < required_major {
+        return Err(format!(
+            "Installed Java runtime is version {}, but {} is required.",
+            major, required_major
+        ));
+    }
+
+    Ok(installed_java_str)
 }
 
 fn discover_windows_java_binaries() -> Vec<String> {
@@ -324,7 +495,8 @@ fn build_java_launch_candidates(requested: &str, required_major: Option<u32>) ->
 
 #[tauri::command]
 pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(), String> {
-    use crate::bloom_mod::ensure_bloom_menu_mod;
+    use crate::bloom_bridge::{ensure_launcher_bridge, LaunchBridgeBootstrap};
+    use crate::bloom_mod::ensure_bloom_cosmetics_mod;
     use crate::paths::{paths_get, AppPaths};
     use std::collections::HashMap;
     use std::fs;
@@ -350,7 +522,14 @@ pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(),
     let loader_type = instance_json["loader"].as_str().unwrap_or("vanilla");
     let instance_dir = paths.instances.join(&config.instance_id);
 
-    ensure_bloom_menu_mod(&instance_dir, loader_type, mc_version)?;
+    ensure_bloom_cosmetics_mod(&instance_dir, loader_type, mc_version)?;
+
+    let bridge_runtime = ensure_launcher_bridge(LaunchBridgeBootstrap {
+        minecraft_uuid: config.uuid.clone(),
+        username: config.username.clone(),
+        mc_access_token: config.access_token.clone(),
+    })
+    .await?;
 
     // Guard against broken mod files that would crash Fabric with ZipException.
     if loader_type == "fabric" {
@@ -931,11 +1110,19 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
         .join(format!("launch-{}-{}.log", config.instance_id, ts));
 
     let working_dir = instance_dir;
-    let required_java_major = if loader_type == "fabric" {
+    let mod_required_java_major = if loader_type == "fabric" {
         detect_required_java_major(&working_dir.join("mods"))?
     } else {
         None
     };
+    let base_required_java_major = detect_required_java_major_for_minecraft(mc_version);
+    let required_java_major = match (base_required_java_major, mod_required_java_major) {
+        (Some(base), Some(mods)) => Some(base.max(mods)),
+        (Some(base), None) => Some(base),
+        (None, Some(mods)) => Some(mods),
+        (None, None) => None,
+    };
+
     let launch_candidates = build_java_launch_candidates(&config.java_path, required_java_major);
     let requested_java_is_generic = config.java_path.trim().is_empty()
         || config.java_path.eq_ignore_ascii_case("java")
@@ -945,10 +1132,40 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
             .strip_prefix("java")
             .and_then(|value| value.parse::<u32>().ok())
             .is_some();
+    let mut launch_candidates = launch_candidates;
     if let Some(required_major) = required_java_major {
-        let has_known_matching_candidate = launch_candidates
+        let mut has_known_matching_candidate = launch_candidates
             .iter()
             .any(|candidate| detect_java_major(candidate).is_some_and(|major| major >= required_major));
+        if !has_known_matching_candidate {
+            match ensure_managed_java_runtime(&paths, required_major).await {
+                Ok(managed_java_path) => {
+                    push_unique_case_insensitive(&mut launch_candidates, managed_java_path.clone());
+                    // Prefer managed runtime first for deterministic launches.
+                    launch_candidates.sort_by_key(|path| {
+                        if path.eq_ignore_ascii_case(&managed_java_path) {
+                            0
+                        } else {
+                            1
+                        }
+                    });
+                    has_known_matching_candidate = launch_candidates
+                        .iter()
+                        .any(|candidate| detect_java_major(candidate).is_some_and(|major| major >= required_major));
+                }
+                Err(auto_install_err) => {
+                    if !requested_java_is_generic {
+                        return Err(format!(
+                            "Installed Fabric mods require Java {} or later, but the configured Java runtime appears to be older. Install/select Java {}+ and launch again.\n\nAutomatic install failed: {}\n\n{}",
+                            required_major,
+                            required_major,
+                            auto_install_err,
+                            build_java_install_help(required_major)
+                        ));
+                    }
+                }
+            }
+        }
         if !requested_java_is_generic && !has_known_matching_candidate {
             return Err(format!(
                 "Installed Fabric mods require Java {} or later, but the configured Java runtime appears to be older. Install/select Java {}+ and launch again.\n\n{}",
@@ -981,6 +1198,9 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
 
         match Command::new(&candidate)
             .args(&args)
+            .env("BLOOM_BRIDGE_HOST", &bridge_runtime.host)
+            .env("BLOOM_BRIDGE_PORT", bridge_runtime.port.to_string())
+            .env("BLOOM_BRIDGE_TOKEN", &bridge_runtime.token)
             .stdout(Stdio::from(stdout_handle))
             .stderr(Stdio::from(stderr_handle))
             .current_dir(&working_dir)
