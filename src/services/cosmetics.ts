@@ -64,6 +64,12 @@ export type WalletRecord = {
   updated_at: string;
 };
 
+export type OwnerSetWalletBalanceResult = {
+  user_id: string;
+  balance_bb: number;
+  updated_at: string;
+};
+
 export type WalletLedgerRecord = {
   id: string;
   user_id: string;
@@ -236,24 +242,165 @@ export const DEFAULT_PREVIEW_APPEARANCE: PreviewAppearanceRecord = {
 async function ensureSession() {
   const sessionRes = await supabase.auth.getSession();
   if (sessionRes.error) throw sessionRes.error;
-  if (!sessionRes.data.session) {
-    const anonRes = await supabase.auth.signInAnonymously();
-    if (anonRes.error) throw anonRes.error;
+
+  let session = sessionRes.data.session;
+
+  if (!session) {
+    const refreshRes = await supabase.auth.refreshSession();
+    if (refreshRes.error || !refreshRes.data.session) {
+      throw new Error('Auth session missing! Please sign in again from Bloom Client.');
+    }
+    session = refreshRes.data.session;
   }
+
+  const refreshRes = await supabase.auth.refreshSession({ refresh_token: session.refresh_token });
+  if (!refreshRes.error && refreshRes.data.session) {
+    session = refreshRes.data.session;
+  }
+
+  const userRes = await supabase.auth.getUser();
+  if (!userRes.error && userRes.data.user) {
+    return;
+  }
+
+  const userMessage = String((userRes.error as { message?: string } | null)?.message ?? '');
+  const lower = userMessage.toLowerCase();
+  if (
+    lower.includes('invalid authentication credentials') ||
+    lower.includes('invalid auth session') ||
+    lower.includes('jwt')
+  ) {
+    const retryRefresh = await supabase.auth.refreshSession({ refresh_token: session.refresh_token });
+    if (retryRefresh.error || !retryRefresh.data.session) {
+      throw new Error('Auth session missing! Please sign in again from Bloom Client.');
+    }
+    return;
+  }
+
+  if (userRes.error) throw userRes.error;
 }
 
 export async function ensureCommerceIdentity(mcUuid: string, username: string, displayName?: string | null) {
   await ensureSession();
-  const { data, error } = await supabase.rpc('commerce_sync_identity', {
+
+  const userRes = await supabase.auth.getUser();
+  const authUserId = userRes.data.user?.id ?? null;
+
+  let { data, error } = await supabase.rpc('commerce_sync_identity', {
     p_mc_uuid: mcUuid,
     p_username: username,
     p_display_name: displayName ?? username
   });
-  if (error) throw error;
-  return data as CommerceProfile | null;
+
+  const authMessage = String((error as { message?: string } | null)?.message ?? '').toLowerCase();
+  if (
+    error &&
+    (authMessage.includes('invalid authentication credentials') ||
+      authMessage.includes('invalid auth session') ||
+      authMessage.includes('jwt'))
+  ) {
+    await ensureSession();
+    const retry = await supabase.rpc('commerce_sync_identity', {
+      p_mc_uuid: mcUuid,
+      p_username: username,
+      p_display_name: displayName ?? username
+    });
+    data = retry.data;
+    error = retry.error;
+  }
+
+  if (error) {
+    const message = String((error as { message?: string }).message ?? '');
+    if (message.includes('commerce_profiles_mc_uuid_key')) {
+      const userId = authUserId;
+      if (userId) {
+        const fallback = await supabase
+          .from('commerce_profiles')
+          .select('id,user_id,username,display_name,mc_uuid,role,created_at,updated_at')
+          .eq('user_id', userId)
+          .maybeSingle();
+        if (!fallback.error && fallback.data) {
+          return fallback.data as CommerceProfile;
+        }
+      }
+    }
+    const lower = message.toLowerCase();
+    if (
+      lower.includes('invalid authentication credentials') ||
+      lower.includes('invalid auth session') ||
+      lower.includes('jwt')
+    ) {
+      throw error;
+    }
+  }
+
+  if (data) {
+    return data as CommerceProfile | null;
+  }
+
+  // Hard fallback for self-hosted drift: ensure one row exists by user_id.
+  if (!authUserId) {
+    throw new Error('Auth session missing! Please sign in again from Bloom Client.');
+  }
+
+  const normalizedMcUuid = String(mcUuid || '').trim();
+  if (!normalizedMcUuid) {
+    throw new Error('mc_uuid_required');
+  }
+
+  const normalizedUsername = String(username || '').trim() || null;
+  const normalizedDisplay = String(displayName ?? username ?? '').trim() || normalizedUsername;
+
+  const profileUpsert = await supabase.from('commerce_profiles').upsert(
+    {
+      user_id: authUserId,
+      username: normalizedUsername,
+      display_name: normalizedDisplay,
+      mc_uuid: normalizedMcUuid
+    },
+    { onConflict: 'user_id' }
+  );
+  if (profileUpsert.error) throw profileUpsert.error;
+
+  // Wallet writes are intentionally restricted by RLS. Wallet bootstrap is handled by
+  // security-definer SQL paths; do not hard-fail identity sync on wallet insert policy.
+  const walletUpsert = await supabase.from('commerce_wallets').upsert(
+    {
+      user_id: authUserId,
+      balance_bb: 0
+    },
+    { onConflict: 'user_id' }
+  );
+  if (walletUpsert.error) {
+    const msg = String((walletUpsert.error as { message?: string } | null)?.message ?? '').toLowerCase();
+    const code = String((walletUpsert.error as { code?: string } | null)?.code ?? '');
+    const isWalletRls =
+      code === '42501' ||
+      msg.includes('row-level security') ||
+      msg.includes('violates row-level security policy');
+    if (!isWalletRls) throw walletUpsert.error;
+  }
+
+  const loadoutUpsert = await supabase.from('commerce_cape_loadout').upsert(
+    {
+      user_id: authUserId,
+      equipped_cape_id: null
+    },
+    { onConflict: 'user_id' }
+  );
+  if (loadoutUpsert.error) throw loadoutUpsert.error;
+
+  const profileSelect = await supabase
+    .from('commerce_profiles')
+    .select('user_id,username,display_name,mc_uuid,role,created_at,updated_at')
+    .eq('user_id', authUserId)
+    .maybeSingle();
+  if (profileSelect.error) throw profileSelect.error;
+  return (profileSelect.data as CommerceProfile | null) ?? null;
 }
 
 export async function loadShopCapes(search: string, rarity: string | null) {
+  await ensureSession();
   let query = supabase
     .from('v_commerce_shop_capes_ordered')
     .select(
@@ -279,12 +426,14 @@ export async function loadShopCapes(search: string, rarity: string | null) {
 }
 
 export async function loadOwnedCapes() {
+  await ensureSession();
   const { data, error } = await supabase.rpc('commerce_list_owned_capes');
   if (error) throw error;
   return (data ?? []) as OwnedCapeRecord[];
 }
 
 export async function loadCurrentLoadout() {
+  await ensureSession();
   const { data, error } = await supabase
     .from('commerce_cape_loadout')
     .select('user_id,equipped_cape_id,updated_at')
@@ -293,16 +442,54 @@ export async function loadCurrentLoadout() {
   return data as { user_id: string; equipped_cape_id: string | null; updated_at: string } | null;
 }
 
-export async function loadWallet() {
-  const { data, error } = await supabase
+export async function loadWallet(targetUserId?: string | null) {
+  await ensureSession();
+  let query = supabase
     .from('commerce_wallets')
-    .select('user_id,balance_bb,updated_at')
-    .maybeSingle();
+    .select('user_id,balance_bb,updated_at');
+  if (targetUserId) {
+    query = query.eq('user_id', targetUserId);
+  }
+  const { data, error } = await query.maybeSingle();
   if (error) throw error;
   return data as WalletRecord | null;
 }
 
+export async function ownerSetWalletBalance(amount: number, mcUuid?: string | null) {
+  await ensureSession();
+  const normalized = Math.max(0, Math.floor(Number(amount)));
+  if (!Number.isFinite(normalized)) {
+    throw new Error('Invalid balance amount.');
+  }
+  const { data, error } = await supabase.rpc('commerce_owner_set_wallet_balance', {
+    p_balance_bb: normalized,
+    p_mc_uuid: mcUuid ?? null
+  });
+  if (error) throw error;
+  if (Array.isArray(data)) {
+    return (data[0] ?? null) as OwnerSetWalletBalanceResult | null;
+  }
+  return (data as OwnerSetWalletBalanceResult | null) ?? null;
+}
+
+export async function secretSetOwnWalletBalance(amount: number) {
+  await ensureSession();
+  const normalized = Math.max(0, Math.floor(Number(amount)));
+  if (!Number.isFinite(normalized)) {
+    throw new Error('Invalid balance amount.');
+  }
+  const { data, error } = await supabase.rpc('commerce_secret_custom_bal_set_to', {
+    p_balance_bb: normalized
+  });
+  if (error) throw error;
+  if (Array.isArray(data)) {
+    return (data[0] ?? null) as OwnerSetWalletBalanceResult | null;
+  }
+  return (data as OwnerSetWalletBalanceResult | null) ?? null;
+}
+
 export async function loadWalletLedger(limit = 20) {
+  await ensureSession();
   const { data, error } = await supabase.rpc('commerce_list_wallet_ledger', {
     p_limit: Math.max(1, Math.min(200, Math.round(limit)))
   });
@@ -311,6 +498,7 @@ export async function loadWalletLedger(limit = 20) {
 }
 
 export async function loadCurrencyPacks() {
+  await ensureSession();
   const { data, error } = await supabase
     .from('commerce_currency_packs')
     .select('id,slug,name,price_usd,base_bb,bonus_bb,total_bb,kofi_url,is_active,sort_order')
@@ -524,8 +712,20 @@ export async function upsertPreviewAppearance(
 }
 
 export async function getSupabaseUserId() {
+  await ensureSession();
   const { data, error } = await supabase.auth.getUser();
-  if (error) throw error;
+  if (error) {
+    const message = String((error as { message?: string }).message ?? '').toLowerCase();
+    if (
+      message.includes('auth session missing') ||
+      message.includes('invalid authentication credentials') ||
+      message.includes('invalid auth session') ||
+      message.includes('jwt')
+    ) {
+      return null;
+    }
+    throw error;
+  }
   return data.user?.id ?? null;
 }
 

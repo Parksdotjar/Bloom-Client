@@ -54,6 +54,7 @@ import {
   setHostServersUnlocked as writeHostServersUnlocked
 } from '../constants/hostServerAccess';
 import { requestCosmeticsModMenuOpen } from '../constants/cosmeticsModMenu';
+import { ownerSetWalletBalance, secretSetOwnWalletBalance } from '../services/cosmetics';
 
 const Particles = lazy(() => import('./Particles').then((module) => ({ default: module.Particles })));
 
@@ -398,7 +399,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [updatePreferences, setUpdatePreferences] = useState<UpdatePreferences>(() => readUpdatePreferences());
   const [availableLauncherUpdate, setAvailableLauncherUpdate] = useState<ExternalUpdate | null>(null);
-  const [updateNoticeVisible, setUpdateNoticeVisible] = useState(false);
   const [updateStatusMessage, setUpdateStatusMessage] = useState<string | null>(null);
   const [checkingLauncherUpdate, setCheckingLauncherUpdate] = useState(false);
   const [installingLauncherUpdate, setInstallingLauncherUpdate] = useState(false);
@@ -454,6 +454,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     if (sidebarTabsVisibility.widgets) base.push({ id: 'widgets', label: 'Widgets', description: 'Manage per-page widgets and visibility', route: '/widgets' });
     if (sidebarTabsVisibility.cosmetics) base.push({ id: 'cosmetics', label: 'Cosmetic Locker', description: 'Browse, buy, and equip Bloom cosmetics', route: '/cosmetics' });
     if (sidebarTabsVisibility['custom-cape']) base.push({ id: 'custom-cape', label: 'Custom Cape', description: 'Create, preview, and export custom cape atlases', route: '/custom-cape' });
+    if (sidebarTabsVisibility['custom-cape']) base.push({ id: 'custom-cape-animated', label: 'Animated Cape Studio', description: 'Upload GIF/MP4 and process paid animated capes', route: '/animated-cape-studio' });
     if (sidebarTabsVisibility.news) base.push({ id: 'news', label: 'Updates', description: 'Announcements, devlogs, and changelogs', route: '/news' });
     if (sidebarTabsVisibility['script-studio']) base.push({ id: 'script-studio', label: 'Script Studio', description: 'IDE-style BloomScript editor and runtime', route: '/script-studio' });
     if (showGamesSection && sidebarTabsVisibility.games) base.push({ id: 'games', label: 'Games', description: 'Play Bloom Clicker, Flappy Bird, and Whiteboard', route: '/games' });
@@ -1058,6 +1059,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       location.pathname === '/importer' || location.pathname === '/downloads' ? 'Modpack Importer' :
       location.pathname === '/cosmetics' ? 'Cosmetic Locker' :
       location.pathname === '/custom-cape' ? 'Custom Cape' :
+      location.pathname === '/animated-cape-studio' ? 'Animated Cape Studio' :
       location.pathname === '/script-studio' ? 'Script Studio' :
       location.pathname === '/host-server' ? 'Host Server' :
       location.pathname === '/settings' ? 'Settings' :
@@ -1333,6 +1335,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       (location.pathname === '/chat' && !sidebarTabsVisibility.chat) ||
       (location.pathname === '/cosmetics' && !sidebarTabsVisibility.cosmetics) ||
       (location.pathname === '/custom-cape' && !sidebarTabsVisibility['custom-cape']) ||
+      (location.pathname === '/animated-cape-studio' && !sidebarTabsVisibility['custom-cape']) ||
       (location.pathname === '/script-studio' && !sidebarTabsVisibility['script-studio']) ||
       (location.pathname === '/host-server' && (!hostServersUnlocked || !sidebarTabsVisibility['host-server'])) ||
       (location.pathname === '/games' && (!showGamesSection || !sidebarTabsVisibility.games));
@@ -1885,7 +1888,27 @@ export function Layout({ children }: { children: React.ReactNode }) {
       setUpdateStatusMessage('Console notification test ping.');
       setNotificationsOpen(true);
     },
-    inspectTheme: inspectConsoleTheme
+    inspectTheme: inspectConsoleTheme,
+    setOwnWalletBalance: async (amount: number, mcUuid?: string | null) => {
+      const result = await ownerSetWalletBalance(amount, mcUuid ?? authState?.profile.id ?? null);
+      if (!result) {
+        throw new Error('Wallet update returned no result.');
+      }
+      return {
+        userId: result.user_id,
+        balanceBb: result.balance_bb
+      };
+    },
+    setSecretOwnWalletBalance: async (amount: number) => {
+      const result = await secretSetOwnWalletBalance(amount);
+      if (!result) {
+        throw new Error('Wallet update returned no result.');
+      }
+      return {
+        userId: result.user_id,
+        balanceBb: result.balance_bb
+      };
+    }
   }), [
     location.pathname,
     motionMode,
@@ -1997,7 +2020,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
       }
       setAvailableLauncherUpdate(update);
       if (!update) {
-        setUpdateNoticeVisible(false);
         setUpdateStatusMessage(source === 'manual' ? 'You are up to date.' : null);
         if (source === 'manual') setNotificationsOpen(true);
         return;
@@ -2029,7 +2051,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const openUpdatesSettings = () => {
     navigate('/settings');
     setNotificationsOpen(false);
-    setUpdateNoticeVisible(false);
     window.dispatchEvent(new CustomEvent('bloom-settings-open-tab', { detail: { tab: 'updates' } }));
   };
 
@@ -2319,36 +2340,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         </header>
-
-        {availableLauncherUpdate && updateNoticeVisible && (
-          <div className="absolute right-5 z-[210] w-[360px] app-region-no-drag" style={{ top: `${density.headerHeight + 14}px` }}>
-            <div className="rounded-2xl border border-white/12 bg-[var(--g-panel)]/95 p-4 shadow-[0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] g-accent-text">Update Available</p>
-                  <h3 className="mt-1 text-lg font-extrabold text-white">Bloom v{availableLauncherUpdate.version}</h3>
-                  <p className="mt-1 text-sm text-white/62">A newer launcher build is available. Install it from inside Bloom.</p>
-                </div>
-                <button onClick={() => setUpdateNoticeVisible(false)} className="h-8 w-8 rounded-lg border border-white/10 bg-white/[0.03] text-white/60 inline-flex items-center justify-center">
-                  <X size={14} strokeWidth={iconStrokeWidth} />
-                </button>
-              </div>
-              <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/55">Installer Asset</p>
-                <p className="mt-1 text-xs text-white/68">{availableLauncherUpdate.assetName}</p>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <button onClick={openUpdatesSettings} className="g-btn h-10 text-xs font-extrabold uppercase tracking-[0.12em]">
-                  Open Updates
-                </button>
-                <button onClick={() => { void runLauncherUpdateInstall(); }} disabled={installingLauncherUpdate} className="g-btn-accent h-10 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50">
-                  {installingLauncherUpdate ? 'Installing...' : 'Install Update'}
-                </button>
-              </div>
-              {updateStatusMessage && <p className="mt-2 text-[11px] text-white/50">{updateStatusMessage}</p>}
-            </div>
-          </div>
-        )}
 
         <main ref={mainRef} className="flex-1 min-h-0 overflow-y-auto app-region-no-drag" style={{ padding: density.mainPadding }}>
           <div className="min-h-full">{children}</div>

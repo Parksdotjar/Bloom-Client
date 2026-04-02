@@ -2,6 +2,7 @@ package dev.bloom.cosmetics
 
 import dev.bloom.cosmetics.auth.LauncherBridgeAuth
 import dev.bloom.cosmetics.cache.TextureCacheManager
+import dev.bloom.cosmetics.client.badges.BadgeSystem
 import dev.bloom.cosmetics.cosmetics.cape.CapeManager
 import dev.bloom.cosmetics.cosmetics.cape.CapeStateService
 import dev.bloom.cosmetics.presence.PlayerIdentityResolver
@@ -19,6 +20,7 @@ object BloomCosmeticsRuntime {
     private val capeManager = CapeManager(capeStateService, playerIdentityResolver)
 
     fun initialize() {
+        BadgeSystem.initialize()
         remoteSyncService.initialize()
 
         ClientTickEvents.END_CLIENT_TICK.register { client ->

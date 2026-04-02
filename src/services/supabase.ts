@@ -20,14 +20,14 @@ function normalizeSupabaseUrl(raw: string) {
   }
 }
 
-const supabaseUrl = normalizeSupabaseUrl(import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL);
-const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY).trim();
+export const ACTIVE_SUPABASE_URL = normalizeSupabaseUrl(import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL);
+export const ACTIVE_SUPABASE_ANON_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY).trim();
 
-if (!supabaseUrl || !supabaseAnonKey) {
+if (!ACTIVE_SUPABASE_URL || !ACTIVE_SUPABASE_ANON_KEY) {
   throw new Error('Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase = createClient(ACTIVE_SUPABASE_URL, ACTIVE_SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,

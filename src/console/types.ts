@@ -74,6 +74,8 @@ export type ConsoleCommandContext = {
   resetLayout: () => void;
   mockNotification: () => void;
   inspectTheme: () => Record<string, string>;
+  setOwnWalletBalance: (amount: number, mcUuid?: string | null) => Promise<{ userId: string; balanceBb: number }>;
+  setSecretOwnWalletBalance: (amount: number) => Promise<{ userId: string; balanceBb: number }>;
 };
 
 export type ConsoleCommandResult = {

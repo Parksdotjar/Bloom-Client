@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent } from 'react';
 import { clsx } from 'clsx';
 import { Coins, Download, ImagePlus, Move, RefreshCw, UploadCloud, ZoomIn } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { MinecraftPlayerPreview } from '../components/cosmetics/MinecraftPlayerPreview';
 import {
@@ -201,6 +202,7 @@ async function saveCustomCapeDebugArtifacts(
 }
 
 export function CustomCape() {
+  const navigate = useNavigate();
   const { authState, startLogin } = useAuth();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
@@ -935,6 +937,13 @@ export function CustomCape() {
           <h1 className="text-2xl font-extrabold text-white mt-1">Custom Cape</h1>
         </div>
         <div className="flex items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => navigate('/animated-cape-studio')}
+            className="g-btn h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]"
+          >
+            Open Animated Studio
+          </button>
           <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/80">
             Visible Face Ratio (H:W): 2:1
           </div>

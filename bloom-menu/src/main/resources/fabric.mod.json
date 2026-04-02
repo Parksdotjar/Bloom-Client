@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "bloomcosmetics",
   "version": "${version}",
-  "name": "BLOOM COSMETICS v0.0.9",
+  "name": "BLOOM COSMETICS v0.0.23",
   "description": "Client-side Bloom cosmetics live sync and rendering mod. No in-game UI; controlled by Bloom Client launcher.",
   "authors": [
     "Bloom",

@@ -397,6 +397,11 @@ function formatUiError(error: unknown) {
   return String(error);
 }
 
+function isAuthMissingMessage(message: string | null) {
+  if (!message) return false;
+  return message.toLowerCase().includes('auth session missing');
+}
+
 function normalizePreviewAppearance(value: PreviewAppearanceRecord): PreviewAppearanceRecord {
   return {
     ...value,
@@ -754,14 +759,14 @@ export function CosmeticLocker() {
     setErrorMessage(null);
     try {
       const profile = await ensureCommerceIdentity(authState.profile.id, authState.profile.name, authState.profile.name);
-      const [shopData, ownedData, loadoutData, walletData, ledgerData, packsData, userId, appearance, groups, presetRows] = await Promise.all([
+      const sessionUserId = await getSupabaseUserId();
+      const [shopData, ownedData, loadoutData, walletData, ledgerData, packsData, appearance, groups, presetRows] = await Promise.all([
         loadShopCapes(searchQuery, rarityFilter),
         loadOwnedCapes(),
         loadCurrentLoadout(),
-        loadWallet(),
+        loadWallet(sessionUserId ?? profile?.user_id ?? null),
         loadWalletLedger(25),
         loadCurrencyPacks(),
-        getSupabaseUserId(),
         loadPreviewAppearance(),
         loadPartnerGroups(),
         loadRarityPresets()
@@ -774,7 +779,7 @@ export function CosmeticLocker() {
       setWalletBalance(walletData?.balance_bb ?? 0);
       setWalletLedger(ledgerData);
       setCurrencyPacks(packsData);
-      setSupabaseUserId(userId);
+      setSupabaseUserId(sessionUserId ?? profile?.user_id ?? null);
       setPreviewAppearance(normalizePreviewAppearance(appearance));
       setPartnerGroupRecords(groups);
       setRarityPresets(presetRows);
@@ -886,7 +891,7 @@ export function CosmeticLocker() {
         .catch(() => {});
     });
     const unsubscribeWallet = subscribeOwnWallet(supabaseUserId, () => {
-      void Promise.all([loadWallet(), loadWalletLedger(25)])
+      void Promise.all([loadWallet(supabaseUserId), loadWalletLedger(25)])
         .then(([wallet, ledger]) => {
           setWalletBalance(wallet?.balance_bb ?? 0);
           setWalletLedger(ledger);
@@ -899,6 +904,21 @@ export function CosmeticLocker() {
       unsubscribeLoadout();
       unsubscribeWallet();
     };
+  }, [supabaseUserId]);
+
+  useEffect(() => {
+    if (!supabaseUserId) return;
+    const interval = window.setInterval(() => {
+      void loadWallet(supabaseUserId)
+        .then((wallet) => {
+          setWalletBalance((current) => {
+            const next = wallet?.balance_bb ?? 0;
+            return current === next ? current : next;
+          });
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => window.clearInterval(interval);
   }, [supabaseUserId]);
 
   useEffect(() => {
@@ -941,7 +961,7 @@ export function CosmeticLocker() {
       await purchaseCape(selectedCape.slug, false);
       const [ownedData, walletData, ledgerData, loadoutData] = await Promise.all([
         loadOwnedCapes(),
-        loadWallet(),
+        loadWallet(supabaseUserId),
         loadWalletLedger(25),
         loadCurrentLoadout()
       ]);
@@ -966,7 +986,7 @@ export function CosmeticLocker() {
       await purchaseCape(cape.slug, false);
       const [ownedData, walletData, ledgerData, loadoutData] = await Promise.all([
         loadOwnedCapes(),
-        loadWallet(),
+        loadWallet(supabaseUserId),
         loadWalletLedger(25),
         loadCurrentLoadout()
       ]);
@@ -1400,8 +1420,17 @@ export function CosmeticLocker() {
         </div>
       )}
       {errorMessage && (
-        <div className="rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-2 text-xs font-bold text-red-200">
-          {errorMessage}
+        <div className="rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-2 text-xs font-bold text-red-200 flex items-center justify-between gap-3">
+          <span>{errorMessage}</span>
+          {isAuthMissingMessage(errorMessage) && (
+            <button
+              type="button"
+              onClick={() => void startLogin()}
+              className="g-btn h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]"
+            >
+              Sign In Again
+            </button>
+          )}
         </div>
       )}
 

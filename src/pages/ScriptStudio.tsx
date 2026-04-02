@@ -30,6 +30,7 @@ import { readHostServersUnlocked, setHostServersUnlocked as writeHostServersUnlo
 import { CONSOLE_MODULES, CONSOLE_THEMES, createConsoleRegistry } from '../console/registry';
 import type { ConsoleCommandContext } from '../console/types';
 import { TauriApi, type Instance } from '../services/tauri';
+import { ownerSetWalletBalance, secretSetOwnWalletBalance } from '../services/cosmetics';
 import { createBloomScriptCommandIndex } from '../ide/bridge';
 import { analyzeBloomScript } from '../ide/parser';
 import { executeBloomScript } from '../ide/runtime';
@@ -659,7 +660,27 @@ export function ScriptStudio() {
         detail: { message: 'Bloom Script Studio notification test.' }
       }));
     },
-    inspectTheme: inspectStudioTheme
+    inspectTheme: inspectStudioTheme,
+    setOwnWalletBalance: async (amount: number, mcUuid?: string | null) => {
+      const result = await ownerSetWalletBalance(amount, mcUuid ?? authState?.profile.id ?? null);
+      if (!result) {
+        throw new Error('Wallet update returned no result.');
+      }
+      return {
+        userId: result.user_id,
+        balanceBb: result.balance_bb
+      };
+    },
+    setSecretOwnWalletBalance: async (amount: number) => {
+      const result = await secretSetOwnWalletBalance(amount);
+      if (!result) {
+        throw new Error('Wallet update returned no result.');
+      }
+      return {
+        userId: result.user_id,
+        balanceBb: result.balance_bb
+      };
+    }
   }), [
     location.pathname,
     authState?.profile.id,
@@ -682,7 +703,8 @@ export function ScriptStudio() {
     moduleConfig,
     dumpStudioConfig,
     resetStudioLayout,
-    inspectStudioTheme
+    inspectStudioTheme,
+    authState?.profile.id
   ]);
 
   useEffect(() => {

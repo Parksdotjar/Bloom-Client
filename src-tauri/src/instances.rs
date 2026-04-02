@@ -816,6 +816,23 @@ pub fn instance_list_mods(
         };
 
         let lowered = file_name.to_ascii_lowercase();
+
+        // Hard-block legacy Bloom Menu mod from ever appearing in UI.
+        // If present in imported packs/overrides, remove it immediately.
+        let blocked_bloom_menu = lowered == "bloom-menu.jar"
+            || lowered == "bloom-menu.jar.disabled"
+            || lowered.starts_with("bloom-menu-")
+            || lowered.starts_with("bloom-menu-v");
+        if blocked_bloom_menu {
+            let _ = fs::remove_file(&path);
+            let _ = maybe_delete_installed_mod_meta(&mods_dir, &file_name);
+            let enabled_name = file_name.trim_end_matches(".disabled").to_string();
+            if enabled_name != file_name {
+                let _ = maybe_delete_installed_mod_meta(&mods_dir, &enabled_name);
+            }
+            continue;
+        }
+
         let is_enabled = lowered.ends_with(".jar");
         let is_disabled = lowered.ends_with(".jar.disabled");
 

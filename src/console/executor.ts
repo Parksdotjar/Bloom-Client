@@ -52,6 +52,40 @@ function findNearbyCommands(input: string, commands: ConsoleCommandDefinition[])
     .slice(0, 4);
 }
 
+function toConsoleErrorMessage(error: unknown): string {
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    const candidate = error as {
+      message?: unknown;
+      error_description?: unknown;
+      details?: unknown;
+      hint?: unknown;
+      code?: unknown;
+    };
+    const base =
+      (typeof candidate.message === 'string' && candidate.message.trim().length > 0
+        ? candidate.message
+        : typeof candidate.error_description === 'string' && candidate.error_description.trim().length > 0
+          ? candidate.error_description
+          : null) ?? null;
+    if (base) {
+      const extras = [
+        typeof candidate.code === 'string' ? `code=${candidate.code}` : null,
+        typeof candidate.details === 'string' && candidate.details.trim().length > 0
+          ? `details=${candidate.details}`
+          : null,
+        typeof candidate.hint === 'string' && candidate.hint.trim().length > 0 ? `hint=${candidate.hint}` : null
+      ].filter((v): v is string => Boolean(v));
+      return extras.length > 0 ? `${base} (${extras.join(', ')})` : base;
+    }
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 export async function executeConsoleInput(
   input: string,
   commands: ConsoleCommandDefinition[],
@@ -87,7 +121,7 @@ export async function executeConsoleInput(
     const rawResult = await resolved.definition.handler(resolved.args, context);
     return { ok: true, result: rawResult ?? {} };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = toConsoleErrorMessage(error);
     return { ok: false, message };
   }
 }

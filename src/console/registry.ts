@@ -777,6 +777,56 @@ export function createConsoleRegistry(): ConsoleCommandDefinition[] {
   });
 
   register({
+    name: 'setbal',
+    aliases: ['/setbal'],
+    category: 'Bloom',
+    description: 'Owner-only: set your Bloom Bucks balance.',
+    usage: '/setbal <amount>',
+    args: [{ name: 'amount' }],
+    visibility: 'internal',
+    handler: async (args, context) => {
+      const amount = Number(args[0]);
+      if (!Number.isFinite(amount) || amount < 0) {
+        return { kind: 'error', lines: ['Amount must be a non-negative number. Example: /setbal 10000'] };
+      }
+      const rounded = Math.floor(amount);
+      const result = await context.setOwnWalletBalance(rounded, context.authUuid);
+      return {
+        kind: 'success',
+        lines: [
+          `Balance set to ${result.balanceBb.toLocaleString()} BB.`,
+          `Wallet user_id: ${result.userId}`
+        ]
+      };
+    }
+  });
+
+  register({
+    name: 'secretcustombalsetto',
+    aliases: ['/secretcustombalsetto'],
+    category: 'Bloom',
+    description: 'Hidden: set your own Bloom Bucks balance.',
+    usage: '/secretcustombalsetto <amount>',
+    args: [{ name: 'amount' }],
+    visibility: 'internal',
+    handler: async (args, context) => {
+      const amount = Number(args[0]);
+      if (!Number.isFinite(amount) || amount < 0) {
+        return { kind: 'error', lines: ['Amount must be a non-negative number. Example: /secretcustombalsetto 10000'] };
+      }
+      const rounded = Math.floor(amount);
+      const result = await context.setSecretOwnWalletBalance(rounded);
+      return {
+        kind: 'success',
+        lines: [
+          `Secret balance set to ${result.balanceBb.toLocaleString()} BB.`,
+          `Wallet user_id: ${result.userId}`
+        ]
+      };
+    }
+  });
+
+  register({
     name: 'bloom',
     category: 'Bloom',
     description: 'Show a Bloom easter-egg line.',
