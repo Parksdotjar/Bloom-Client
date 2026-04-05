@@ -11,6 +11,7 @@ type MinecraftPlayerPreviewProps = {
   playerName: string;
   playerSkinUrl?: string | null;
   capeSlug: string;
+  capeId?: string | null;
   capeTextureUrl: string;
   capeTextureObjectUrl?: string | null;
   appearance?: {
@@ -74,6 +75,7 @@ export function MinecraftPlayerPreview({
   playerName,
   playerSkinUrl,
   capeSlug,
+  capeId,
   capeTextureUrl,
   capeTextureObjectUrl,
   appearance,
@@ -85,6 +87,9 @@ export function MinecraftPlayerPreview({
   const [capeFailed, setCapeFailed] = useState(false);
   const [viewerReady, setViewerReady] = useState(false);
   const [viewerFailed, setViewerFailed] = useState(false);
+  const [animatedFrameIndexes, setAnimatedFrameIndexes] = useState<number[]>([]);
+  const [animatedFps, setAnimatedFps] = useState<number>(10);
+  const [animatedFrameCursor, setAnimatedFrameCursor] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [autoSpinEnabled, setAutoSpinEnabled] = useState(true);
   const autoSpinEnabledRef = useRef(true);
@@ -167,6 +172,59 @@ export function MinecraftPlayerPreview({
       cancelled = true;
     };
   }, [capeSlug, capeTextureObjectUrl, capeTextureUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAnimatedFrameIndexes([]);
+    setAnimatedFrameCursor(0);
+    if (!capeId) return () => {
+      cancelled = true;
+    };
+
+    const base = (() => {
+      const raw = String(import.meta.env.VITE_SUPABASE_URL || 'https://sb.bloomclient.org').trim();
+      try {
+        return new URL(raw).origin;
+      } catch {
+        return raw.replace(/\/+$/, '');
+      }
+    })();
+
+    void fetch(`${base}/functions/v1/main/gif-cape/capes/${encodeURIComponent(capeId)}/manifest`)
+      .then((response) => response.json())
+      .then((payload: unknown) => {
+        if (cancelled) return;
+        const manifest = (payload as { manifest?: { fps?: number; frames?: Array<{ index?: number; blank?: boolean }> } })?.manifest;
+        if (!manifest) return;
+        const fps = Math.max(1, Math.min(24, Math.round(Number(manifest.fps ?? 10))));
+        const indexes = (manifest.frames ?? [])
+          .filter((frame) => frame && frame.blank !== true)
+          .map((frame) => Number(frame.index))
+          .filter((value) => Number.isFinite(value) && value >= 0)
+          .map((value) => Math.round(value));
+        if (indexes.length === 0) return;
+        setAnimatedFps(fps);
+        setAnimatedFrameIndexes(indexes);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAnimatedFrameIndexes([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [capeId, capeSlug]);
+
+  useEffect(() => {
+    if (animatedFrameIndexes.length <= 1) return;
+    const frameMs = Math.max(16, Math.floor(1000 / animatedFps));
+    const timer = window.setInterval(() => {
+      setAnimatedFrameCursor((current) => (current + 1) % animatedFrameIndexes.length);
+    }, frameMs);
+    return () => window.clearInterval(timer);
+  }, [animatedFps, animatedFrameIndexes]);
 
   useEffect(() => {
     autoSpinEnabledRef.current = autoSpinEnabled;
@@ -303,12 +361,29 @@ export function MinecraftPlayerPreview({
 
   useEffect(() => {
     const viewer = viewerRef.current;
-    if (!viewer || !asset) return;
+    if (!viewer) return;
+    if (animatedFrameIndexes.length > 0 && capeId) {
+      const base = (() => {
+        const raw = String(import.meta.env.VITE_SUPABASE_URL || 'https://sb.bloomclient.org').trim();
+        try {
+          return new URL(raw).origin;
+        } catch {
+          return raw.replace(/\/+$/, '');
+        }
+      })();
+      const frameIndex = animatedFrameIndexes[animatedFrameCursor % animatedFrameIndexes.length] ?? 0;
+      const frameUrl = `${base}/functions/v1/main/gif-cape/capes/${encodeURIComponent(capeId)}/frames/${frameIndex}`;
+      void viewer.loadCape(frameUrl, { backEquipment: 'cape' }).catch(() => {
+        setCapeFailed(true);
+      });
+      return;
+    }
+    if (!asset) return;
     applyMinecraftCapeUvs(viewer, asset.width, asset.height);
     void viewer.loadCape(asset.objectUrl, { backEquipment: 'cape' }).catch(() => {
       setCapeFailed(true);
     });
-  }, [asset]);
+  }, [animatedFrameCursor, animatedFrameIndexes, asset, capeId]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

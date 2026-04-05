@@ -17,7 +17,7 @@ abstract class AbstractClientPlayerEntityMixin {
     @Shadow
     protected abstract fun getPlayerListEntry(): PlayerListEntry?
 
-    @Inject(method = ["getSkin"], at = [At("HEAD")], cancellable = true)
+    @Inject(method = ["getSkin"], at = [At("HEAD")], cancellable = true, require = 0)
     private fun bloomOverrideCapeTexture(cir: CallbackInfoReturnable<SkinTextures>) {
         val self = this as AbstractClientPlayerEntity
         val bloomCape = BloomCapeManager.getCapeTexture(self.uuid)

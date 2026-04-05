@@ -52,6 +52,39 @@ function findNearbyCommands(input: string, commands: ConsoleCommandDefinition[])
     .slice(0, 4);
 }
 
+function formatUnknownError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (!error || typeof error !== 'object') return String(error);
+
+  const record = error as Record<string, unknown>;
+  const parts: string[] = [];
+
+  if (typeof record.message === 'string' && record.message.trim()) {
+    parts.push(record.message.trim());
+  }
+  if (typeof record.code === 'string' && record.code.trim()) {
+    parts.push(`code=${record.code.trim()}`);
+  }
+  if (typeof record.details === 'string' && record.details.trim()) {
+    parts.push(record.details.trim());
+  }
+  if (typeof record.hint === 'string' && record.hint.trim()) {
+    parts.push(`hint=${record.hint.trim()}`);
+  }
+  if (typeof record.error === 'string' && record.error.trim()) {
+    parts.push(record.error.trim());
+  }
+
+  if (parts.length > 0) return parts.join(' | ');
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 export async function executeConsoleInput(
   input: string,
   commands: ConsoleCommandDefinition[],
@@ -87,7 +120,7 @@ export async function executeConsoleInput(
     const rawResult = await resolved.definition.handler(resolved.args, context);
     return { ok: true, result: rawResult ?? {} };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = formatUnknownError(error);
     return { ok: false, message };
   }
 }

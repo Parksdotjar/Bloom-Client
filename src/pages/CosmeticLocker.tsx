@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { clsx } from 'clsx';
-import { AlertTriangle, Coins, Search } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Coins, Search, Trash2 } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { COSMETICS_MOD_MENU_EVENT, consumeCosmeticsModMenuRequest } from '../constants/cosmeticsModMenu';
 import { CapeMeshRenderer } from '../components/cosmetics/CapeMeshRenderer';
@@ -21,6 +22,8 @@ import {
   loadWalletLedger,
   purchaseCape,
   setCapeLoadout,
+  deactivateCapeListing,
+  deleteOwnCustomCape,
   subscribePartnerGroups,
   subscribePreviewAppearance,
   subscribeOwnLoadout,
@@ -59,6 +62,7 @@ type DisplayCape = {
   is_active?: boolean;
   is_featured?: boolean;
   owned: boolean;
+  ownedSource?: string | null;
 };
 
 type PurchaseGuardState = {
@@ -109,6 +113,8 @@ type OwnerPreviewContextMenuState = {
   x: number;
   y: number;
 };
+
+type OwnerCapeEditorSection = 'identity' | 'pricing' | 'appearance' | 'presets';
 
 type PreviewAppearanceKey =
   | 'exposure'
@@ -312,7 +318,8 @@ function toDisplayFromOwned(owned: OwnedCapeRecord): DisplayCape {
     rarity_glow: owned.rarity_glow,
     sort_order: owned.sort_order,
     is_active: owned.is_active,
-    owned: true
+    owned: true,
+    ownedSource: owned.source
   };
 }
 
@@ -324,10 +331,11 @@ function normalizeRarityDisplay(value: string) {
   return lower;
 }
 
-function toDisplayFromShop(shop: CapeRecord, ownedIds: Set<string>): DisplayCape {
+function toDisplayFromShop(shop: CapeRecord, ownedSourcesByCapeId: Map<string, string>): DisplayCape {
   return {
     ...shop,
-    owned: ownedIds.has(shop.id)
+    owned: ownedSourcesByCapeId.has(shop.id),
+    ownedSource: ownedSourcesByCapeId.get(shop.id) ?? null
   };
 }
 
@@ -401,6 +409,8 @@ function normalizePreviewAppearance(value: PreviewAppearanceRecord): PreviewAppe
 }
 
 export function CosmeticLocker() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const { authState, startLogin } = useAuth();
   const [activeTab, setActiveTab] = useState<LockerTab>('locker');
   const [activeCategory, setActiveCategory] = useState<LockerCategory>('capes');
@@ -436,18 +446,32 @@ export function CosmeticLocker() {
   const [ownerPreviewContextMenu, setOwnerPreviewContextMenu] = useState<OwnerPreviewContextMenuState | null>(null);
   const [ownerAppearancePanelOpen, setOwnerAppearancePanelOpen] = useState(false);
   const [ownerCapeEditor, setOwnerCapeEditor] = useState<OwnerCapeEditDraft | null>(null);
+  const [ownerCapeEditorSection, setOwnerCapeEditorSection] = useState<OwnerCapeEditorSection>('identity');
   const [ownerEditSaving, setOwnerEditSaving] = useState(false);
   const [tagPresets, setTagPresets] = useState<TagPreset[]>([]);
   const [tagPresetNameInput, setTagPresetNameInput] = useState('');
+  const [selectedTagPresetId, setSelectedTagPresetId] = useState('');
+  const [tagPresetDropdownOpen, setTagPresetDropdownOpen] = useState(false);
+  const [tagPresetsHydrated, setTagPresetsHydrated] = useState(false);
   const [newPartnerGroupInput, setNewPartnerGroupInput] = useState('');
   const [creatingPartnerGroup, setCreatingPartnerGroup] = useState(false);
   const [previewAppearance, setPreviewAppearance] = useState<PreviewAppearanceRecord>(DEFAULT_PREVIEW_APPEARANCE);
   const [previewAppearanceSaving, setPreviewAppearanceSaving] = useState(false);
   const previewAppearanceWriteTimerRef = useRef<number | null>(null);
 
-  const ownedIds = useMemo(() => new Set(ownedCapes.map((cape) => cape.cape_id)), [ownedCapes]);
+  const ownedSourcesByCapeId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const cape of ownedCapes) {
+      map.set(cape.cape_id, cape.source);
+    }
+    return map;
+  }, [ownedCapes]);
+  const ownedIds = useMemo(() => new Set(ownedSourcesByCapeId.keys()), [ownedSourcesByCapeId]);
   const ownedDisplay = useMemo(() => ownedCapes.map((cape) => toDisplayFromOwned(cape)), [ownedCapes]);
-  const shopDisplay = useMemo(() => shopCapes.map((cape) => toDisplayFromShop(cape, ownedIds)), [shopCapes, ownedIds]);
+  const shopDisplay = useMemo(
+    () => shopCapes.map((cape) => toDisplayFromShop(cape, ownedSourcesByCapeId)),
+    [shopCapes, ownedSourcesByCapeId]
+  );
   const ownerEditableCapes = useMemo(() => {
     const map = new Map<string, DisplayCape>();
     for (const cape of shopDisplay) map.set(cape.id, cape);
@@ -480,6 +504,7 @@ export function CosmeticLocker() {
     const q = searchQuery.trim().toLowerCase();
     return shopDisplay.filter((cape) => {
       const group = (cape.partner_group || '').trim();
+      if (!group) return false;
       if (selectedPartnerGroup !== 'all' && group.toLowerCase() !== selectedPartnerGroup.toLowerCase()) {
         return false;
       }
@@ -586,33 +611,69 @@ export function CosmeticLocker() {
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(TAG_PRESETS_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as TagPreset[];
-      if (!Array.isArray(parsed)) return;
-      setTagPresets(
-        parsed.filter(
-          (preset) =>
-            typeof preset?.id === 'string' &&
-            typeof preset?.name === 'string' &&
-            typeof preset?.rarity === 'string' &&
-            typeof preset?.rarity_label === 'string' &&
-            typeof preset?.rarity_color_start === 'string' &&
-            typeof preset?.rarity_color_end === 'string' &&
-            typeof preset?.rarity_glow === 'string'
-        )
-      );
+      if (raw) {
+        const parsed = JSON.parse(raw) as TagPreset[];
+        if (Array.isArray(parsed)) {
+          setTagPresets(
+            parsed.filter(
+              (preset) =>
+                typeof preset?.id === 'string' &&
+                typeof preset?.name === 'string' &&
+                typeof preset?.rarity === 'string' &&
+                typeof preset?.rarity_label === 'string' &&
+                typeof preset?.rarity_color_start === 'string' &&
+                typeof preset?.rarity_color_end === 'string' &&
+                typeof preset?.rarity_glow === 'string'
+            )
+          );
+        }
+      }
     } catch {
       // ignore invalid local preset payload
+    } finally {
+      setTagPresetsHydrated(true);
     }
   }, []);
 
   useEffect(() => {
+    if (!tagPresetsHydrated) return;
     try {
       window.localStorage.setItem(TAG_PRESETS_STORAGE_KEY, JSON.stringify(tagPresets));
     } catch {
       // best effort local persistence
     }
-  }, [tagPresets]);
+  }, [tagPresets, tagPresetsHydrated]);
+
+  const derivedRarityPresets = useMemo<TagPreset[]>(() => {
+    const byRarity = new Map<string, TagPreset>();
+    for (const cape of ownerEditableCapes) {
+      const rarity = cape.rarity.trim().toLowerCase();
+      if (!rarity || byRarity.has(rarity)) continue;
+      byRarity.set(rarity, {
+        id: `rarity:${rarity}`,
+        name: `Rarity • ${normalizeRarityDisplay(cape.rarity_label || cape.rarity)}`,
+        rarity,
+        rarity_label: (cape.rarity_label || normalizeRarityDisplay(cape.rarity)).trim(),
+        rarity_color_start: (cape.rarity_color_start || '#a979ff').trim(),
+        rarity_color_end: (cape.rarity_color_end || '#3a1f68').trim(),
+        rarity_glow: (cape.rarity_glow || 'rgba(169, 121, 255, 0.45)').trim()
+      });
+    }
+    return Array.from(byRarity.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [ownerEditableCapes]);
+
+  const allTagPresetOptions = useMemo<TagPreset[]>(() => {
+    const map = new Map<string, TagPreset>();
+    for (const preset of tagPresets) {
+      map.set(`custom:${preset.id}`, preset);
+    }
+    for (const preset of derivedRarityPresets) {
+      if (!map.has(`rarity:${preset.rarity}`)) {
+        map.set(`rarity:${preset.rarity}`, preset);
+      }
+    }
+    return Array.from(map.values());
+  }, [derivedRarityPresets, tagPresets]);
 
   useEffect(() => {
     if (!ownerContextMenu) return;
@@ -645,6 +706,17 @@ export function CosmeticLocker() {
       window.removeEventListener('keydown', onKey);
     };
   }, [ownerPreviewContextMenu]);
+
+  useEffect(() => {
+    if (!tagPresetDropdownOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setTagPresetDropdownOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [tagPresetDropdownOpen]);
 
   useEffect(() => {
     if (!selectedCapeId) {
@@ -1068,6 +1140,7 @@ export function CosmeticLocker() {
   const selectOwnerCapeEditorCape = (capeId: string) => {
     const target = shopDisplay.find((cape) => cape.id === capeId) ?? ownedDisplay.find((cape) => cape.id === capeId) ?? null;
     if (!target) return;
+    setOwnerCapeEditorSection('identity');
     setOwnerCapeEditor(toOwnerCapeEditDraft(target));
   };
 
@@ -1105,11 +1178,13 @@ export function CosmeticLocker() {
     };
     setTagPresets((current) => [preset, ...current.filter((entry) => entry.name.toLowerCase() !== preset.name.toLowerCase())]);
     setTagPresetNameInput('');
+    setSelectedTagPresetId(preset.id);
     setStatusMessage(`Tag preset saved: ${preset.name}`);
   };
 
   const handleDeleteTagPreset = (presetId: string) => {
     setTagPresets((current) => current.filter((preset) => preset.id !== presetId));
+    setSelectedTagPresetId((current) => (current === presetId ? '' : current));
   };
 
   const handleCreatePartnerGroup = async () => {
@@ -1180,6 +1255,48 @@ export function CosmeticLocker() {
     }
   };
 
+  const handleDeleteShopCape = async (cape: DisplayCape) => {
+    if (!isOwner) return;
+    const confirmed = window.confirm(`Delete "${cape.name}" from all shop views?`);
+    if (!confirmed) return;
+    setActionBusy(true);
+    setErrorMessage(null);
+    try {
+      await deactivateCapeListing(cape.id);
+      const refreshed = await loadShopCapes(searchQuery, rarityFilter);
+      setShopCapes(refreshed);
+      setStatusMessage(`Removed from shop: ${cape.name}`);
+      if (selectedCapeId === cape.id) {
+        setSelectedCapeId(refreshed[0]?.id ?? null);
+      }
+    } catch (error) {
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleDeleteOwnCustomCape = async (cape: DisplayCape) => {
+    if (!cape.owned || cape.ownedSource !== 'custom_export') return;
+    const typed = window.prompt(`type confirm to delete this cape forever:\n${cape.name}`);
+    if ((typed ?? '').trim().toLowerCase() !== 'confirm') return;
+    setActionBusy(true);
+    setErrorMessage(null);
+    try {
+      await deleteOwnCustomCape(cape.id);
+      const [nextOwned, nextShop] = await Promise.all([loadOwnedCapes(), loadShopCapes(searchQuery, rarityFilter)]);
+      setOwnedCapes(nextOwned);
+      setShopCapes(nextShop);
+      if (equippedCapeId === cape.id) setEquippedCapeId(null);
+      if (selectedCapeId === cape.id) setSelectedCapeId(nextOwned[0]?.cape_id ?? nextShop[0]?.id ?? null);
+      setStatusMessage(`Deleted custom cape forever: ${cape.name}`);
+    } catch (error) {
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
   if (!authState) {
     return (
       <div className="max-w-[1180px] mx-auto min-h-full py-6">
@@ -1223,6 +1340,18 @@ export function CosmeticLocker() {
               {tab}
             </button>
           ))}
+          <span aria-hidden className="mx-1 h-6 w-px bg-white/20" />
+          <button
+            onClick={() => navigate('/custom-cape')}
+            className={clsx(
+              'h-10 rounded-xl border px-4 text-[11px] font-extrabold uppercase tracking-[0.12em] transition',
+              location.pathname === '/custom-cape'
+                ? 'g-btn-accent'
+                : 'border-white/10 bg-white/[0.03] text-white/75 hover:bg-white/[0.06]'
+            )}
+          >
+            Cape Studio
+          </button>
         </div>
         <div className="lg:justify-self-end">
           <div className="inline-flex items-center gap-2 rounded-xl border border-white/12 bg-white/[0.03] px-3 py-2 shadow-[0_8px_20px_rgba(0,0,0,0.25)]">
@@ -1371,8 +1500,8 @@ export function CosmeticLocker() {
                   </button>
                 ))}
                 {isOwner && (
-                  <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.03] p-2">
-                    <p className="text-[10px] uppercase tracking-[0.12em] font-extrabold text-white/55">Owner</p>
+                  <div className="mt-3 rounded-xl border border-white/15 bg-black/35 p-3 space-y-2">
+                    <p className="text-[10px] uppercase tracking-[0.14em] font-black text-white/55">Owner Partner Tabs</p>
                     <input
                       value={newPartnerGroupInput}
                       onChange={(event) => setNewPartnerGroupInput(event.target.value)}
@@ -1383,14 +1512,14 @@ export function CosmeticLocker() {
                         }
                       }}
                       placeholder="New partner tab..."
-                      className="mt-1 h-8 w-full rounded-md border border-white/15 bg-white/[0.04] px-2 text-xs text-white placeholder:text-white/35 outline-none"
+                      className="h-9 w-full rounded-lg border border-white/20 bg-black/40 px-3 text-xs text-white placeholder:text-white/35 outline-none"
                     />
                     <button
                       onClick={() => {
                         void handleCreatePartnerGroup();
                       }}
                       disabled={creatingPartnerGroup || newPartnerGroupInput.trim().length === 0}
-                      className="g-btn-accent mt-2 h-8 w-full text-[10px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-45"
+                      className="h-9 w-full rounded-lg border border-white/25 bg-white/[0.08] text-[10px] font-extrabold uppercase tracking-[0.12em] text-white hover:bg-white/[0.14] disabled:opacity-45"
                     >
                       {creatingPartnerGroup ? 'Adding...' : 'Add Partner Tab'}
                     </button>
@@ -1489,6 +1618,34 @@ export function CosmeticLocker() {
                           }}
                         >
                           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.18),transparent_56%)]" />
+                          {isOwner && activeTab === 'shop' && (
+                            <button
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                void handleDeleteShopCape(cape);
+                              }}
+                              className="absolute right-2 top-2 z-[3] h-7 w-7 rounded-md border border-red-300/40 bg-red-500/20 text-red-100 hover:bg-red-500/30 flex items-center justify-center"
+                              title="Delete from shop"
+                              aria-label={`Delete ${cape.name} from shop`}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                          {cape.owned && cape.ownedSource === 'custom_export' && (
+                            <button
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                void handleDeleteOwnCustomCape(cape);
+                              }}
+                              className="absolute right-2 top-10 z-[3] h-7 w-7 rounded-md border border-red-300/40 bg-red-500/20 text-red-100 hover:bg-red-500/30 flex items-center justify-center"
+                              title="Delete forever (type confirm)"
+                              aria-label={`Delete ${cape.name} forever`}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
                           <div className="absolute -top-[2px] left-0 z-[2]">
                             <span className="rounded-md border border-white/25 bg-black/35 px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-white/90 leading-none">
                               {pickRarityLabel(cape)}
@@ -1547,6 +1704,7 @@ export function CosmeticLocker() {
                     playerUuid={authState?.profile.id ?? null}
                     playerName={authState?.profile.name ?? 'Player'}
                     playerSkinUrl={authState?.profile.skinUrl ?? null}
+                    capeId={selectedCape.id}
                     capeSlug={selectedCape.slug}
                     capeTextureUrl={selectedCape.texture_url}
                     appearance={previewAppearance}
@@ -1610,14 +1768,14 @@ export function CosmeticLocker() {
 
       {isOwner && ownerContextMenu && (
         <div
-          className="fixed z-[540] min-w-[220px] rounded-xl border border-white/15 bg-[#110d18] p-2 shadow-[0_20px_40px_rgba(0,0,0,0.55)]"
+          className="fixed z-[540] min-w-[220px] rounded-xl border border-white/20 bg-[#0a0a0b]/95 p-2.5 shadow-[0_20px_40px_rgba(0,0,0,0.65)] backdrop-blur-lg"
           style={{ left: ownerContextMenu.x, top: ownerContextMenu.y }}
           onMouseDown={(event) => event.stopPropagation()}
         >
-          <p className="px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-white/55">Owner Actions</p>
+          <p className="px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-white/45">Owner Actions</p>
           <button
             onClick={() => openOwnerCapeEditor(ownerContextMenu.capeId)}
-            className="w-full rounded-lg border border-transparent bg-white/[0.03] px-2.5 py-2 text-left text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/85 hover:border-white/15 hover:bg-white/[0.08]"
+            className="w-full rounded-lg border border-white/15 bg-white/[0.02] px-2.5 py-2 text-left text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/90 hover:bg-white/[0.09]"
           >
             Edit Cape
           </button>
@@ -1626,17 +1784,17 @@ export function CosmeticLocker() {
 
       {isOwner && ownerPreviewContextMenu && (
         <div
-          className="fixed z-[540] min-w-[180px] rounded-xl border border-white/15 bg-[#110d18] p-2 shadow-[0_20px_40px_rgba(0,0,0,0.55)]"
+          className="fixed z-[540] min-w-[180px] rounded-xl border border-white/20 bg-[#0a0a0b]/95 p-2.5 shadow-[0_20px_40px_rgba(0,0,0,0.65)] backdrop-blur-lg"
           style={{ left: ownerPreviewContextMenu.x, top: ownerPreviewContextMenu.y }}
           onMouseDown={(event) => event.stopPropagation()}
         >
-          <p className="px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-white/55">Preview Menu</p>
+          <p className="px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-white/45">Preview Menu</p>
           <button
             onClick={() => {
               setOwnerPreviewContextMenu(null);
               setOwnerAppearancePanelOpen(true);
             }}
-            className="w-full rounded-lg border border-transparent bg-white/[0.03] px-2.5 py-2 text-left text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/85 hover:border-white/15 hover:bg-white/[0.08]"
+            className="w-full rounded-lg border border-white/15 bg-white/[0.02] px-2.5 py-2 text-left text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/90 hover:bg-white/[0.09]"
           >
             Appearance
           </button>
@@ -1646,37 +1804,32 @@ export function CosmeticLocker() {
       {isOwner && ownerAppearancePanelOpen && (
         <div className="fixed inset-0 z-[545] flex items-center justify-center p-4 app-region-no-drag">
           <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={() => setOwnerAppearancePanelOpen(false)} />
-          <div className="relative w-full max-w-[820px] rounded-2xl border border-white/15 bg-[#0f0a12] p-4 shadow-[0_30px_70px_rgba(0,0,0,0.65)]">
+          <div className="relative w-full max-w-[920px] rounded-2xl border border-white/20 bg-[#09090a] p-5 shadow-[0_34px_80px_rgba(0,0,0,0.72)]">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Owner Preview Controls</p>
-                <h3 className="text-xl font-extrabold text-white mt-1">Appearance</h3>
+                <p className="text-[10px] uppercase tracking-[0.16em] font-black text-white/45">Owner Preview</p>
+                <h3 className="text-2xl font-extrabold text-white mt-1">Appearance Settings</h3>
               </div>
               <button
                 onClick={() => setOwnerAppearancePanelOpen(false)}
-                className="g-btn h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]"
+                className="h-9 px-3 rounded-lg border border-white/20 bg-white/[0.03] text-[10px] font-extrabold uppercase tracking-[0.12em] text-white/85 hover:bg-white/[0.1]"
               >
                 Close
               </button>
             </div>
-
-            <div className="mt-3 grid grid-cols-1 lg:grid-cols-[200px_minmax(0,1fr)] gap-3">
-              <aside className="rounded-xl border border-white/10 bg-white/[0.03] p-3 h-fit">
-                <p className="text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/55">Panels</p>
-                <button className="mt-2 w-full rounded-xl border g-btn-accent px-3 py-2 text-left text-[11px] font-extrabold uppercase tracking-[0.12em]">
-                  Appearance
-                </button>
-                <p className="mt-3 text-[11px] text-white/55">Edits sync live through Supabase Realtime.</p>
-              </aside>
-
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-3 max-h-[72vh] overflow-y-auto">
+            <div className="mt-3 rounded-xl border border-white/15 bg-white/[0.02] p-4">
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/72">Lighting + Camera</p>
+                <p className="text-xs text-white/55">{previewAppearanceSaving ? 'Syncing…' : 'Synced live'}</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[64vh] overflow-y-auto pr-1">
                 {PREVIEW_APPEARANCE_SLIDERS.map((slider) => {
                   const value = Number(previewAppearance[slider.key]);
                   return (
-                    <div key={slider.key} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                    <div key={slider.key} className="rounded-lg border border-white/15 bg-black/35 px-3 py-2.5">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/78">{slider.label}</p>
-                        <span className="text-[11px] text-white/75">{value.toFixed(2)}</span>
+                        <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/82">{slider.label}</p>
+                        <span className="text-[11px] text-white/70">{value.toFixed(2)}</span>
                       </div>
                       <input
                         type="range"
@@ -1685,20 +1838,19 @@ export function CosmeticLocker() {
                         step={slider.step}
                         value={value}
                         onChange={(event) => updatePreviewAppearanceSetting(slider.key, Number(event.target.value))}
-                        className="mt-2 w-full"
+                        className="mt-2 w-full accent-white"
                       />
                     </div>
                   );
                 })}
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    onClick={handleResetPreviewAppearance}
-                    className="g-btn h-10 px-4 text-[11px] font-extrabold uppercase tracking-[0.12em]"
-                  >
-                    Reset Defaults
-                  </button>
-                  <p className="text-xs text-white/60">{previewAppearanceSaving ? 'Syncing...' : 'Synced live'}</p>
-                </div>
+              </div>
+              <div className="mt-3">
+                <button
+                  onClick={handleResetPreviewAppearance}
+                  className="h-10 px-4 rounded-lg border border-white/20 bg-white/[0.03] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/90 hover:bg-white/[0.1]"
+                >
+                  Reset Defaults
+                </button>
               </div>
             </div>
           </div>
@@ -1708,23 +1860,46 @@ export function CosmeticLocker() {
       {isOwner && ownerCapeEditor && (
         <div className="fixed inset-0 z-[545] flex items-center justify-center p-4 app-region-no-drag">
           <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={() => setOwnerCapeEditor(null)} />
-          <div className="relative w-full max-w-[1120px] rounded-2xl border border-white/15 bg-[#0f0a12] p-4 shadow-[0_30px_70px_rgba(0,0,0,0.65)]">
+          <div className="relative w-full max-w-[1180px] rounded-2xl border border-white/20 bg-[#09090a] p-5 shadow-[0_34px_80px_rgba(0,0,0,0.72)]">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Owner Edit</p>
-                <h3 className="text-xl font-extrabold text-white mt-1">{ownerCapeEditor.name || 'Edit Cape'}</h3>
+                <p className="text-[10px] uppercase tracking-[0.16em] font-black text-white/45">Owner Edit</p>
+                <h3 className="text-2xl font-extrabold text-white mt-1">{ownerCapeEditor.name || 'Edit Cape'}</h3>
               </div>
               <button
                 onClick={() => setOwnerCapeEditor(null)}
-                className="g-btn h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]"
+                className="h-9 px-3 rounded-lg border border-white/20 bg-white/[0.03] text-[10px] font-extrabold uppercase tracking-[0.12em] text-white/85 hover:bg-white/[0.1]"
               >
                 Close
               </button>
             </div>
 
+            <div className="mt-3 inline-flex items-center rounded-xl border border-white/15 bg-white/[0.03] p-1 gap-1">
+              {([
+                ['identity', 'Identity'],
+                ['pricing', 'Pricing'],
+                ['appearance', 'Appearance'],
+                ['presets', 'Presets']
+              ] as Array<[OwnerCapeEditorSection, string]>).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setOwnerCapeEditorSection(key)}
+                  className={clsx(
+                    'h-8 rounded-lg px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] border',
+                    ownerCapeEditorSection === key
+                      ? 'border-white/25 bg-white/[0.14] text-white'
+                      : 'border-transparent bg-transparent text-white/65 hover:bg-white/[0.08]'
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
             <div className="mt-3 grid grid-cols-1 lg:grid-cols-[230px_minmax(0,1fr)] gap-3">
-              <aside className="rounded-xl border border-white/10 bg-white/[0.03] p-3 min-h-0 max-h-[72vh] overflow-y-auto">
-                <p className="text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/55">Capes</p>
+              <aside className="rounded-xl border border-white/15 bg-white/[0.02] p-3 min-h-0 max-h-[72vh] overflow-y-auto">
+                <p className="text-[10px] uppercase tracking-[0.14em] font-black text-white/45">Capes</p>
                 <div className="mt-2 space-y-1.5">
                   {ownerEditableCapes.map((cape) => (
                     <button
@@ -1733,8 +1908,8 @@ export function CosmeticLocker() {
                       className={clsx(
                         'w-full rounded-lg border px-2.5 py-2 text-left text-[11px] font-extrabold tracking-[0.02em] transition',
                         ownerCapeEditor.id === cape.id
-                          ? 'g-btn-accent'
-                          : 'border-white/10 bg-white/[0.03] text-white/80 hover:bg-white/[0.06]'
+                          ? 'border-white/30 bg-white/[0.14] text-white'
+                          : 'border-white/15 bg-black/35 text-white/80 hover:bg-white/[0.08]'
                       )}
                     >
                       <span className="block truncate">{cape.name}</span>
@@ -1743,61 +1918,73 @@ export function CosmeticLocker() {
                 </div>
               </aside>
 
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-3 max-h-[72vh] overflow-y-auto">
+              <div className="rounded-xl border border-white/15 bg-white/[0.02] p-4 space-y-3 max-h-[72vh] overflow-y-auto">
+                <div className={clsx(ownerCapeEditorSection !== 'identity' && 'hidden')}>
+                  <p className="mb-2 text-[10px] uppercase tracking-[0.14em] font-black text-white/50">Identity & Media</p>
+                </div>
+                <div className={clsx(ownerCapeEditorSection !== 'appearance' && 'hidden')}>
+                  <p className="mb-2 text-[10px] uppercase tracking-[0.14em] font-black text-white/50">Rarity Appearance</p>
+                </div>
+                <div className={clsx(ownerCapeEditorSection !== 'pricing' && 'hidden')}>
+                  <p className="mb-2 text-[10px] uppercase tracking-[0.14em] font-black text-white/50">Pricing & Flags</p>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className={clsx(ownerCapeEditorSection !== 'identity' && 'hidden', 'md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-2')}>
                   <input
                     value={ownerCapeEditor.slug}
                     onChange={(event) => updateOwnerEditor('slug', event.target.value)}
                     placeholder="slug"
-                    className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none"
+                    className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none"
                   />
                   <input
                     value={ownerCapeEditor.name}
                     onChange={(event) => updateOwnerEditor('name', event.target.value)}
                     placeholder="name"
-                    className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none"
+                    className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none"
                   />
                   <input
                     value={ownerCapeEditor.texture_url}
                     onChange={(event) => updateOwnerEditor('texture_url', event.target.value)}
                     placeholder="texture_url"
-                    className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none md:col-span-2"
+                    className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none md:col-span-2"
                   />
                   <input
                     value={ownerCapeEditor.preview_url ?? ''}
                     onChange={(event) => updateOwnerEditor('preview_url', event.target.value)}
                     placeholder="preview_url"
-                    className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none md:col-span-2"
+                    className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none md:col-span-2"
                   />
                   <input
                     value={ownerCapeEditor.description ?? ''}
                     onChange={(event) => updateOwnerEditor('description', event.target.value)}
                     placeholder="description"
-                    className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none md:col-span-2"
+                    className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none md:col-span-2"
                   />
                   <input
                     value={ownerCapeEditor.partner_group ?? ''}
                     onChange={(event) => updateOwnerEditor('partner_group', event.target.value)}
                     placeholder="partner_group (leave blank for no partner)"
                     list="owner-partner-group-options"
-                    className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none md:col-span-2"
+                    className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none md:col-span-2"
                   />
                   <datalist id="owner-partner-group-options">
                     {partnerGroups.map((group) => (
                       <option key={group} value={group} />
                     ))}
                   </datalist>
+                  </div>
+                  <div className={clsx(ownerCapeEditorSection !== 'appearance' && 'hidden', 'md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-2')}>
                   <input
                     value={ownerCapeEditor.rarity}
                     onChange={(event) => updateOwnerEditor('rarity', event.target.value)}
                     placeholder="rarity"
-                    className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none"
+                    className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none"
                   />
                   <input
                     value={ownerCapeEditor.rarity_label ?? ''}
                     onChange={(event) => updateOwnerEditor('rarity_label', event.target.value)}
                     placeholder="rarity_label"
-                    className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none"
+                    className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none"
                   />
                   <BloomColorInput
                     label="rarity_color_start"
@@ -1817,7 +2004,9 @@ export function CosmeticLocker() {
                       onChange={(next) => updateOwnerEditor('rarity_glow', next)}
                     />
                   </div>
-                  <label className="rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 flex flex-col">
+                  </div>
+                  <div className={clsx(ownerCapeEditorSection !== 'pricing' && 'hidden', 'md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-2')}>
+                  <label className="rounded-lg border border-white/20 bg-black/35 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 flex flex-col">
                     <span>price_bb</span>
                     <input
                       type="number"
@@ -1827,7 +2016,7 @@ export function CosmeticLocker() {
                       className="mt-1 bg-transparent text-sm text-white outline-none normal-case tracking-normal"
                     />
                   </label>
-                  <label className="rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 flex flex-col">
+                  <label className="rounded-lg border border-white/20 bg-black/35 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 flex flex-col">
                     <span>sort_order</span>
                     <input
                       type="number"
@@ -1836,7 +2025,7 @@ export function CosmeticLocker() {
                       className="mt-1 bg-transparent text-sm text-white outline-none normal-case tracking-normal"
                     />
                   </label>
-                  <label className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 inline-flex items-center gap-2">
+                  <label className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 inline-flex items-center gap-2">
                     <input
                       type="checkbox"
                       checked={ownerCapeEditor.is_active}
@@ -1844,7 +2033,7 @@ export function CosmeticLocker() {
                     />
                     is_active
                   </label>
-                  <label className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 inline-flex items-center gap-2">
+                  <label className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 inline-flex items-center gap-2">
                     <input
                       type="checkbox"
                       checked={ownerCapeEditor.is_featured}
@@ -1852,24 +2041,112 @@ export function CosmeticLocker() {
                     />
                     is_featured
                   </label>
+                  </div>
                 </div>
 
-                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-                  <p className="text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/55">Tag Presets</p>
+                <div className={clsx(ownerCapeEditorSection !== 'presets' && 'hidden', 'rounded-xl border border-white/15 bg-black/30 p-3')}>
+                  <p className="text-[10px] uppercase tracking-[0.14em] font-black text-white/50">Tag Presets</p>
                   <div className="mt-2 flex flex-col md:flex-row gap-2">
                     <input
                       value={tagPresetNameInput}
                       onChange={(event) => setTagPresetNameInput(event.target.value)}
                       placeholder="Preset name (example: Partner)"
-                      className="h-9 flex-1 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none"
+                      className="h-9 flex-1 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none"
                     />
                     <button
                       onClick={handleSaveTagPreset}
-                      className="g-btn-accent h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]"
+                      className="h-9 px-3 rounded-lg border border-white/25 bg-white/[0.08] text-[10px] font-extrabold uppercase tracking-[0.12em] text-white hover:bg-white/[0.14]"
                     >
                       Save Preset
                     </button>
                   </div>
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      onClick={() => setTagPresetDropdownOpen(true)}
+                      className="h-9 w-full rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white outline-none inline-flex items-center justify-between"
+                    >
+                      <span className="truncate">
+                        {allTagPresetOptions.find((entry) => entry.id === selectedTagPresetId)?.name ?? 'Select preset (Custom + Rarity presets)'}
+                      </span>
+                      <ChevronDown size={14} className="text-white/70" />
+                    </button>
+                  </div>
+                  {tagPresetDropdownOpen && (
+                    <div
+                      className="fixed inset-0 z-[120] bg-black/50 backdrop-blur-md grid place-items-center p-6"
+                      onMouseDown={() => setTagPresetDropdownOpen(false)}
+                    >
+                      <div
+                        className="w-full max-w-[1100px] rounded-2xl border border-white/20 bg-[#0a0a0b] shadow-[0_24px_80px_rgba(0,0,0,0.65)] p-4"
+                        onMouseDown={(event) => event.stopPropagation()}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-extrabold text-white">Select Tag Preset</p>
+                          <button
+                            type="button"
+                            onClick={() => setTagPresetDropdownOpen(false)}
+                            className="h-8 px-3 rounded-lg border border-white/20 bg-white/[0.03] text-[10px] font-extrabold uppercase tracking-[0.1em] text-white/85 hover:bg-white/[0.1]"
+                          >
+                            Close
+                          </button>
+                        </div>
+                        <div className="mt-3 max-h-[70vh] overflow-auto">
+                          <div className="grid grid-flow-col grid-rows-12 auto-cols-[minmax(220px,1fr)] gap-2 justify-center">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedTagPresetId('');
+                                setTagPresetDropdownOpen(false);
+                              }}
+                              className={clsx(
+                                'h-10 rounded-lg border px-3 text-left text-xs font-semibold',
+                                !selectedTagPresetId ? 'border-white/30 bg-white/[0.16] text-white' : 'border-white/15 bg-white/[0.04] text-white/80 hover:bg-white/[0.07]'
+                              )}
+                            >
+                              No preset
+                            </button>
+                            {allTagPresetOptions.map((preset) => (
+                              <div
+                                key={preset.id}
+                                className={clsx(
+                                  'group relative h-10 rounded-lg border px-3 text-left text-xs font-semibold truncate',
+                                  selectedTagPresetId === preset.id
+                                    ? 'border-white/30 bg-white/[0.16] text-white'
+                                    : 'border-white/15 bg-white/[0.04] text-white/80 hover:bg-white/[0.07]'
+                                )}
+                                title={preset.name}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedTagPresetId(preset.id);
+                                    applyTagPreset(preset);
+                                    setStatusMessage(`Applied preset: ${preset.name}`);
+                                    setTagPresetDropdownOpen(false);
+                                  }}
+                                  className="h-full w-full text-left truncate pr-7"
+                                >
+                                  {preset.name}
+                                </button>
+                                {!preset.id.startsWith('rarity:') && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteTagPreset(preset.id)}
+                                    className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 rounded-md border border-red-300/40 bg-red-500/20 text-red-100 opacity-0 group-hover:opacity-100 hover:bg-red-500/30 flex items-center justify-center transition"
+                                    title={`Delete preset: ${preset.name}`}
+                                    aria-label={`Delete preset ${preset.name}`}
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <div className="mt-2 space-y-1.5 max-h-[170px] overflow-y-auto pr-1">
                     {tagPresets.length === 0 ? (
                       <p className="text-xs text-white/55">No tag presets yet.</p>
@@ -1877,7 +2154,7 @@ export function CosmeticLocker() {
                       tagPresets.map((preset) => (
                         <div
                           key={preset.id}
-                          className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5 flex items-center justify-between gap-2"
+                          className="rounded-lg border border-white/15 bg-black/35 px-2 py-1.5 flex items-center justify-between gap-2"
                         >
                           <div className="min-w-0">
                             <p className="text-[11px] font-extrabold text-white truncate">{preset.name}</p>
@@ -1886,13 +2163,13 @@ export function CosmeticLocker() {
                           <div className="flex items-center gap-1.5 shrink-0">
                             <button
                               onClick={() => applyTagPreset(preset)}
-                              className="g-btn-accent h-7 px-2 text-[10px] font-extrabold uppercase tracking-[0.1em]"
+                              className="h-7 px-2 rounded-md border border-white/20 bg-white/[0.06] text-[10px] font-extrabold uppercase tracking-[0.1em] text-white hover:bg-white/[0.12]"
                             >
                               Apply
                             </button>
                             <button
                               onClick={() => handleDeleteTagPreset(preset.id)}
-                              className="g-btn h-7 px-2 text-[10px] font-extrabold uppercase tracking-[0.1em]"
+                              className="h-7 px-2 rounded-md border border-red-300/40 bg-red-500/20 text-[10px] font-extrabold uppercase tracking-[0.1em] text-red-100 hover:bg-red-500/30"
                             >
                               Delete
                             </button>
@@ -1909,14 +2186,14 @@ export function CosmeticLocker() {
                       void handleSaveOwnerCapeEditor();
                     }}
                     disabled={ownerEditSaving}
-                    className="g-btn-accent h-10 px-4 text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-45"
+                    className="h-10 px-4 rounded-lg border border-white/25 bg-white/[0.12] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white hover:bg-white/[0.18] disabled:opacity-45"
                   >
                     {ownerEditSaving ? 'Saving...' : 'Save Cape'}
                   </button>
                   <button
                     onClick={() => setOwnerCapeEditor(null)}
                     disabled={ownerEditSaving}
-                    className="g-btn h-10 px-4 text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-45"
+                    className="h-10 px-4 rounded-lg border border-white/20 bg-white/[0.03] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/85 hover:bg-white/[0.1] disabled:opacity-45"
                   >
                     Cancel
                   </button>
@@ -1930,22 +2207,22 @@ export function CosmeticLocker() {
       {modMenuOpen && (
         <div className="fixed inset-0 z-[525] flex items-center justify-center p-4 app-region-no-drag">
           <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" />
-          <div className="relative w-full max-w-[900px] rounded-2xl border border-white/15 bg-[#0f0a12] p-4 shadow-[0_30px_70px_rgba(0,0,0,0.65)]">
+          <div className="relative w-full max-w-[940px] rounded-2xl border border-white/20 bg-[#09090a] p-5 shadow-[0_34px_80px_rgba(0,0,0,0.72)]">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Owner Tools</p>
-                <h3 className="text-xl font-extrabold text-white mt-1">Mod Menu</h3>
+                <p className="text-[10px] uppercase tracking-[0.16em] font-black text-white/45">Owner Tools</p>
+                <h3 className="text-2xl font-extrabold text-white mt-1">Mod Menu</h3>
               </div>
               <button
                 onClick={closeModMenu}
-                className="g-btn h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]"
+                className="h-9 px-3 rounded-lg border border-white/20 bg-white/[0.03] text-[10px] font-extrabold uppercase tracking-[0.12em] text-white/85 hover:bg-white/[0.1]"
               >
                 Close
               </button>
             </div>
 
             {!ownerUnlocked ? (
-              <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="mt-3 rounded-xl border border-white/15 bg-black/35 p-3">
                 <p className="text-xs font-bold text-white/75">Type the owner phrase to unlock the mod tools.</p>
                 <div className="mt-2 flex flex-col sm:flex-row gap-2">
                   <input
@@ -1956,11 +2233,11 @@ export function CosmeticLocker() {
                     }}
                     type="password"
                     placeholder="Owner phrase"
-                    className="h-10 flex-1 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none"
+                    className="h-10 flex-1 rounded-lg border border-white/20 bg-black/40 px-3 text-sm text-white placeholder:text-white/35 outline-none"
                   />
                   <button
                     onClick={handleUnlockOwnerMenu}
-                    className="g-btn-accent h-10 px-4 text-[11px] font-extrabold uppercase tracking-[0.12em]"
+                    className="h-10 px-4 rounded-lg border border-white/25 bg-white/[0.1] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white hover:bg-white/[0.16]"
                   >
                     Unlock
                   </button>
@@ -1969,16 +2246,16 @@ export function CosmeticLocker() {
               </div>
             ) : (
               <div className="mt-3 grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)] gap-3">
-                <aside className="rounded-xl border border-white/10 bg-white/[0.03] p-3 h-fit">
-                  <p className="text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/55">Tools</p>
+                <aside className="rounded-xl border border-white/15 bg-white/[0.02] p-3 h-fit">
+                  <p className="text-[10px] uppercase tracking-[0.14em] font-black text-white/45">Tools</p>
                   <div className="mt-2 space-y-2">
                     <button
                       onClick={() => setActiveModTool('cape-sql')}
                       className={clsx(
                         'w-full rounded-xl border px-3 py-2 text-left text-[11px] font-extrabold uppercase tracking-[0.12em] transition',
                         activeModTool === 'cape-sql'
-                          ? 'g-btn-accent'
-                          : 'border-white/10 bg-white/[0.03] text-white/75 hover:bg-white/[0.06]'
+                          ? 'border-white/30 bg-white/[0.14] text-white'
+                          : 'border-white/15 bg-black/35 text-white/75 hover:bg-white/[0.08]'
                       )}
                     >
                       Cape SQL Creator
@@ -1986,50 +2263,50 @@ export function CosmeticLocker() {
                   </div>
                 </aside>
 
-                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-3">
-                  <p className="text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/55">Create Cape Listing SQL</p>
+                <div className="rounded-xl border border-white/15 bg-white/[0.02] p-3 space-y-3">
+                  <p className="text-[10px] uppercase tracking-[0.14em] font-black text-white/50">Create Cape Listing SQL</p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     <input
                       value={capeSqlDraft.slug}
                       onChange={(event) => updateCapeSqlDraft('slug', event.target.value)}
                       placeholder="slug (required)"
-                      className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none"
+                      className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none"
                     />
                     <input
                       value={capeSqlDraft.name}
                       onChange={(event) => updateCapeSqlDraft('name', event.target.value)}
                       placeholder="name (required)"
-                      className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none"
+                      className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none"
                     />
                     <input
                       value={capeSqlDraft.texture_url}
                       onChange={(event) => updateCapeSqlDraft('texture_url', event.target.value)}
                       placeholder="texture_url (required)"
-                      className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none md:col-span-2"
+                      className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none md:col-span-2"
                     />
                     <input
                       value={capeSqlDraft.preview_url}
                       onChange={(event) => updateCapeSqlDraft('preview_url', event.target.value)}
                       placeholder="preview_url (optional)"
-                      className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none md:col-span-2"
+                      className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none md:col-span-2"
                     />
                     <input
                       value={capeSqlDraft.description}
                       onChange={(event) => updateCapeSqlDraft('description', event.target.value)}
                       placeholder="description (optional)"
-                      className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none md:col-span-2"
+                      className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none md:col-span-2"
                     />
                     <input
                       value={capeSqlDraft.rarity}
                       onChange={(event) => updateCapeSqlDraft('rarity', event.target.value)}
                       placeholder="rarity"
-                      className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none"
+                      className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none"
                     />
                     <input
                       value={capeSqlDraft.rarity_label}
                       onChange={(event) => updateCapeSqlDraft('rarity_label', event.target.value)}
                       placeholder="rarity_label"
-                      className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none"
+                      className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none"
                     />
                     <BloomColorInput
                       label="rarity_color_start"
@@ -2049,7 +2326,7 @@ export function CosmeticLocker() {
                         onChange={(next) => updateCapeSqlDraft('rarity_glow', next)}
                       />
                     </div>
-                    <label className="rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 flex flex-col">
+                    <label className="rounded-lg border border-white/20 bg-black/35 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 flex flex-col">
                       <span>price_bb</span>
                       <input
                         type="number"
@@ -2059,7 +2336,7 @@ export function CosmeticLocker() {
                         className="mt-1 bg-transparent text-sm text-white outline-none normal-case tracking-normal"
                       />
                     </label>
-                    <label className="rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 flex flex-col">
+                    <label className="rounded-lg border border-white/20 bg-black/35 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 flex flex-col">
                       <span>sort_order</span>
                       <input
                         type="number"
@@ -2068,7 +2345,7 @@ export function CosmeticLocker() {
                         className="mt-1 bg-transparent text-sm text-white outline-none normal-case tracking-normal"
                       />
                     </label>
-                    <label className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 inline-flex items-center gap-2">
+                    <label className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 inline-flex items-center gap-2">
                       <input
                         type="checkbox"
                         checked={capeSqlDraft.is_active}
@@ -2076,7 +2353,7 @@ export function CosmeticLocker() {
                       />
                       is_active
                     </label>
-                    <label className="h-9 rounded-lg border border-white/15 bg-white/[0.04] px-3 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 inline-flex items-center gap-2">
+                    <label className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 inline-flex items-center gap-2">
                       <input
                         type="checkbox"
                         checked={capeSqlDraft.is_featured}
@@ -2089,7 +2366,7 @@ export function CosmeticLocker() {
                   <textarea
                     value={generatedCapeSql}
                     readOnly
-                    className="h-56 w-full rounded-lg border border-white/15 bg-[#09080d] px-3 py-2 font-mono text-xs text-white/90 outline-none"
+                    className="h-56 w-full rounded-lg border border-white/20 bg-[#050506] px-3 py-2 font-mono text-xs text-white/90 outline-none"
                   />
                   <div className="flex flex-wrap items-center gap-2">
                     <button
@@ -2097,13 +2374,13 @@ export function CosmeticLocker() {
                         void handleCopyCapeSql();
                       }}
                       disabled={!capeSqlReady}
-                      className="g-btn-accent h-10 px-4 text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-45"
+                      className="h-10 px-4 rounded-lg border border-white/25 bg-white/[0.12] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white hover:bg-white/[0.18] disabled:opacity-45"
                     >
                       {capeSqlCopied ? 'Copied' : 'Copy SQL'}
                     </button>
                     <button
                       onClick={() => setCapeSqlDraft(DEFAULT_OWNER_CAPE_SQL_DRAFT)}
-                      className="g-btn h-10 px-4 text-[11px] font-extrabold uppercase tracking-[0.12em]"
+                      className="h-10 px-4 rounded-lg border border-white/20 bg-white/[0.03] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/85 hover:bg-white/[0.1]"
                     >
                       Reset Form
                     </button>

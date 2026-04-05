@@ -19,7 +19,7 @@ object BloomCapeManager {
         if (now < nextRefreshAllowedAtMs) {
             return
         }
-        nextRefreshAllowedAtMs = now + 350L
+        nextRefreshAllowedAtMs = now + 75L
 
         val client = MinecraftClient.getInstance() ?: return
         client.execute {

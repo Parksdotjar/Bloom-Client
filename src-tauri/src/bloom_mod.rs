@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::Path;
 
-const BLOOM_COSMETICS_TARGET_FILE: &str = "bloom-cosmetics-v0.0.9-1.21.11.jar";
+const BLOOM_COSMETICS_TARGET_FILE: &str = "bloom-cosmetics-1.21.11-latest.jar";
 const BLOOM_COSMETICS_BYTES: &[u8] =
-    include_bytes!("../resources/mods/bloom-cosmetics-v0.0.9-1.21.11.jar");
+    include_bytes!("../resources/mods/bloom-cosmetics-1.21.11-latest.jar");
 
 fn bloom_cosmetics_supported(loader_type: &str, mc_version: &str) -> bool {
     loader_type.eq_ignore_ascii_case("fabric") && mc_version == "1.21.11"

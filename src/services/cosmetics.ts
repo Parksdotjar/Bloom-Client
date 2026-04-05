@@ -137,6 +137,23 @@ export type UpdateCapeInput = {
   is_featured: boolean;
 };
 
+export type CreateCapeListingInput = {
+  slug: string;
+  name: string;
+  description?: string | null;
+  texture_url: string;
+  preview_url?: string | null;
+  price_bb: number;
+  rarity?: string;
+  rarity_label?: string | null;
+  rarity_color_start?: string | null;
+  rarity_color_end?: string | null;
+  rarity_glow?: string | null;
+  sort_order?: number;
+  is_active?: boolean;
+  is_featured?: boolean;
+};
+
 export type PreviewAppearanceRecord = {
   scope: string;
   exposure: number;
@@ -270,6 +287,49 @@ export async function loadWallet() {
     .maybeSingle();
   if (error) throw error;
   return data as WalletRecord | null;
+}
+
+export async function setOwnWalletBalance(balanceBb: number) {
+  const value = Math.max(0, Math.floor(balanceBb));
+  const { data, error } = await supabase.rpc('commerce_set_own_wallet_balance', {
+    p_balance_bb: value
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? ((data as WalletRecord[])[0] ?? null) : ((data as WalletRecord | null) ?? null);
+  if (!row) {
+    throw new Error('wallet_update_failed');
+  }
+  return row;
+}
+
+export async function setUserWalletBalance(username: string, balanceBb: number) {
+  const value = Math.max(0, Math.floor(balanceBb));
+  const cleanUsername = username.trim();
+  const { data, error } = await supabase.rpc('commerce_set_user_wallet_balance', {
+    p_username: cleanUsername,
+    p_balance_bb: value
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? ((data as WalletRecord[])[0] ?? null) : ((data as WalletRecord | null) ?? null);
+  if (!row) {
+    throw new Error('profile_not_found_or_wallet_update_failed');
+  }
+  return row;
+}
+
+export async function setUserRole(username: string, role: 'user' | 'owner') {
+  const cleanUsername = username.trim();
+  const cleanRole = role === 'owner' ? 'owner' : 'user';
+  const { data, error } = await supabase.rpc('commerce_set_user_role', {
+    p_username: cleanUsername,
+    p_role: cleanRole
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? ((data as CommerceProfile[])[0] ?? null) : ((data as CommerceProfile | null) ?? null);
+  if (!row) {
+    throw new Error('profile_not_found_or_role_update_failed');
+  }
+  return row;
 }
 
 export async function loadWalletLedger(limit = 20) {
@@ -416,6 +476,63 @@ export async function getSupabaseUserId() {
   const { data, error } = await supabase.auth.getUser();
   if (error) throw error;
   return data.user?.id ?? null;
+}
+
+export async function deactivateCapeListing(capeId: string) {
+  const { data, error } = await supabase
+    .from('commerce_capes')
+    .update({
+      is_active: false,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', capeId)
+    .select('id')
+    .single();
+  if (error) throw error;
+  return data as { id: string };
+}
+
+export async function deleteOwnCustomCape(capeId: string) {
+  const { data, error } = await supabase.rpc('commerce_delete_own_custom_cape', {
+    p_cape_id: capeId
+  });
+  if (error) throw error;
+  return (data as { deleted_cape_id: string; removed_entitlement: boolean } | null) ?? null;
+}
+
+export async function createCapeListing(input: CreateCapeListingInput) {
+  const { data, error } = await supabase.rpc('create_cape_listing', {
+    p_slug: input.slug.trim().toLowerCase(),
+    p_name: input.name.trim(),
+    p_description: input.description?.trim() || null,
+    p_texture_url: input.texture_url.trim(),
+    p_preview_url: input.preview_url?.trim() || null,
+    p_price_bb: Math.max(0, Math.round(input.price_bb)),
+    p_rarity: (input.rarity?.trim().toLowerCase() || 'custom'),
+    p_rarity_label: input.rarity_label?.trim() || 'CUSTOM',
+    p_rarity_color_start: input.rarity_color_start?.trim() || '#f472b6',
+    p_rarity_color_end: input.rarity_color_end?.trim() || '#a855f7',
+    p_rarity_glow: input.rarity_glow?.trim() || 'rgba(244,114,182,0.55)',
+    p_sort_order: Number.isFinite(input.sort_order) ? Math.round(input.sort_order as number) : 9999,
+    p_is_active: input.is_active ?? true,
+    p_is_featured: input.is_featured ?? false
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? ((data as CapeRecord[])[0] ?? null) : ((data as CapeRecord | null) ?? null);
+  if (!row) throw new Error('create_cape_listing_failed');
+  return row;
+}
+
+export async function isCurrentUserOwner() {
+  const userId = await getSupabaseUserId();
+  if (!userId) return false;
+  const { data, error } = await supabase
+    .from('commerce_profiles')
+    .select('role')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data?.role ?? 'user') === 'owner';
 }
 
 export async function loadLatestCustomCapeDraft() {

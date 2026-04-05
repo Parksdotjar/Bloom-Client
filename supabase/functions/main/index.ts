@@ -1,17 +1,60 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+import { parseGIF, decompressFrames } from "https://esm.sh/gifuct-js@2.1.2";
+import * as UPNG from "https://esm.sh/upng-js@2.1.0";
 
 type JsonObject = Record<string, unknown>;
+type AuthContext = { userId: string; token: string };
+type CapeProjectRow = {
+  id: string;
+  user_id: string;
+  name: string;
+  frame_width: number;
+  frame_height: number;
+  fps: number;
+  frame_count: number;
+  status: string;
+  current_revision: number;
+  created_at: string;
+  updated_at: string;
+};
+type CapeProjectFrameRow = {
+  id: string;
+  project_id: string;
+  frame_index: number;
+  storage_path: string;
+  width: number;
+  height: number;
+  is_blank: boolean;
+  created_at: string;
+  updated_at: string;
+};
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
 };
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 const KOFI_VERIFICATION_TOKEN = Deno.env.get("KOFI_VERIFICATION_TOKEN") ?? "";
+
+const DRAFT_BUCKET = Deno.env.get("BLOOM_CAPE_DRAFT_BUCKET") ?? "cape-drafts";
+const PUBLISHED_BUCKET = Deno.env.get("BLOOM_CAPE_PUBLISHED_BUCKET") ?? "cape-published";
+
+const MAX_UPLOAD_BYTES = Number.parseInt(Deno.env.get("BLOOM_GIF_MAX_BYTES") ?? "26214400", 10);
+const MAX_FRAMES = Number.parseInt(Deno.env.get("BLOOM_GIF_MAX_FRAMES") ?? "64", 10);
+const MAX_FPS = Number.parseInt(Deno.env.get("BLOOM_GIF_MAX_FPS") ?? "10", 10);
+const ALLOWED_RESOLUTIONS = new Set([
+  "64x32",
+  "128x64",
+  "256x128",
+  "512x256",
+  "1024x512",
+  "2048x1024",
+  "4096x2048",
+]);
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.");
@@ -35,6 +78,15 @@ function asString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function asInt(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
 }
 
 function normalizeEmail(value: unknown): string | null {
@@ -79,9 +131,7 @@ async function readPayload(request: Request): Promise<JsonObject> {
   if (contentType.includes("application/x-www-form-urlencoded")) {
     const params = new URLSearchParams(rawBody);
     const nestedData = params.get("data");
-    if (nestedData) {
-      return JSON.parse(nestedData) as JsonObject;
-    }
+    if (nestedData) return JSON.parse(nestedData) as JsonObject;
     return Object.fromEntries(params.entries());
   }
 
@@ -114,47 +164,874 @@ function getBearerToken(request: Request): string | null {
 }
 
 function createUserScopedClient(token: string) {
-  if (!SUPABASE_ANON_KEY) {
-    throw new Error("SUPABASE_ANON_KEY_missing");
-  }
+  if (!SUPABASE_ANON_KEY) throw new Error("SUPABASE_ANON_KEY_missing");
   return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { persistSession: false },
-    global: {
-      headers: {
-        Authorization: `Bearer ${token}`,
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+}
+
+async function requireAuth(request: Request): Promise<AuthContext> {
+  const token = getBearerToken(request);
+  if (!token) throw new Error("missing_authorization");
+  const userClient = createUserScopedClient(token);
+  const { data, error } = await userClient.auth.getUser();
+  if (error || !data.user?.id) throw new Error("invalid_authentication_credentials");
+  return { userId: data.user.id, token };
+}
+
+function assertResolution(width: number, height: number) {
+  if (!ALLOWED_RESOLUTIONS.has(`${width}x${height}`)) throw new Error("invalid_resolution");
+}
+
+function assertFps(fps: number) {
+  if (!Number.isFinite(fps) || fps < 1 || fps > MAX_FPS) throw new Error("invalid_fps");
+}
+
+function getCapeEditableRegions(width: number, height: number) {
+  const sx = Math.max(1, Math.floor(width / 64));
+  const sy = Math.max(1, Math.floor(height / 32));
+  return [
+    { x: 0 * sx, y: 1 * sy, width: 1 * sx, height: 16 * sy },
+    { x: 1 * sx, y: 1 * sy, width: 10 * sx, height: 16 * sy },
+    { x: 11 * sx, y: 1 * sy, width: 1 * sx, height: 16 * sy },
+    { x: 12 * sx, y: 1 * sy, width: 10 * sx, height: 16 * sy },
+    { x: 1 * sx, y: 0 * sy, width: 10 * sx, height: 1 * sy },
+    { x: 12 * sx, y: 0 * sy, width: 10 * sx, height: 1 * sy },
+  ];
+}
+
+function isInsideAnyRegion(x: number, y: number, regions: Array<{ x: number; y: number; width: number; height: number }>) {
+  for (const region of regions) {
+    if (x >= region.x && x < region.x + region.width && y >= region.y && y < region.y + region.height) return true;
+  }
+  return false;
+}
+
+function transparentRgba(width: number, height: number) {
+  return new Uint8Array(width * height * 4);
+}
+
+function encodePng(width: number, height: number, rgba: Uint8Array): Uint8Array {
+  const encoder =
+    (UPNG as unknown as { encode?: (...args: unknown[]) => ArrayBuffer }).encode ??
+    ((UPNG as unknown as { default?: { encode?: (...args: unknown[]) => ArrayBuffer } }).default?.encode);
+  if (!encoder) throw new Error("png_encoder_unavailable");
+  const out = encoder([rgba.buffer.slice(rgba.byteOffset, rgba.byteOffset + rgba.byteLength)], width, height, 0);
+  return new Uint8Array(out);
+}
+
+function decodeDataUrlPng(dataUrl: string): Uint8Array {
+  const match = dataUrl.match(/^data:image\/png;base64,(.+)$/i);
+  if (!match) throw new Error("invalid_png_data_url");
+  const binary = atob(match[1]);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function framePath(userId: string, projectId: string, frameIndex: number) {
+  return `cape-drafts/${userId}/${projectId}/frames/frame_${String(frameIndex).padStart(3, "0")}.png`;
+}
+
+function publishedFramePath(userId: string, capeId: string, revision: number, frameIndex: number) {
+  return `cape-published/${userId}/${capeId}/rev_${revision}/frames/frame_${String(frameIndex).padStart(3, "0")}.png`;
+}
+
+function publishedManifestPath(userId: string, capeId: string, revision: number) {
+  return `cape-published/${userId}/${capeId}/rev_${revision}/manifest.json`;
+}
+
+function publishedCoverPath(userId: string, capeId: string, revision: number) {
+  return `cape-published/${userId}/${capeId}/rev_${revision}/preview/cover.png`;
+}
+
+async function uploadBytes(bucket: string, path: string, bytes: Uint8Array, contentType: string, upsert = true) {
+  const { error } = await admin.storage.from(bucket).upload(path, bytes, { contentType, upsert });
+  if (error) throw new Error(error.message);
+}
+
+async function maybeSignedUrl(bucket: string, path: string) {
+  const { data, error } = await admin.storage.from(bucket).createSignedUrl(path, 60 * 60);
+  if (error || !data?.signedUrl) return null;
+  return data.signedUrl;
+}
+
+async function getProject(userId: string, projectId: string): Promise<CapeProjectRow> {
+  const { data, error } = await admin
+    .from("commerce_cape_projects")
+    .select("*")
+    .eq("id", projectId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("project_not_found");
+  return data as CapeProjectRow;
+}
+
+async function getProjectFrames(projectId: string): Promise<CapeProjectFrameRow[]> {
+  const { data, error } = await admin
+    .from("commerce_cape_project_frames")
+    .select("*")
+    .eq("project_id", projectId)
+    .order("frame_index", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as CapeProjectFrameRow[];
+}
+
+async function rebuildProjectPayload(userId: string, projectId: string) {
+  const project = await getProject(userId, projectId);
+  const frames = await getProjectFrames(projectId);
+  const serialized = [];
+  for (const frame of frames) {
+    serialized.push({
+      index: frame.frame_index,
+      storage_path: frame.storage_path,
+      is_blank: frame.is_blank,
+      signed_url: await maybeSignedUrl(DRAFT_BUCKET, frame.storage_path),
+    });
+  }
+  return { project, frames: serialized };
+}
+
+async function upsertProjectFrame(project: CapeProjectRow, frameIndex: number, pngBytes: Uint8Array, isBlank: boolean) {
+  if (frameIndex < 0 || frameIndex >= MAX_FRAMES) throw new Error("frame_index_out_of_range");
+  const path = framePath(project.user_id, project.id, frameIndex);
+  await uploadBytes(DRAFT_BUCKET, path, pngBytes, "image/png", true);
+  const { error } = await admin.from("commerce_cape_project_frames").upsert(
+    {
+      project_id: project.id,
+      frame_index: frameIndex,
+      storage_path: path,
+      width: project.frame_width,
+      height: project.frame_height,
+      is_blank: isBlank,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "project_id,frame_index" },
+  );
+  if (error) throw new Error(error.message);
+}
+
+async function syncProjectFrameCount(projectId: string) {
+  const { count, error } = await admin
+    .from("commerce_cape_project_frames")
+    .select("*", { count: "exact", head: true })
+    .eq("project_id", projectId);
+  if (error) throw new Error(error.message);
+  const frameCount = count ?? 0;
+  const { error: updateError } = await admin
+    .from("commerce_cape_projects")
+    .update({ frame_count: frameCount, updated_at: new Date().toISOString() })
+    .eq("id", projectId);
+  if (updateError) throw new Error(updateError.message);
+}
+
+function decodeGifFrames(gifBytes: Uint8Array): { width: number; height: number; frames: Uint8Array[] } {
+  const parsed = parseGIF(gifBytes);
+  const logicalWidth = Number(parsed?.lsd?.width ?? 0);
+  const logicalHeight = Number(parsed?.lsd?.height ?? 0);
+  if (!logicalWidth || !logicalHeight) throw new Error("invalid_gif_dimensions");
+  const decoded = decompressFrames(parsed, true) as Array<{
+    patch: Uint8Array;
+    dims: { left: number; top: number; width: number; height: number };
+    disposalType: number;
+  }>;
+  if (!decoded.length) throw new Error("gif_no_frames");
+
+  const composedFrames: Uint8Array[] = [];
+  let prior = transparentRgba(logicalWidth, logicalHeight);
+  for (const frame of decoded) {
+    const current = new Uint8Array(prior);
+    const { left, top, width, height } = frame.dims;
+    const patch = frame.patch;
+    for (let py = 0; py < height; py += 1) {
+      for (let px = 0; px < width; px += 1) {
+        const srcOffset = (py * width + px) * 4;
+        const dstX = left + px;
+        const dstY = top + py;
+        if (dstX < 0 || dstY < 0 || dstX >= logicalWidth || dstY >= logicalHeight) continue;
+        const dstOffset = (dstY * logicalWidth + dstX) * 4;
+        current[dstOffset] = patch[srcOffset];
+        current[dstOffset + 1] = patch[srcOffset + 1];
+        current[dstOffset + 2] = patch[srcOffset + 2];
+        current[dstOffset + 3] = patch[srcOffset + 3];
+      }
+    }
+    composedFrames.push(current);
+    if (frame.disposalType === 2) {
+      const next = new Uint8Array(current);
+      for (let py = 0; py < height; py += 1) {
+        for (let px = 0; px < width; px += 1) {
+          const dstX = left + px;
+          const dstY = top + py;
+          if (dstX < 0 || dstY < 0 || dstX >= logicalWidth || dstY >= logicalHeight) continue;
+          const dstOffset = (dstY * logicalWidth + dstX) * 4;
+          next[dstOffset] = 0;
+          next[dstOffset + 1] = 0;
+          next[dstOffset + 2] = 0;
+          next[dstOffset + 3] = 0;
+        }
+      }
+      prior = next;
+    } else {
+      prior = current;
+    }
+  }
+
+  return { width: logicalWidth, height: logicalHeight, frames: composedFrames };
+}
+
+function resizeNearest(src: Uint8Array, srcWidth: number, srcHeight: number, dstWidth: number, dstHeight: number) {
+  const out = transparentRgba(dstWidth, dstHeight);
+  for (let y = 0; y < dstHeight; y += 1) {
+    const sy = Math.max(0, Math.min(srcHeight - 1, Math.floor((y / dstHeight) * srcHeight)));
+    for (let x = 0; x < dstWidth; x += 1) {
+      const sx = Math.max(0, Math.min(srcWidth - 1, Math.floor((x / dstWidth) * srcWidth)));
+      const srcOffset = (sy * srcWidth + sx) * 4;
+      const dstOffset = (y * dstWidth + x) * 4;
+      out[dstOffset] = src[srcOffset];
+      out[dstOffset + 1] = src[srcOffset + 1];
+      out[dstOffset + 2] = src[srcOffset + 2];
+      out[dstOffset + 3] = src[srcOffset + 3];
+    }
+  }
+  return out;
+}
+
+function resizeNearestCoverCrop(src: Uint8Array, srcWidth: number, srcHeight: number, dstWidth: number, dstHeight: number) {
+  const out = transparentRgba(dstWidth, dstHeight);
+  if (srcWidth <= 0 || srcHeight <= 0 || dstWidth <= 0 || dstHeight <= 0) return out;
+
+  const srcAspect = srcWidth / srcHeight;
+  const dstAspect = dstWidth / dstHeight;
+
+  let cropW = srcWidth;
+  let cropH = srcHeight;
+  let cropX = 0;
+  let cropY = 0;
+
+  if (srcAspect > dstAspect) {
+    cropW = Math.max(1, Math.floor(srcHeight * dstAspect));
+    cropX = Math.floor((srcWidth - cropW) / 2);
+  } else if (srcAspect < dstAspect) {
+    cropH = Math.max(1, Math.floor(srcWidth / dstAspect));
+    cropY = Math.floor((srcHeight - cropH) / 2);
+  }
+
+  for (let y = 0; y < dstHeight; y += 1) {
+    const sy = cropY + Math.max(0, Math.min(cropH - 1, Math.floor((y / dstHeight) * cropH)));
+    for (let x = 0; x < dstWidth; x += 1) {
+      const sx = cropX + Math.max(0, Math.min(cropW - 1, Math.floor((x / dstWidth) * cropW)));
+      const srcOffset = (sy * srcWidth + sx) * 4;
+      const dstOffset = (y * dstWidth + x) * 4;
+      out[dstOffset] = src[srcOffset];
+      out[dstOffset + 1] = src[srcOffset + 1];
+      out[dstOffset + 2] = src[srcOffset + 2];
+      out[dstOffset + 3] = src[srcOffset + 3];
+    }
+  }
+  return out;
+}
+
+function mapSourceToCapeMask(srcRgba: Uint8Array, srcWidth: number, srcHeight: number, dstWidth: number, dstHeight: number) {
+  const out = transparentRgba(dstWidth, dstHeight);
+  const regions = getCapeEditableRegions(dstWidth, dstHeight);
+  const front = regions[1];
+  const back = regions[3];
+  const frontScaled = resizeNearestCoverCrop(srcRgba, srcWidth, srcHeight, front.width, front.height);
+  const backScaled = resizeNearestCoverCrop(srcRgba, srcWidth, srcHeight, back.width, back.height);
+
+  for (let y = 0; y < front.height; y += 1) {
+    for (let x = 0; x < front.width; x += 1) {
+      const srcOffset = (y * front.width + x) * 4;
+      const dstOffset = ((front.y + y) * dstWidth + (front.x + x)) * 4;
+      out[dstOffset] = frontScaled[srcOffset];
+      out[dstOffset + 1] = frontScaled[srcOffset + 1];
+      out[dstOffset + 2] = frontScaled[srcOffset + 2];
+      out[dstOffset + 3] = frontScaled[srcOffset + 3];
+    }
+  }
+  for (let y = 0; y < back.height; y += 1) {
+    for (let x = 0; x < back.width; x += 1) {
+      const srcOffset = (y * back.width + x) * 4;
+      const dstOffset = ((back.y + y) * dstWidth + (back.x + x)) * 4;
+      out[dstOffset] = backScaled[srcOffset];
+      out[dstOffset + 1] = backScaled[srcOffset + 1];
+      out[dstOffset + 2] = backScaled[srcOffset + 2];
+      out[dstOffset + 3] = backScaled[srcOffset + 3];
+    }
+  }
+
+  for (let y = 0; y < dstHeight; y += 1) {
+    for (let x = 0; x < dstWidth; x += 1) {
+      if (isInsideAnyRegion(x, y, regions)) continue;
+      const offset = (y * dstWidth + x) * 4;
+      out[offset] = 0;
+      out[offset + 1] = 0;
+      out[offset + 2] = 0;
+      out[offset + 3] = 0;
+    }
+  }
+  return out;
+}
+
+async function clearProjectFrames(projectId: string) {
+  const existing = await getProjectFrames(projectId);
+  if (existing.length) {
+    const paths = existing.map((frame) => frame.storage_path);
+    await admin.storage.from(DRAFT_BUCKET).remove(paths);
+  }
+  const { error } = await admin.from("commerce_cape_project_frames").delete().eq("project_id", projectId);
+  if (error) throw new Error(error.message);
+}
+
+async function handleGifCapeCreateProject(request: Request) {
+  const { userId } = await requireAuth(request);
+  const payload = await readPayload(request);
+  const name = asString(payload.name) ?? "GIF Cape";
+  const frameWidth = asInt(payload.frame_width) ?? 64;
+  const frameHeight = asInt(payload.frame_height) ?? 32;
+  const fps = asInt(payload.fps) ?? 10;
+  assertResolution(frameWidth, frameHeight);
+  assertFps(fps);
+
+  const { data, error } = await admin
+    .from("commerce_cape_projects")
+    .insert({
+      user_id: userId,
+      name,
+      type: "animated",
+      frame_width: frameWidth,
+      frame_height: frameHeight,
+      fps,
+      frame_count: 1,
+      status: "draft",
+    })
+    .select("*")
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "project_create_failed");
+  const project = data as CapeProjectRow;
+  const blank = encodePng(frameWidth, frameHeight, transparentRgba(frameWidth, frameHeight));
+  await upsertProjectFrame(project, 0, blank, true);
+  await syncProjectFrameCount(project.id);
+
+  return jsonResponse(200, { ok: true, project: await rebuildProjectPayload(userId, project.id) });
+}
+
+async function handleGifCapeGetProject(request: Request, projectId: string) {
+  const { userId } = await requireAuth(request);
+  return jsonResponse(200, { ok: true, project: await rebuildProjectPayload(userId, projectId) });
+}
+
+async function handleGifCapeUpdateProject(request: Request, projectId: string) {
+  const { userId } = await requireAuth(request);
+  const payload = await readPayload(request);
+  const project = await getProject(userId, projectId);
+
+  const nextName = asString(payload.name) ?? project.name;
+  const nextFps = asInt(payload.fps) ?? project.fps;
+  const nextWidth = asInt(payload.frame_width) ?? project.frame_width;
+  const nextHeight = asInt(payload.frame_height) ?? project.frame_height;
+  assertResolution(nextWidth, nextHeight);
+  assertFps(nextFps);
+
+  const { error } = await admin
+    .from("commerce_cape_projects")
+    .update({
+      name: nextName,
+      fps: nextFps,
+      frame_width: nextWidth,
+      frame_height: nextHeight,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", projectId)
+    .eq("user_id", userId);
+  if (error) throw new Error(error.message);
+
+  return jsonResponse(200, { ok: true, project: await rebuildProjectPayload(userId, projectId) });
+}
+
+async function handleGifCapeDeleteProject(request: Request, projectId: string) {
+  const { userId } = await requireAuth(request);
+  const project = await getProject(userId, projectId);
+  await clearProjectFrames(project.id);
+  const { error } = await admin.from("commerce_cape_projects").delete().eq("id", project.id).eq("user_id", userId);
+  if (error) throw new Error(error.message);
+  return jsonResponse(200, { ok: true, deleted: true });
+}
+
+async function handleGifCapeUploadFrame(request: Request, projectId: string, frameIndex: number) {
+  const { userId } = await requireAuth(request);
+  const project = await getProject(userId, projectId);
+  const payload = await readPayload(request);
+  const dataUrl = asString(payload.data_url);
+  if (!dataUrl) throw new Error("data_url_required");
+  const pngBytes = decodeDataUrlPng(dataUrl);
+  await upsertProjectFrame(project, frameIndex, pngBytes, false);
+  await syncProjectFrameCount(project.id);
+  return jsonResponse(200, { ok: true, project: await rebuildProjectPayload(userId, project.id) });
+}
+
+async function handleGifCapeDuplicateFrame(request: Request, projectId: string, frameIndex: number) {
+  const { userId } = await requireAuth(request);
+  const project = await getProject(userId, projectId);
+  const frames = await getProjectFrames(projectId);
+  const target = frames.find((frame) => frame.frame_index === frameIndex);
+  if (!target) throw new Error("frame_not_found");
+  if (frames.length >= MAX_FRAMES) throw new Error("max_frames_reached");
+
+  const { data: blob, error: downloadError } = await admin.storage.from(DRAFT_BUCKET).download(target.storage_path);
+  if (downloadError || !blob) throw new Error(downloadError?.message ?? "frame_download_failed");
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+
+  for (const frame of [...frames].sort((a, b) => b.frame_index - a.frame_index)) {
+    if (frame.frame_index <= frameIndex) continue;
+    const { error: shiftError } = await admin
+      .from("commerce_cape_project_frames")
+      .update({ frame_index: frame.frame_index + 1, updated_at: new Date().toISOString() })
+      .eq("id", frame.id);
+    if (shiftError) throw new Error(shiftError.message);
+  }
+
+  await upsertProjectFrame(project, frameIndex + 1, bytes, target.is_blank);
+  await syncProjectFrameCount(project.id);
+  return jsonResponse(200, { ok: true, project: await rebuildProjectPayload(userId, project.id) });
+}
+
+async function handleGifCapeAddBlankFrame(request: Request, projectId: string) {
+  const { userId } = await requireAuth(request);
+  const project = await getProject(userId, projectId);
+  const frames = await getProjectFrames(projectId);
+  if (frames.length >= MAX_FRAMES) throw new Error("max_frames_reached");
+  const nextIndex = frames.length;
+  const blank = encodePng(project.frame_width, project.frame_height, transparentRgba(project.frame_width, project.frame_height));
+  await upsertProjectFrame(project, nextIndex, blank, true);
+  await syncProjectFrameCount(project.id);
+  return jsonResponse(200, { ok: true, project: await rebuildProjectPayload(userId, project.id) });
+}
+
+async function handleGifCapeDeleteFrame(request: Request, projectId: string, frameIndex: number) {
+  const { userId } = await requireAuth(request);
+  const project = await getProject(userId, projectId);
+  const frames = await getProjectFrames(projectId);
+  if (frames.length <= 1) throw new Error("minimum_one_frame_required");
+  const target = frames.find((frame) => frame.frame_index === frameIndex);
+  if (!target) throw new Error("frame_not_found");
+  const { error: deleteError } = await admin.from("commerce_cape_project_frames").delete().eq("id", target.id);
+  if (deleteError) throw new Error(deleteError.message);
+  await admin.storage.from(DRAFT_BUCKET).remove([target.storage_path]);
+
+  const higher = frames.filter((frame) => frame.frame_index > frameIndex).sort((a, b) => a.frame_index - b.frame_index);
+  for (const frame of higher) {
+    const { error: shiftError } = await admin
+      .from("commerce_cape_project_frames")
+      .update({ frame_index: frame.frame_index - 1, updated_at: new Date().toISOString() })
+      .eq("id", frame.id);
+    if (shiftError) throw new Error(shiftError.message);
+  }
+  await syncProjectFrameCount(project.id);
+  return jsonResponse(200, { ok: true, project: await rebuildProjectPayload(userId, project.id) });
+}
+
+async function handleGifCapeImportGif(request: Request, projectId: string) {
+  const { userId } = await requireAuth(request);
+  const project = await getProject(userId, projectId);
+  const form = await request.formData();
+  const gifFile = form.get("gif");
+  if (!(gifFile instanceof File)) throw new Error("gif_file_required");
+  if (gifFile.size > MAX_UPLOAD_BYTES) throw new Error("gif_too_large");
+  const bytes = new Uint8Array(await gifFile.arrayBuffer());
+  if (bytes.length < 6 || String.fromCharCode(...bytes.slice(0, 3)) !== "GIF") throw new Error("invalid_gif_signature");
+
+  const decoded = decodeGifFrames(bytes);
+  let sourceFrames = decoded.frames;
+  if (sourceFrames.length > MAX_FRAMES) {
+    const reduced: Uint8Array[] = [];
+    const step = sourceFrames.length / MAX_FRAMES;
+    for (let i = 0; i < MAX_FRAMES; i += 1) reduced.push(sourceFrames[Math.min(sourceFrames.length - 1, Math.floor(i * step))]);
+    sourceFrames = reduced;
+  }
+
+  await clearProjectFrames(project.id);
+  for (let i = 0; i < sourceFrames.length; i += 1) {
+    const mapped = mapSourceToCapeMask(sourceFrames[i], decoded.width, decoded.height, project.frame_width, project.frame_height);
+    const png = encodePng(project.frame_width, project.frame_height, mapped);
+    const isBlank = !mapped.some((value, idx) => (idx % 4 === 3 ? value > 0 : false));
+    await upsertProjectFrame(project, i, png, isBlank);
+  }
+  await syncProjectFrameCount(project.id);
+  return jsonResponse(200, { ok: true, project: await rebuildProjectPayload(userId, project.id) });
+}
+
+async function handleGifCapePublish(request: Request, projectId: string) {
+  const { userId } = await requireAuth(request);
+  const payload = await readPayload(request);
+  const autoEquip = payload.auto_equip === true;
+  const project = await getProject(userId, projectId);
+  const frames = await getProjectFrames(projectId);
+  if (!frames.length) throw new Error("no_frames_to_publish");
+  if (frames.length > MAX_FRAMES) throw new Error("too_many_frames");
+
+  const { data: existingCape } = await admin
+    .from("commerce_custom_capes")
+    .select("*")
+    .eq("project_id", project.id)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  let capeId = (existingCape as { id?: string } | null)?.id ?? null;
+  if (!capeId) {
+    const { data: createdCape, error: createCapeError } = await admin
+      .from("commerce_custom_capes")
+      .insert({
+        user_id: userId,
+        project_id: project.id,
+        name: project.name,
+        is_animated: true,
+        frame_width: project.frame_width,
+        frame_height: project.frame_height,
+        fps: project.fps,
+        frame_count: frames.length,
+        manifest_path: "",
+        status: "published",
+      })
+      .select("id")
+      .single();
+    if (createCapeError || !createdCape) throw new Error(createCapeError?.message ?? "cape_create_failed");
+    capeId = createdCape.id as string;
+  }
+
+  const { data: revRow, error: revError } = await admin
+    .from("commerce_custom_cape_revisions")
+    .select("revision")
+    .eq("cape_id", capeId)
+    .order("revision", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (revError) throw new Error(revError.message);
+  const nextRevision = ((revRow as { revision?: number } | null)?.revision ?? 0) + 1;
+
+  const ordered = [...frames].sort((a, b) => a.frame_index - b.frame_index);
+  let coverPath = "";
+  for (const frame of ordered) {
+    const { data: frameBlob, error: frameDownloadError } = await admin.storage.from(DRAFT_BUCKET).download(frame.storage_path);
+    if (frameDownloadError || !frameBlob) throw new Error(frameDownloadError?.message ?? "frame_download_failed");
+    const frameBytes = new Uint8Array(await frameBlob.arrayBuffer());
+    const destination = publishedFramePath(userId, capeId, nextRevision, frame.frame_index);
+    await uploadBytes(PUBLISHED_BUCKET, destination, frameBytes, "image/png", true);
+    if (frame.frame_index === 0) {
+      coverPath = publishedCoverPath(userId, capeId, nextRevision);
+      await uploadBytes(PUBLISHED_BUCKET, coverPath, frameBytes, "image/png", true);
+    }
+  }
+
+  const manifestPath = publishedManifestPath(userId, capeId, nextRevision);
+  const texturePath = publishedFramePath(userId, capeId, nextRevision, 0);
+  const manifest = {
+    version: 1,
+    capeId,
+    revision: nextRevision,
+    name: project.name,
+    type: "animated",
+    frameWidth: project.frame_width,
+    frameHeight: project.frame_height,
+    frameCount: ordered.length,
+    fps: project.fps,
+    playback: "loop",
+    maskType: "standard_cape",
+    frames: ordered.map((frame) => ({
+      index: frame.frame_index,
+      path: `frames/frame_${String(frame.frame_index).padStart(3, "0")}.png`,
+      blank: frame.is_blank,
+    })),
+  };
+  await uploadBytes(PUBLISHED_BUCKET, manifestPath, new TextEncoder().encode(JSON.stringify(manifest, null, 2)), "application/json", true);
+
+  const { error: revisionInsertError } = await admin.from("commerce_custom_cape_revisions").insert({
+    cape_id: capeId,
+    revision: nextRevision,
+    manifest_path: manifestPath,
+    frame_count: ordered.length,
+    fps: project.fps,
+  });
+  if (revisionInsertError) throw new Error(revisionInsertError.message);
+
+  const { data: revisionRow, error: revisionReadError } = await admin
+    .from("commerce_custom_cape_revisions")
+    .select("id")
+    .eq("cape_id", capeId)
+    .eq("revision", nextRevision)
+    .single();
+  if (revisionReadError || !revisionRow) throw new Error(revisionReadError?.message ?? "revision_lookup_failed");
+
+  const { error: capeUpdateError } = await admin
+    .from("commerce_custom_capes")
+    .update({
+      name: project.name,
+      frame_width: project.frame_width,
+      frame_height: project.frame_height,
+      fps: project.fps,
+      frame_count: ordered.length,
+      manifest_path: manifestPath,
+      preview_image_path: coverPath || null,
+      status: "published",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", capeId);
+  if (capeUpdateError) throw new Error(capeUpdateError.message);
+
+  // Mirror into locker-visible commerce tables so published GIF capes appear in Locker immediately.
+  const publicOrigin = (() => {
+    try {
+      return new URL(SUPABASE_URL).origin;
+    } catch {
+      return SUPABASE_URL.replace(/\/+$/, "");
+    }
+  })();
+  const textureUrl = `${publicOrigin}/storage/v1/object/public/${PUBLISHED_BUCKET}/${texturePath}`;
+  const previewUrl = coverPath
+    ? `${publicOrigin}/storage/v1/object/public/${PUBLISHED_BUCKET}/${coverPath}`
+    : null;
+  const lockerSlug = `gif-${capeId.replace(/-/g, "").slice(0, 12)}`;
+
+  const lockerCapeUpsert = await admin.from("commerce_capes").upsert(
+    {
+      id: capeId,
+      slug: lockerSlug,
+      name: project.name,
+      description: `Animated GIF cape (${ordered.length} frames @ ${project.fps} FPS)`,
+      texture_url: textureUrl,
+      preview_url: previewUrl,
+      price_bb: 0,
+      rarity: "custom",
+      rarity_label: "CUSTOM",
+      rarity_color_start: "#f472b6",
+      rarity_color_end: "#a855f7",
+      rarity_glow: "rgba(244,114,182,0.55)",
+      sort_order: 9999,
+      is_active: true,
+      is_featured: false,
+      created_by: userId,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "id" },
+  );
+  if (lockerCapeUpsert.error) throw new Error(lockerCapeUpsert.error.message);
+
+  const entitlementUpsert = await admin.from("commerce_cape_entitlements").upsert(
+    {
+      user_id: userId,
+      cape_id: capeId,
+      source: "gif_publish",
+      metadata: { project_id: project.id, revision: nextRevision },
+    },
+    { onConflict: "user_id,cape_id" },
+  );
+  if (entitlementUpsert.error) throw new Error(entitlementUpsert.error.message);
+
+  let equipWarning: string | null = null;
+  if (autoEquip) {
+    const loadoutUpsert = await admin.from("commerce_cape_loadout").upsert(
+      {
+        user_id: userId,
+        equipped_cape_id: capeId,
+        updated_at: new Date().toISOString(),
       },
+      { onConflict: "user_id" },
+    );
+    if (loadoutUpsert.error) {
+      equipWarning = loadoutUpsert.error.message;
+    }
+
+    const now = new Date().toISOString();
+
+    const modernEquip = await admin.from("player_equipped_cosmetics").upsert(
+      {
+        user_id: userId,
+        cape_id: capeId,
+        revision_id: revisionRow.id,
+        updated_at: now,
+      },
+      { onConflict: "user_id" },
+    );
+
+    if (modernEquip.error) {
+      const { data: profileRow, error: profileError } = await admin
+        .from("commerce_profiles")
+        .select("mc_uuid")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (profileError) {
+        equipWarning = profileError.message;
+      }
+      const playerUuid = asString((profileRow as { mc_uuid?: string } | null)?.mc_uuid);
+      if (!playerUuid) {
+        equipWarning = equipWarning ?? "player_uuid_missing_for_equip";
+      }
+
+      if (playerUuid) {
+        const legacyEquip = await admin.from("player_equipped_cosmetics").upsert(
+          {
+            player_uuid: playerUuid,
+            cape_id: capeId,
+            updated_at: now,
+          },
+          { onConflict: "player_uuid" },
+        );
+        if (legacyEquip.error) equipWarning = legacyEquip.error.message;
+      }
+    }
+  }
+
+  return jsonResponse(200, {
+    ok: true,
+    result: {
+      cape_id: capeId,
+      revision_id: revisionRow.id,
+      manifest_path: manifestPath,
+      frame_count: ordered.length,
+      fps: project.fps,
+      frame_width: project.frame_width,
+      frame_height: project.frame_height,
+      equip_warning: equipWarning,
     },
   });
 }
 
+async function handleGifCapeEquip(request: Request, capeId: string) {
+  const { userId } = await requireAuth(request);
+  const { data: cape, error: capeError } = await admin
+    .from("commerce_custom_capes")
+    .select("id,user_id")
+    .eq("id", capeId)
+    .maybeSingle();
+  if (capeError) throw new Error(capeError.message);
+  if (!cape || cape.user_id !== userId) throw new Error("cape_not_owned");
+
+  const { data: revision, error: revisionError } = await admin
+    .from("commerce_custom_cape_revisions")
+    .select("id,revision")
+    .eq("cape_id", capeId)
+    .order("revision", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (revisionError || !revision) throw new Error(revisionError?.message ?? "cape_revision_missing");
+
+  const now = new Date().toISOString();
+  const modernEquip = await admin.from("player_equipped_cosmetics").upsert(
+    {
+      user_id: userId,
+      cape_id: capeId,
+      revision_id: revision.id,
+      updated_at: now,
+    },
+    { onConflict: "user_id" },
+  );
+
+  if (modernEquip.error) {
+    const { data: profileRow, error: profileError } = await admin
+      .from("commerce_profiles")
+      .select("mc_uuid")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (profileError) throw new Error(profileError.message);
+    const playerUuid = asString((profileRow as { mc_uuid?: string } | null)?.mc_uuid);
+    if (!playerUuid) throw new Error("player_uuid_missing_for_equip");
+
+    const legacyEquip = await admin.from("player_equipped_cosmetics").upsert(
+      {
+        player_uuid: playerUuid,
+        cape_id: capeId,
+        updated_at: now,
+      },
+      { onConflict: "player_uuid" },
+    );
+    if (legacyEquip.error) throw new Error(legacyEquip.error.message);
+  }
+
+  return jsonResponse(200, { ok: true, equipped: { user_id: userId, cape_id: capeId, revision_id: revision.id } });
+}
+
+async function handleGifCapeGetManifest(_: Request, capeId: string) {
+  const { data: cape, error } = await admin
+    .from("commerce_custom_capes")
+    .select("manifest_path")
+    .eq("id", capeId)
+    .eq("status", "published")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!cape?.manifest_path) throw new Error("manifest_not_found");
+  const { data } = await admin.storage.from(PUBLISHED_BUCKET).createSignedUrl(cape.manifest_path, 60 * 60);
+  if (!data?.signedUrl) throw new Error("manifest_url_failed");
+  const response = await fetch(data.signedUrl);
+  if (!response.ok) throw new Error("manifest_fetch_failed");
+  const manifest = await response.json();
+  return jsonResponse(200, { ok: true, manifest });
+}
+
+async function handleGifCapeGetFrame(_: Request, capeId: string, frameIndex: number) {
+  const { data: revision, error } = await admin
+    .from("commerce_custom_cape_revisions")
+    .select("manifest_path,revision")
+    .eq("cape_id", capeId)
+    .order("revision", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !revision) throw new Error(error?.message ?? "cape_revision_not_found");
+  const userId = revision.manifest_path.split("/")[1] ?? "";
+  const framePathInRev = publishedFramePath(userId, capeId, revision.revision, frameIndex);
+  const { data } = await admin.storage.from(PUBLISHED_BUCKET).createSignedUrl(framePathInRev, 60 * 60);
+  if (!data?.signedUrl) throw new Error("frame_url_failed");
+  return new Response(null, { status: 302, headers: { ...CORS_HEADERS, Location: data.signedUrl } });
+}
+
+async function handleGifCapeGetPlayerCape(_: Request, playerId: string) {
+  const { data: equipped, error: equippedError } = await admin
+    .from("player_equipped_cosmetics")
+    .select("cape_id,revision_id,updated_at")
+    .eq("user_id", playerId)
+    .maybeSingle();
+  if (equippedError) throw new Error(equippedError.message);
+  if (!equipped?.cape_id) return jsonResponse(200, { ok: true, cape: null });
+
+  const { data: cape, error: capeError } = await admin
+    .from("commerce_custom_capes")
+    .select("id,name,manifest_path,frame_width,frame_height,fps,frame_count,updated_at")
+    .eq("id", equipped.cape_id)
+    .maybeSingle();
+  if (capeError) throw new Error(capeError.message);
+  if (!cape) return jsonResponse(200, { ok: true, cape: null });
+  const signed = await maybeSignedUrl(PUBLISHED_BUCKET, cape.manifest_path);
+  return jsonResponse(200, {
+    ok: true,
+    cape: {
+      ...cape,
+      revision_id: equipped.revision_id,
+      equipped_updated_at: equipped.updated_at,
+      manifest_signed_url: signed,
+    },
+  });
+}
+
+async function handleGifCapeCreateOrderCompat(request: Request) {
+  const payload = await readPayload(request);
+  const projectId = asString(payload.project_id) ?? asString(payload.design_id);
+  if (!projectId) throw new Error("project_id_required");
+  const autoEquip = payload.auto_equip === true;
+  const proxyRequest = new Request(request.url, {
+    method: "POST",
+    headers: request.headers,
+    body: JSON.stringify({ auto_equip: autoEquip }),
+  });
+  return handleGifCapePublish(proxyRequest, projectId);
+}
+
 async function handleCustomCapeDraft(request: Request) {
   const token = getBearerToken(request);
-  if (!token) {
-    return jsonResponse(401, { ok: false, error: "missing_authorization" });
-  }
-
-  let payload: JsonObject;
-  try {
-    payload = await readPayload(request);
-  } catch (error) {
-    return jsonResponse(400, {
-      ok: false,
-      error: "invalid_payload",
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  let userClient;
-  try {
-    userClient = createUserScopedClient(token);
-  } catch (error) {
-    return jsonResponse(503, {
-      ok: false,
-      error: "server_misconfigured",
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
-
+  if (!token) return jsonResponse(401, { ok: false, error: "missing_authorization" });
+  const payload = await readPayload(request);
+  const userClient = createUserScopedClient(token);
   const { data, error } = await userClient.rpc("commerce_create_or_update_custom_cape_draft", {
     p_design_id: asString(payload.design_id),
     p_source_image_path: asString(payload.source_image_path),
@@ -165,136 +1042,64 @@ async function handleCustomCapeDraft(request: Request) {
     p_crop_height: typeof payload.crop_height === "number" ? payload.crop_height : null,
     p_export_width: typeof payload.export_width === "number" ? Math.round(payload.export_width) : 2048,
   });
-
-  if (error) {
-    return jsonResponse(400, {
-      ok: false,
-      error: "draft_rpc_failed",
-      message: error.message,
-    });
-  }
-
+  if (error) return jsonResponse(400, { ok: false, error: "draft_rpc_failed", message: error.message });
   return jsonResponse(200, { ok: true, draft: data as JsonObject | null });
 }
 
 async function handleCustomCapeDraftLatest(request: Request) {
   const token = getBearerToken(request);
-  if (!token) {
-    return jsonResponse(401, { ok: false, error: "missing_authorization" });
-  }
-
-  let userClient;
-  try {
-    userClient = createUserScopedClient(token);
-  } catch (error) {
-    return jsonResponse(503, {
-      ok: false,
-      error: "server_misconfigured",
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
-
+  if (!token) return jsonResponse(401, { ok: false, error: "missing_authorization" });
+  const userClient = createUserScopedClient(token);
   const { data, error } = await userClient.rpc("commerce_get_latest_custom_cape_design");
-  if (error) {
-    return jsonResponse(400, {
-      ok: false,
-      error: "draft_latest_rpc_failed",
-      message: error.message,
-    });
-  }
+  if (error) return jsonResponse(400, { ok: false, error: "draft_latest_rpc_failed", message: error.message });
   return jsonResponse(200, { ok: true, draft: data as JsonObject | null });
 }
 
 async function handleCustomCapeFinalize(request: Request) {
   const token = getBearerToken(request);
-  if (!token) {
-    return jsonResponse(401, { ok: false, error: "missing_authorization" });
-  }
-
-  let payload: JsonObject;
-  try {
-    payload = await readPayload(request);
-  } catch (error) {
-    return jsonResponse(400, {
-      ok: false,
-      error: "invalid_payload",
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  let userClient;
-  try {
-    userClient = createUserScopedClient(token);
-  } catch (error) {
-    return jsonResponse(503, {
-      ok: false,
-      error: "server_misconfigured",
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
-
+  if (!token) return jsonResponse(401, { ok: false, error: "missing_authorization" });
+  const payload = await readPayload(request);
+  const userClient = createUserScopedClient(token);
   const designId = asString(payload.design_id);
   const finalAssetPath = asString(payload.final_asset_path);
   const finalAssetUrl = asString(payload.final_asset_url);
   const idempotencyKey = asString(payload.idempotency_key);
-
   if (!designId || !finalAssetPath || !finalAssetUrl || !idempotencyKey) {
-    return jsonResponse(400, {
-      ok: false,
-      error: "missing_required_fields",
-    });
+    return jsonResponse(400, { ok: false, error: "missing_required_fields" });
   }
-
   const { data, error } = await userClient.rpc("commerce_finalize_custom_cape_export", {
     p_design_id: designId,
     p_final_asset_path: finalAssetPath,
     p_final_asset_url: finalAssetUrl,
     p_idempotency_key: idempotencyKey,
   });
-
-  if (error) {
-    return jsonResponse(400, {
-      ok: false,
-      error: "finalize_rpc_failed",
-      message: error.message,
-    });
-  }
-
+  if (error) return jsonResponse(400, { ok: false, error: "finalize_rpc_failed", message: error.message });
   const rows = Array.isArray(data) ? data : [];
-  return jsonResponse(200, {
-    ok: true,
-    result: rows[0] ?? null,
-  });
+  return jsonResponse(200, { ok: true, result: rows[0] ?? null });
 }
 
 async function resolvePackageSlug(payload: JsonObject): Promise<{ slug: string | null; reason?: string }> {
   const explicitSlug = asString(payload.package_slug);
   if (explicitSlug) return { slug: explicitSlug.toLowerCase() };
-
   const payloadUrl = normalizeUrl(payload.url ?? payload.kofi_url);
   const amountRaw = asString(payload.amount ?? payload.total_amount ?? payload.price);
   const amount = amountRaw ? Number.parseFloat(amountRaw) : Number.NaN;
-
   const { data, error } = await admin
     .from("commerce_currency_packs")
     .select("slug,kofi_url,price_usd,is_active")
     .eq("is_active", true);
-
   if (error) return { slug: null, reason: `pack_query_failed:${error.message}` };
   const packs = data ?? [];
-
   if (payloadUrl) {
     const matches = packs.filter((pack) => normalizeUrl(pack.kofi_url) === payloadUrl);
     if (matches.length === 1) return { slug: matches[0].slug };
     if (matches.length > 1) return { slug: null, reason: "ambiguous_kofi_url_match" };
   }
-
   if (Number.isFinite(amount)) {
     const matches = packs.filter((pack) => Number(pack.price_usd) === amount);
     if (matches.length === 1) return { slug: matches[0].slug };
     if (matches.length > 1) return { slug: null, reason: "ambiguous_amount_match" };
   }
-
   return { slug: null, reason: "no_package_match" };
 }
 
@@ -304,106 +1109,141 @@ function resolveRawEventId(payload: JsonObject): Promise<string> {
     asString(payload.transaction_id) ??
     asString(payload.id) ??
     asString(payload.message_id);
-
   if (direct) return Promise.resolve(direct);
   return sha256(stableStringify(payload)).then((hash) => `hash_${hash}`);
 }
 
 async function handleKofiWebhook(request: Request) {
   if (!KOFI_VERIFICATION_TOKEN) {
-    return jsonResponse(503, {
-      ok: false,
-      error: "kofi_token_not_configured",
-      message: "Set KOFI_VERIFICATION_TOKEN before enabling webhook processing.",
-    });
+    return jsonResponse(503, { ok: false, error: "kofi_token_not_configured" });
   }
-
-  let payload: JsonObject;
-  try {
-    payload = await readPayload(request);
-  } catch (error) {
-    return jsonResponse(400, {
-      ok: false,
-      error: "invalid_payload",
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
-
+  const payload = await readPayload(request);
   const incomingToken = asString(payload.verification_token);
   if (!incomingToken || incomingToken !== KOFI_VERIFICATION_TOKEN) {
-    return jsonResponse(401, {
-      ok: false,
-      error: "invalid_verification_token",
-    });
+    return jsonResponse(401, { ok: false, error: "invalid_verification_token" });
   }
-
   const rawEventId = await resolveRawEventId(payload);
   const email = normalizeEmail(payload.email);
   const packageResolution = await resolvePackageSlug(payload);
   const packageSlug = packageResolution.slug ?? "";
-
   const payloadWithMeta = {
     ...payload,
     _resolved_package_slug: packageSlug || null,
     _resolve_reason: packageResolution.reason ?? null,
   };
-
   const { data, error } = await admin.rpc("commerce_process_kofi_event", {
     p_raw_event_id: rawEventId,
     p_email: email,
     p_package_slug: packageSlug,
     p_payload: payloadWithMeta,
   });
-
-  if (error) {
-    return jsonResponse(500, {
-      ok: false,
-      error: "kofi_rpc_failed",
-      message: error.message,
-      raw_event_id: rawEventId,
-    });
-  }
-
+  if (error) return jsonResponse(500, { ok: false, error: "kofi_rpc_failed", message: error.message });
   const result = Array.isArray(data) && data.length > 0 ? data[0] : null;
-  return jsonResponse(200, {
-    ok: true,
-    raw_event_id: rawEventId,
-    result,
-  });
+  return jsonResponse(200, { ok: true, raw_event_id: rawEventId, result });
 }
 
 Deno.serve(async (request) => {
-  if (request.method === "OPTIONS") {
-    return new Response("ok", { status: 200, headers: CORS_HEADERS });
-  }
+  try {
+    if (request.method === "OPTIONS") return new Response("ok", { status: 200, headers: CORS_HEADERS });
+    const url = new URL(request.url);
+    let route = url.pathname.replace(/^.*\/functions\/v1\/main/, "") || "/";
+    if (route.length > 1 && route.endsWith("/")) route = route.slice(0, -1);
+    if (route.startsWith("/main/")) {
+      route = route.slice("/main".length);
+    } else if (route === "/main") {
+      route = "/";
+    }
+    if (route.startsWith("/animated-cape/")) {
+      route = `/gif-cape/${route.slice("/animated-cape/".length)}`;
+    } else if (route === "/animated-cape") {
+      route = "/gif-cape";
+    } else if (route.startsWith("/gif-to-cape/")) {
+      route = `/gif-cape/${route.slice("/gif-to-cape/".length)}`;
+    } else if (route === "/gif-to-cape") {
+      route = "/gif-cape";
+    }
 
-  const url = new URL(request.url);
-  const route = url.pathname.replace(/^.*\/functions\/v1\/main/, "") || "/";
+    if (request.method === "GET" && route === "/custom-cape/draft/latest") return handleCustomCapeDraftLatest(request);
+    if (request.method === "POST" && route === "/custom-cape/draft") return handleCustomCapeDraft(request);
+    if (request.method === "POST" && route === "/custom-cape/finalize") return handleCustomCapeFinalize(request);
 
-  if (request.method === "GET" && route === "/custom-cape/draft/latest") {
-    return handleCustomCapeDraftLatest(request);
-  }
+    if (request.method === "POST" && route === "/gif-cape/projects") return handleGifCapeCreateProject(request);
+    if (request.method === "POST" && route === "/gif-cape/project") return handleGifCapeCreateProject(request);
+    if (request.method === "POST" && route === "/gif-cape/register_upload") return handleGifCapeCreateProject(request);
+    if (request.method === "POST" && route === "/gif-cape/create_order") return handleGifCapeCreateOrderCompat(request);
+    const projectMatch = route.match(/^\/gif-cape\/projects\/([0-9a-fA-F-]+)$/);
+    if (projectMatch) {
+      if (request.method === "GET") return handleGifCapeGetProject(request, projectMatch[1]);
+      if (request.method === "PUT") return handleGifCapeUpdateProject(request, projectMatch[1]);
+      if (request.method === "DELETE") return handleGifCapeDeleteProject(request, projectMatch[1]);
+    }
+    const projectSingularMatch = route.match(/^\/gif-cape\/project\/([0-9a-fA-F-]+)$/);
+    if (projectSingularMatch) {
+      if (request.method === "GET") return handleGifCapeGetProject(request, projectSingularMatch[1]);
+      if (request.method === "PUT") return handleGifCapeUpdateProject(request, projectSingularMatch[1]);
+      if (request.method === "DELETE") return handleGifCapeDeleteProject(request, projectSingularMatch[1]);
+    }
+    const importMatch = route.match(/^\/gif-cape\/projects\/([0-9a-fA-F-]+)\/import-gif$/);
+    if (importMatch && request.method === "POST") return handleGifCapeImportGif(request, importMatch[1]);
+    const importMatchCompat = route.match(/^\/gif-cape\/project\/([0-9a-fA-F-]+)\/import$/);
+    if (importMatchCompat && request.method === "POST") return handleGifCapeImportGif(request, importMatchCompat[1]);
+    const blankMatch = route.match(/^\/gif-cape\/projects\/([0-9a-fA-F-]+)\/frames\/blank$/);
+    if (blankMatch && request.method === "POST") return handleGifCapeAddBlankFrame(request, blankMatch[1]);
+    const blankMatchCompat = route.match(/^\/gif-cape\/project\/([0-9a-fA-F-]+)\/frame\/blank$/);
+    if (blankMatchCompat && request.method === "POST") return handleGifCapeAddBlankFrame(request, blankMatchCompat[1]);
+    const duplicateMatch = route.match(/^\/gif-cape\/projects\/([0-9a-fA-F-]+)\/frames\/(\d+)\/duplicate$/);
+    if (duplicateMatch && request.method === "POST") return handleGifCapeDuplicateFrame(request, duplicateMatch[1], Number.parseInt(duplicateMatch[2], 10));
+    const duplicateMatchCompat = route.match(/^\/gif-cape\/project\/([0-9a-fA-F-]+)\/frame\/(\d+)\/duplicate$/);
+    if (duplicateMatchCompat && request.method === "POST") return handleGifCapeDuplicateFrame(request, duplicateMatchCompat[1], Number.parseInt(duplicateMatchCompat[2], 10));
+    const projectFrameMatch = route.match(/^\/gif-cape\/projects\/([0-9a-fA-F-]+)\/frames\/(\d+)$/);
+    if (projectFrameMatch) {
+      const index = Number.parseInt(projectFrameMatch[2], 10);
+      if (request.method === "PUT") return handleGifCapeUploadFrame(request, projectFrameMatch[1], index);
+      if (request.method === "DELETE") return handleGifCapeDeleteFrame(request, projectFrameMatch[1], index);
+    }
+    const projectFrameMatchCompat = route.match(/^\/gif-cape\/project\/([0-9a-fA-F-]+)\/frame\/(\d+)$/);
+    if (projectFrameMatchCompat) {
+      const index = Number.parseInt(projectFrameMatchCompat[2], 10);
+      if (request.method === "PUT") return handleGifCapeUploadFrame(request, projectFrameMatchCompat[1], index);
+      if (request.method === "DELETE") return handleGifCapeDeleteFrame(request, projectFrameMatchCompat[1], index);
+    }
+    const publishMatch = route.match(/^\/gif-cape\/projects\/([0-9a-fA-F-]+)\/publish$/);
+    if (publishMatch && request.method === "POST") return handleGifCapePublish(request, publishMatch[1]);
+    const publishMatchCompat = route.match(/^\/gif-cape\/project\/([0-9a-fA-F-]+)\/publish$/);
+    if (publishMatchCompat && request.method === "POST") return handleGifCapePublish(request, publishMatchCompat[1]);
+    const equipMatch = route.match(/^\/gif-cape\/capes\/([0-9a-fA-F-]+)\/equip$/);
+    if (equipMatch && request.method === "POST") return handleGifCapeEquip(request, equipMatch[1]);
+    const manifestMatch = route.match(/^\/gif-cape\/capes\/([0-9a-fA-F-]+)\/manifest$/);
+    if (manifestMatch && request.method === "GET") return handleGifCapeGetManifest(request, manifestMatch[1]);
+    const frameMatch = route.match(/^\/gif-cape\/capes\/([0-9a-fA-F-]+)\/frames\/(\d+)$/);
+    if (frameMatch && request.method === "GET") return handleGifCapeGetFrame(request, frameMatch[1], Number.parseInt(frameMatch[2], 10));
+    const playerMatch = route.match(/^\/gif-cape\/players\/([0-9a-fA-F-]+)\/cape$/);
+    if (playerMatch && request.method === "GET") return handleGifCapeGetPlayerCape(request, playerMatch[1]);
 
-  if (request.method === "POST" && route === "/custom-cape/draft") {
-    return handleCustomCapeDraft(request);
-  }
-
-  if (request.method === "POST" && route === "/custom-cape/finalize") {
-    return handleCustomCapeFinalize(request);
-  }
-
-  if (request.method === "GET") {
-    return jsonResponse(200, {
-      ok: true,
-      service: "bloom-main",
-      route: url.pathname,
-      timestamp: new Date().toISOString(),
+    if (request.method === "GET") return jsonResponse(200, { ok: true, service: "bloom-main", route: url.pathname, timestamp: new Date().toISOString() });
+    if (request.method === "POST" && route === "/kofi-webhook") return handleKofiWebhook(request);
+    if (request.method !== "POST") {
+      return jsonResponse(405, {
+        ok: false,
+        error: "method_not_allowed",
+        message: `method_not_allowed: ${request.method} ${route}`,
+      });
+    }
+    return jsonResponse(404, {
+      ok: false,
+      error: "route_not_found",
+      route,
+      message: `route_not_found: ${request.method} ${route}`,
     });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = message.includes("missing_authorization") || message.includes("invalid_authentication")
+      ? 401
+      : message.includes("not_found")
+      ? 404
+      : message.includes("invalid_") || message.includes("required") || message.includes("out_of_range")
+      ? 400
+      : 500;
+    return jsonResponse(status, { ok: false, error: `edge_${status}`, message });
   }
-
-  if (request.method !== "POST") {
-    return jsonResponse(405, { ok: false, error: "method_not_allowed" });
-  }
-
-  return handleKofiWebhook(request);
 });

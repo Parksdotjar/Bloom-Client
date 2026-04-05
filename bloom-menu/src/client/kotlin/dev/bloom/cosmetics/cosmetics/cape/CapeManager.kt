@@ -12,6 +12,7 @@ class CapeManager(
 ) {
     fun tick(client: MinecraftClient) {
         identityResolver.tick(client)
+        stateService.tickAnimationUpdates(System.currentTimeMillis())
     }
 
     fun applyUpdate(cape: EquippedCape?) {

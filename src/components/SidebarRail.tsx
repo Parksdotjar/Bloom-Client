@@ -160,7 +160,6 @@ export function SidebarRail(props: SidebarProps) {
     ...(activeTabVisibility.importer ? [{ icon: FolderUp, path: '/importer', label: 'Importer' }] : []),
     ...(activeTabVisibility.widgets ? [{ icon: LayoutDashboard, path: '/widgets', label: 'Widgets' }] : []),
     ...(activeTabVisibility.cosmetics ? [{ icon: Shirt, path: '/cosmetics', label: 'Cosmetics' }] : []),
-    ...(activeTabVisibility['custom-cape'] ? [{ icon: Shirt, path: '/custom-cape', label: 'Custom Cape' }] : []),
     ...(activeTabVisibility.chat ? [{ icon: MessageSquareMore, path: '/chat', label: 'Chat' }] : []),
     ...(activeTabVisibility['script-studio'] ? [{ icon: Code2, path: '/script-studio', label: 'Studio' }] : []),
     ...((showHostServer && activeTabVisibility['host-server']) ? [{ icon: Server, path: '/host-server', label: 'Host' }] : []),

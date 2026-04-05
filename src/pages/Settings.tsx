@@ -443,6 +443,40 @@ function triggerJsonDownload(fileName: string, payload: unknown) {
   URL.revokeObjectURL(url);
 }
 
+async function saveJsonWithFilePicker(fileName: string, payload: unknown) {
+  const text = JSON.stringify(payload, null, 2);
+  const picker = (window as unknown as {
+    showSaveFilePicker?: (options: {
+      suggestedName?: string;
+      types?: Array<{ description?: string; accept: Record<string, string[]> }>;
+    }) => Promise<{
+      createWritable: () => Promise<{ write: (data: string) => Promise<void>; close: () => Promise<void> }>;
+    }>;
+  }).showSaveFilePicker;
+
+  if (!picker) {
+    triggerJsonDownload(fileName, payload);
+    return true;
+  }
+
+  try {
+    const handle = await picker({
+      suggestedName: fileName,
+      types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }]
+    });
+    const writable = await handle.createWritable();
+    await writable.write(text);
+    await writable.close();
+    return true;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return false;
+    }
+    triggerJsonDownload(fileName, payload);
+    return true;
+  }
+}
+
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -1258,19 +1292,23 @@ export function Settings() {
     setAppearancePresetError(null);
   };
 
-  const exportAppearancePreset = (preset: AppearancePresetRecord) => {
+  const exportAppearancePreset = async (preset: AppearancePresetRecord) => {
     const payload: AppearancePresetExportFileV1 = {
       type: 'bloom-appearance-preset',
       version: 1,
       preset
     };
     const fileName = `bloom-appearance-${slugifyPresetName(preset.name)}.json`;
-    triggerJsonDownload(fileName, payload);
+    const didSave = await saveJsonWithFilePicker(fileName, payload);
+    if (!didSave) {
+      setAppearancePresetStatus('Export cancelled.');
+      return;
+    }
     setAppearancePresetError(null);
     setAppearancePresetStatus(`Exported preset "${preset.name}".`);
   };
 
-  const exportCurrentAppearance = () => {
+  const exportCurrentAppearance = async () => {
     const cleanedName = sanitizePresetName(appearancePresetName) || 'Current Appearance';
     const now = Date.now();
     const preset: AppearancePresetRecord = {
@@ -1280,7 +1318,7 @@ export function Settings() {
       updatedAt: now,
       payload: buildCurrentAppearancePayload()
     };
-    exportAppearancePreset(preset);
+    await exportAppearancePreset(preset);
   };
 
   const onImportAppearancePresetFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1756,11 +1794,11 @@ export function Settings() {
               <button onClick={saveAppearancePreset} className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]">
                 Save Current
               </button>
-              <button onClick={exportCurrentAppearance} className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]">
+              <button onClick={() => { void exportCurrentAppearance(); }} className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]">
                 Export Current
               </button>
               <button onClick={() => appearanceImportRef.current?.click()} className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]">
-                Import File
+                Import Preset
               </button>
             </div>
 
@@ -1788,7 +1826,7 @@ export function Settings() {
                           Apply
                         </button>
                         <button
-                          onClick={() => exportAppearancePreset(preset)}
+                          onClick={() => { void exportAppearancePreset(preset); }}
                           className="g-btn h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]"
                         >
                           Export

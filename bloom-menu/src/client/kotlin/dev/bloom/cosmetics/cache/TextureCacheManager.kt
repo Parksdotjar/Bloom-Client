@@ -33,6 +33,7 @@ class TextureCacheManager(
 
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(8))
+        .followRedirects(HttpClient.Redirect.NORMAL)
         .build()
 
     private val pending: ConcurrentMap<String, MutableList<(Identifier?) -> Unit>> = ConcurrentHashMap()

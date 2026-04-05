@@ -101,7 +101,7 @@ class SupabasePublicCapeClient(private val auth: SupabasePublicAuth) {
                             textureUrl = texture,
                             textureHash = "${row.cape_slug ?: "cape"}:$version",
                             version = version,
-                            sourceType = "bloom_public",
+                            sourceType = if (row.cape_slug?.startsWith("gif-") == true) "gif_cape_public" else "bloom_public",
                             updatedAt = row.updated_at
                         )
                     )

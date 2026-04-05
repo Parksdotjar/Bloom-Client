@@ -3,7 +3,9 @@ import { clsx } from 'clsx';
 import { Coins, Download, ImagePlus, Move, RefreshCw, ZoomIn } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { MinecraftPlayerPreview } from '../components/cosmetics/MinecraftPlayerPreview';
+import { AnimatedSpriteSheetStudio } from '../components/cosmetics/AnimatedSpriteSheetStudio';
 import {
+  createCapeListing,
   createOrUpdateCustomCapeDraft,
   ensureCommerceIdentity,
   finalizeCustomCapeExport,
@@ -33,6 +35,7 @@ const EXPORT_PRICE_BB = 800;
 const WATERMARK_TEXT = 'Preview Only';
 const ACCEPTED_FILE_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
 const VISIBLE_FACE_HEIGHT_TO_WIDTH_RATIO = 2;
+const MIN_VALID_CROP_FRACTION = 0.02;
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -56,6 +59,18 @@ function sanitizeFileName(name: string) {
 
 function getCapeAtlasResolutionLabel(exportWidth: number) {
   return `${exportWidth}x${Math.floor(exportWidth / 2)}`;
+}
+
+function isReasonableCrop(crop: { x: number; y: number; width: number; height: number } | null | undefined) {
+  if (!crop) return false;
+  if (!Number.isFinite(crop.x) || !Number.isFinite(crop.y) || !Number.isFinite(crop.width) || !Number.isFinite(crop.height)) {
+    return false;
+  }
+  if (crop.width < MIN_VALID_CROP_FRACTION || crop.height < MIN_VALID_CROP_FRACTION) return false;
+  if (crop.width > 1 || crop.height > 1) return false;
+  if (crop.x < 0 || crop.y < 0) return false;
+  if (crop.x + crop.width > 1.001 || crop.y + crop.height > 1.001) return false;
+  return true;
 }
 
 async function blobToBytes(blob: Blob) {
@@ -83,6 +98,7 @@ async function saveCustomCapeDebugArtifacts(
 }
 
 export function CustomCape() {
+  const [studioTab, setStudioTab] = useState<'static' | 'animated'>('static');
   const { authState, startLogin } = useAuth();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
@@ -98,6 +114,7 @@ export function CustomCape() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [walletBalance, setWalletBalance] = useState(0);
   const [supabaseUserId, setSupabaseUserId] = useState<string | null>(null);
+  const [commerceRole, setCommerceRole] = useState<'user' | 'owner'>('user');
   const [designId, setDesignId] = useState<string | null>(null);
   const [purchased, setPurchased] = useState(false);
   const [sourceImagePath, setSourceImagePath] = useState<string | null>(null);
@@ -113,6 +130,12 @@ export function CustomCape() {
   const [exportWidth, setExportWidth] = useState<number>(2048);
   const [previewTextureObjectUrl, setPreviewTextureObjectUrl] = useState<string | null>(null);
   const [exportIdempotencyKey, setExportIdempotencyKey] = useState<string>(() => crypto.randomUUID());
+  const [lastExportTextureUrl, setLastExportTextureUrl] = useState<string>('');
+  const [ownerListingSlug, setOwnerListingSlug] = useState('');
+  const [ownerListingName, setOwnerListingName] = useState('');
+  const [ownerListingPrice, setOwnerListingPrice] = useState<number>(1200);
+  const [ownerListingDescription, setOwnerListingDescription] = useState('');
+  const [publishingToShop, setPublishingToShop] = useState(false);
 
   const fileInfo = useMemo(
     () => ({
@@ -273,9 +296,10 @@ export function CustomCape() {
     setErrorMessage(null);
     void (async () => {
       try {
-        await ensureCommerceIdentity(authState.profile.id, authState.profile.name, authState.profile.name);
+        const profile = await ensureCommerceIdentity(authState.profile.id, authState.profile.name, authState.profile.name);
         const [userId, wallet, draft] = await Promise.all([getSupabaseUserId(), loadWallet(), loadLatestCustomCapeDraft()]);
         if (cancelled) return;
+        setCommerceRole((profile?.role ?? 'user') === 'owner' ? 'owner' : 'user');
         setSupabaseUserId(userId);
         setWalletBalance(wallet?.balance_bb ?? 0);
         if (draft) {
@@ -284,12 +308,13 @@ export function CustomCape() {
           setSourceImageUrl(draft.source_image_url);
           setPurchased(draft.purchased);
           setExportWidth(draft.export_width);
-          setLoadedCrop({
+          const draftCrop = {
             x: draft.crop_x,
             y: draft.crop_y,
             width: draft.crop_width,
             height: draft.crop_height
-          });
+          };
+          setLoadedCrop(isReasonableCrop(draftCrop) ? draftCrop : null);
           setExportIdempotencyKey(crypto.randomUUID());
           setZoom(1);
           setPan({ x: 0, y: 0 });
@@ -300,6 +325,9 @@ export function CustomCape() {
             const nameGuess = draft.source_image_path ? draft.source_image_path.split('/').pop() : 'draft-image.png';
             setSourceFileName(nameGuess ?? 'draft-image.png');
             setSourceFileSize(null);
+          }
+          if (draft.final_asset_url) {
+            setLastExportTextureUrl(draft.final_asset_url);
           }
         }
       } catch (error) {
@@ -316,6 +344,12 @@ export function CustomCape() {
 
   useEffect(() => {
     if (!sourceImageElement || !loadedCrop || !frameBox.width || !frameBox.height) return;
+    if (!isReasonableCrop(loadedCrop)) {
+      setZoom(minZoom);
+      setPan(clampPan({ x: 0, y: 0 }, minZoom));
+      setLoadedCrop(null);
+      return;
+    }
     const cropWidth = clamp(loadedCrop.width, 0.01, 1);
     const cropHeight = clamp(loadedCrop.height, 0.01, 1);
     const zoomX = frameBox.width / (sourceImageElement.naturalWidth * baseScale * cropWidth);
@@ -472,7 +506,7 @@ export function CustomCape() {
       setLoadedCrop(null);
       setExportIdempotencyKey(crypto.randomUUID());
       setPan({ x: 0, y: 0 });
-      setZoom(minZoom);
+      setZoom(1);
       const draft = await createOrUpdateCustomCapeDraft({
         design_id: null,
         source_image_path: upload.path,
@@ -485,6 +519,9 @@ export function CustomCape() {
       });
       if (draft?.id) setDesignId(draft.id);
       setStatusMessage('Image uploaded. Move and zoom to frame the visible cape face.');
+      const safeBaseName = (sanitizeFileName(file.name).replace(/\.[^.]+$/, '') || 'custom-cape').toLowerCase();
+      setOwnerListingSlug((current) => current || `custom-${safeBaseName}-${Date.now().toString().slice(-5)}`);
+      setOwnerListingName((current) => current || `${safeBaseName} cape`);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -546,15 +583,54 @@ export function CustomCape() {
         if (!finalizeResult) throw new Error('finalize_failed');
         setWalletBalance(finalizeResult.new_balance_bb);
         setPurchased(true);
+        setLastExportTextureUrl(finalizeResult.final_asset_url || uploaded.publicUrl);
         setExportIdempotencyKey(crypto.randomUUID());
         setStatusMessage('Custom cape exported to Locker and purchased for 800 BB. Watermark removed.');
       } else {
+        const uploaded = await uploadCustomCapeFinalAtlas(supabaseUserId, activeDesignId, cleanAtlas.blob);
+        setLastExportTextureUrl(uploaded.publicUrl);
         setStatusMessage('Custom cape exported to Locker.');
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleOwnerPublishToShop = async () => {
+    if (commerceRole !== 'owner') {
+      setErrorMessage('owner_role_required');
+      return;
+    }
+    const slug = ownerListingSlug.trim().toLowerCase();
+    const name = ownerListingName.trim();
+    const textureUrl = lastExportTextureUrl.trim();
+    if (!slug || !name || !textureUrl) {
+      setErrorMessage('Owner listing requires slug, name, and an exported cape texture URL.');
+      return;
+    }
+    setErrorMessage(null);
+    setPublishingToShop(true);
+    try {
+      const created = await createCapeListing({
+        slug,
+        name,
+        description: ownerListingDescription.trim() || null,
+        texture_url: textureUrl,
+        preview_url: textureUrl,
+        price_bb: ownerListingPrice,
+        rarity: 'custom',
+        rarity_label: 'CUSTOM',
+        sort_order: 9999,
+        is_active: true,
+        is_featured: false
+      });
+      setStatusMessage(`Uploaded to shop: ${created.name} (${created.slug})`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPublishingToShop(false);
     }
   };
 
@@ -583,11 +659,34 @@ export function CustomCape() {
       <section className="g-panel p-4 grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] items-center gap-3">
         <div className="lg:justify-self-start">
           <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Bloom Cosmetics</p>
-          <h1 className="text-2xl font-extrabold text-white mt-1">Custom Cape</h1>
+          <h1 className="text-2xl font-extrabold text-white mt-1">Cape Studio</h1>
         </div>
         <div className="flex items-center justify-center gap-2">
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/80">
-            Visible Face Ratio (H:W): 2:1
+          <div className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-2 py-1">
+            <button
+              type="button"
+              onClick={() => setStudioTab('static')}
+              className={clsx(
+                'h-8 rounded-lg px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] border',
+                studioTab === 'static'
+                  ? 'border-[var(--g-accent)] bg-white/[0.09] text-white'
+                  : 'border-white/15 bg-white/[0.03] text-white/75 hover:bg-white/[0.07]'
+              )}
+            >
+              Static
+            </button>
+            <button
+              type="button"
+              onClick={() => setStudioTab('animated')}
+              className={clsx(
+                'h-8 rounded-lg px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] border',
+                studioTab === 'animated'
+                  ? 'border-[var(--g-accent)] bg-white/[0.09] text-white'
+                  : 'border-white/15 bg-white/[0.03] text-white/75 hover:bg-white/[0.07]'
+              )}
+            >
+              Animated
+            </button>
           </div>
         </div>
         <div className="lg:justify-self-end">
@@ -614,6 +713,7 @@ export function CustomCape() {
         </div>
       )}
 
+      {studioTab === 'static' ? (
       <section className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)_340px] gap-4 min-h-0">
         <aside className="g-panel p-4 min-h-0 overflow-y-auto">
           <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Setup</p>
@@ -693,6 +793,64 @@ export function CustomCape() {
             <p>3. Pick export size.</p>
             <p>4. Export to pay once and remove watermark.</p>
           </div>
+
+          {commerceRole === 'owner' && (
+            <div className="mt-3 rounded-xl border border-white/15 bg-black/35 p-3">
+              <div className="inline-flex items-center rounded-xl border border-white/15 bg-white/[0.03] p-1 mb-2">
+                <button
+                  type="button"
+                  className="h-8 rounded-lg px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] border border-white/25 bg-white/[0.12] text-white"
+                >
+                  Listing
+                </button>
+              </div>
+              <p className="text-[10px] uppercase tracking-[0.12em] font-black text-white/50">Owner Upload To Shop</p>
+              <div className="mt-2 space-y-2">
+                <input
+                  value={ownerListingSlug}
+                  onChange={(event) => setOwnerListingSlug(event.target.value)}
+                  placeholder="slug"
+                  className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-xs font-bold text-white"
+                />
+                <input
+                  value={ownerListingName}
+                  onChange={(event) => setOwnerListingName(event.target.value)}
+                  placeholder="name"
+                  className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-xs font-bold text-white"
+                />
+                <input
+                  type="number"
+                  min={0}
+                  value={ownerListingPrice}
+                  onChange={(event) => setOwnerListingPrice(Math.max(0, Number(event.target.value) || 0))}
+                  placeholder="price_bb"
+                  className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-xs font-bold text-white"
+                />
+                <textarea
+                  value={ownerListingDescription}
+                  onChange={(event) => setOwnerListingDescription(event.target.value)}
+                  placeholder="description (optional)"
+                  rows={2}
+                  className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-xs font-bold text-white resize-y"
+                />
+                <input
+                  value={lastExportTextureUrl}
+                  onChange={(event) => setLastExportTextureUrl(event.target.value)}
+                  placeholder="texture_url (auto from latest export)"
+                  className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-[11px] text-white/90"
+                />
+                <button
+                  onClick={() => {
+                    void handleOwnerPublishToShop();
+                  }}
+                  disabled={publishingToShop}
+                  className="h-9 w-full rounded-lg border border-white/25 bg-white/[0.12] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white hover:bg-white/[0.18] disabled:opacity-50"
+                >
+                  {publishingToShop ? 'Uploading...' : 'Upload To Shop'}
+                </button>
+              </div>
+            </div>
+          )}
         </aside>
 
         <div className="g-panel p-4 min-h-0 flex flex-col">
@@ -780,12 +938,21 @@ export function CustomCape() {
                     }}
                   />
                   <div
-                    className="absolute border-2 border-[var(--g-accent)] shadow-[0_0_0_1px_var(--g-accent-soft),0_0_24px_color-mix(in_srgb,var(--g-accent)_30%,transparent)]"
+                    className="absolute border-2 border-white/95 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_0_28px_rgba(255,255,255,0.14)]"
                     style={{
                       left: frameBox.x,
                       top: frameBox.y,
                       width: frameBox.width,
                       height: frameBox.height
+                    }}
+                  />
+                  <div
+                    className="absolute border border-[var(--g-accent)]/90 pointer-events-none"
+                    style={{
+                      left: frameBox.x + 4,
+                      top: frameBox.y + 4,
+                      width: Math.max(0, frameBox.width - 8),
+                      height: Math.max(0, frameBox.height - 8)
                     }}
                   />
                 </div>
@@ -852,6 +1019,13 @@ export function CustomCape() {
           </div>
         </aside>
       </section>
+      ) : (
+        <AnimatedSpriteSheetStudio
+          playerUuid={authState.profile.id}
+          playerName={authState.profile.name}
+          playerSkinUrl={authState.profile.skinUrl ?? null}
+        />
+      )}
     </div>
   );
 }

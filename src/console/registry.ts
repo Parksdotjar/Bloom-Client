@@ -1,6 +1,7 @@
 import type { Instance } from '../services/tauri';
 import type { ConsoleCommandContext, ConsoleCommandDefinition } from './types';
 import { HOST_SERVERS_SECRET_PHRASE } from '../constants/hostServerAccess';
+import { isCurrentUserOwner, setOwnWalletBalance, setUserRole, setUserWalletBalance } from '../services/cosmetics';
 
 export const CONSOLE_THEMES = [
   { id: 'dark', label: 'Dark' },
@@ -84,6 +85,13 @@ async function resolveInstanceFromContext(context: ConsoleCommandContext, query:
 
 function formatInstance(instance: Instance) {
   return `${instance.name} (${instance.loader} ${instance.mcVersion}) [${instance.id}]`;
+}
+
+async function requireOwnerAccess() {
+  const owner = await isCurrentUserOwner();
+  if (!owner) {
+    throw new Error('Owner only command.');
+  }
 }
 
 function helpForCommand(commands: ConsoleCommandDefinition[], requested: string, includeInternal: boolean) {
@@ -220,6 +228,85 @@ export function createConsoleRegistry(): ConsoleCommandDefinition[] {
     args: [{ name: 'text', variadic: true }],
     validate: (args) => (args.length === 0 ? 'Provide text to echo.' : null),
     handler: (args) => ({ kind: 'info', lines: [args.join(' ')] })
+  });
+
+  register({
+    name: 'setbal',
+    aliases: ['/setbal'],
+    category: 'Commerce',
+    description: 'Set your own Bloom Bucks balance.',
+    usage: 'setbal <balance>',
+    args: [{ name: 'balance' }],
+    validate: (args) => {
+      const value = Number(args[0]);
+      if (!Number.isFinite(value)) return 'Balance must be a number.';
+      if (value < 0) return 'Balance must be 0 or higher.';
+      return null;
+    },
+    handler: async (args) => {
+      await requireOwnerAccess();
+      const target = Math.floor(Number(args[0]));
+      const wallet = await setOwnWalletBalance(target);
+      const current = wallet?.balance_bb ?? target;
+      return {
+        kind: 'success',
+        lines: [`Your balance is now ${current.toLocaleString()} BB.`]
+      };
+    }
+  });
+
+  register({
+    name: 'setuserbal',
+    aliases: ['/setuserbal'],
+    category: 'Commerce',
+    description: 'Set another user balance by username.',
+    usage: 'setuserbal <username> <balance>',
+    args: [{ name: 'username' }, { name: 'balance' }],
+    validate: (args) => {
+      const username = args[0]?.trim();
+      if (!username) return 'Username is required.';
+      const value = Number(args[1]);
+      if (!Number.isFinite(value)) return 'Balance must be a number.';
+      if (value < 0) return 'Balance must be 0 or higher.';
+      return null;
+    },
+    handler: async (args) => {
+      await requireOwnerAccess();
+      const username = args[0].trim();
+      const target = Math.floor(Number(args[1]));
+      const wallet = await setUserWalletBalance(username, target);
+      const current = wallet?.balance_bb ?? target;
+      return {
+        kind: 'success',
+        lines: [`${username} balance is now ${current.toLocaleString()} BB.`]
+      };
+    }
+  });
+
+  register({
+    name: 'setrole',
+    aliases: ['/setrole'],
+    category: 'Commerce',
+    description: 'Set a user role by username.',
+    usage: 'setrole <username> <role>',
+    args: [{ name: 'username' }, { name: 'role', choices: ['user', 'owner'] }],
+    validate: (args) => {
+      const username = args[0]?.trim();
+      if (!username) return 'Username is required.';
+      const role = args[1]?.trim().toLowerCase();
+      if (role !== 'user' && role !== 'owner') return 'Role must be user or owner.';
+      return null;
+    },
+    handler: async (args) => {
+      await requireOwnerAccess();
+      const username = args[0].trim();
+      const role = (args[1].trim().toLowerCase() === 'owner' ? 'owner' : 'user') as 'user' | 'owner';
+      const profile = await setUserRole(username, role);
+      return {
+        kind: 'success',
+        lines: [`${profile.username ?? username} role is now ${profile.role}.`]
+      };
+    }
   });
 
   register({
