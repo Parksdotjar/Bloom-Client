@@ -1,8 +1,18 @@
-import { useEffect, useRef, useState, type ChangeEvent, type PointerEventHandler, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type PointerEventHandler, type ReactNode, type WheelEvent } from 'react';
 import { clsx } from 'clsx';
 import { APP_VERSION } from '../constants/version';
 import { TauriApi } from '../services/tauri';
 import { UniversalLoadingOverlay } from '../components/UniversalLoadingOverlay';
+import {
+  getDefaultShopRarityCustomColors,
+  readShopRarityThemeSettings,
+  SHOP_RARITY_ORDER,
+  SHOP_RARITY_PRESETS,
+  writeShopRarityThemeSettings,
+  type ShopRarityKey,
+  type ShopRarityPresetId,
+  type ShopRarityThemeSettings
+} from '../services/shopTheme';
 import { eventToDisplayShortcut } from '../utils/shortcuts';
 import {
   CONSOLE_HOTKEY_DEFAULT,
@@ -86,8 +96,8 @@ type AppearancePresetExportFileV1 = {
 };
 
 type SettingsTab = 'general' | 'appearance' | 'keybinds' | 'widgets' | 'updates' | 'extra';
-type AppearanceSection = 'animation' | 'background' | 'sidebar' | 'style' | 'presets';
-type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help';
+type AppearanceSection = 'animation' | 'background' | 'sidebar' | 'style' | 'presets' | 'shop';
+type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help' | 'information';
 type SidebarTabsVisibility = Record<SidebarTabId, boolean>;
 
 const APPEARANCE_SECTIONS: { id: AppearanceSection; label: string; description: string }[] = [
@@ -95,7 +105,8 @@ const APPEARANCE_SECTIONS: { id: AppearanceSection; label: string; description: 
   { id: 'background', label: 'Background', description: 'Background mode, opacity, and custom image controls.' },
   { id: 'sidebar', label: 'Sidebar', description: 'Sidebar style, position, and dock visuals.' },
   { id: 'style', label: 'Style', description: 'Buttons, roundness, card style, icon pack, and glass.' },
-  { id: 'presets', label: 'Presets', description: 'Save, import, export, and apply appearance presets.' }
+  { id: 'presets', label: 'Presets', description: 'Save, import, export, and apply appearance presets.' },
+  { id: 'shop', label: 'Shop', description: 'Rarity palette and cosmetic storefront color overrides.' }
 ];
 
 const SIDEBAR_TABS_VISIBILITY_DEFAULTS: SidebarTabsVisibility = {
@@ -110,7 +121,8 @@ const SIDEBAR_TABS_VISIBILITY_DEFAULTS: SidebarTabsVisibility = {
   'script-studio': false,
   'host-server': false,
   games: false,
-  help: true
+  help: true,
+  information: true
 };
 
 const THEME_STORAGE_KEY = 'bloom_theme_mode';
@@ -293,17 +305,32 @@ const STARTUP_SCENE_SOUND_PROFILES: { id: StartupSceneSoundProfile; label: strin
   { id: 'impact', label: 'Impact', description: 'Punchier digital hit.' }
 ];
 
-type BackgroundTargetSize = { width: number; height: number };
+const SHOP_RARITY_LABELS: Record<ShopRarityKey, string> = {
+  common: 'Common',
+  uncommon: 'Uncommon',
+  rare: 'Rare',
+  epic: 'Epic',
+  legendary: 'Legendary',
+  mythic: 'Mythic',
+  unique: 'Unique',
+  featured: 'Featured',
+  partner: 'Partner',
+  custom: 'Custom'
+};
 
-function resolveBackgroundTarget(width: number, height: number): BackgroundTargetSize {
-  if (width >= 3840 || height >= 2160) {
-    return { width: 3840, height: 2160 };
-  }
+type BackgroundTargetSize = { width: number; height: number };
+type CustomBackgroundMediaKind = 'image' | 'video' | null;
+
+function resolveBackgroundTarget(_width: number, _height: number): BackgroundTargetSize {
   return { width: 1920, height: 1080 };
 }
 
 function clamp01(value: number) {
   return Math.max(-1, Math.min(1, value));
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function loadImageElement(src: string) {
@@ -395,7 +422,8 @@ function readSidebarTabsVisibility(): SidebarTabsVisibility {
       'script-studio': typeof parsed['script-studio'] === 'boolean' ? parsed['script-studio'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['script-studio'],
       'host-server': typeof parsed['host-server'] === 'boolean' ? parsed['host-server'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['host-server'],
       games: typeof parsed.games === 'boolean' ? parsed.games : SIDEBAR_TABS_VISIBILITY_DEFAULTS.games,
-      help: typeof parsed.help === 'boolean' ? parsed.help : SIDEBAR_TABS_VISIBILITY_DEFAULTS.help
+      help: typeof parsed.help === 'boolean' ? parsed.help : SIDEBAR_TABS_VISIBILITY_DEFAULTS.help,
+      information: typeof parsed.information === 'boolean' ? parsed.information : SIDEBAR_TABS_VISIBILITY_DEFAULTS.information
     };
   } catch {
     return { ...SIDEBAR_TABS_VISIBILITY_DEFAULTS };
@@ -408,6 +436,10 @@ function clampGlassAmount(value: number) {
 
 function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function clampBackgroundOpacity(value: number) {
+  return Math.max(10, Math.min(100, Math.round(value)));
 }
 
 function clampDropdownOpacity(value: number) {
@@ -533,7 +565,7 @@ function parseAppearancePresetPayload(raw: unknown): AppearancePresetPayload | n
     themeMode: raw.themeMode,
     accentMode: raw.accentMode,
     backgroundMode: raw.backgroundMode,
-    backgroundVisualOpacity: clampPercent(Number(raw.backgroundVisualOpacity)),
+    backgroundVisualOpacity: clampBackgroundOpacity(Number(raw.backgroundVisualOpacity)),
     taskbarSurfaceOpacity: clampPercent(Number(raw.taskbarSurfaceOpacity)),
     dropdownOpacity: Number.isFinite(Number(raw.dropdownOpacity)) ? clampDropdownOpacity(Number(raw.dropdownOpacity)) : 92,
     densityMode: raw.densityMode,
@@ -604,6 +636,47 @@ function AppearanceDropdown(props: { title: string; description: string; childre
         {children}
       </div>
     </details>
+  );
+}
+
+function parseShopColorHex(value: string) {
+  const raw = value.trim();
+  const hex = raw.match(/^#([0-9a-f]{6})$/i);
+  if (hex) return `#${hex[1].toLowerCase()}`;
+  const rgba = raw.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (!rgba) return '#a979ff';
+  const toHex = (channel: string) => Math.max(0, Math.min(255, Number(channel) || 0)).toString(16).padStart(2, '0');
+  return `#${toHex(rgba[1])}${toHex(rgba[2])}${toHex(rgba[3])}`;
+}
+
+function writeShopColorValue(hex: string, current: string) {
+  if (!current.trim().toLowerCase().startsWith('rgba')) return hex.toLowerCase();
+  const alphaMatch = current.match(/rgba\(\d+,\s*\d+,\s*\d+,\s*([0-9.]+)\)/i);
+  const alpha = alphaMatch ? Math.max(0, Math.min(1, Number(alphaMatch[1]) || 0)).toFixed(2) : '0.45';
+  const clean = hex.replace('#', '');
+  const r = Number.parseInt(clean.slice(0, 2), 16);
+  const g = Number.parseInt(clean.slice(2, 4), 16);
+  const b = Number.parseInt(clean.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function ShopColorField(props: { label: string; value: string; onChange: (next: string) => void }) {
+  const { label, value, onChange } = props;
+  return (
+    <div className="rounded-lg border border-white/15 bg-white/[0.04] p-2 space-y-2">
+      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/55">{label}</p>
+      <input
+        type="color"
+        value={parseShopColorHex(value)}
+        onChange={(event) => onChange(writeShopColorValue(event.target.value, value))}
+        className="h-9 w-full rounded-md border border-white/15 bg-black/30"
+      />
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-8 w-full rounded-md border border-white/15 bg-black/35 px-2 text-xs text-white placeholder:text-white/35 outline-none"
+      />
+    </div>
   );
 }
 
@@ -829,6 +902,7 @@ export function Settings() {
   const [customBackgroundSaved, setCustomBackgroundSaved] = useState<string | null>(null);
   const [customBackgroundSource, setCustomBackgroundSource] = useState<string | null>(null);
   const [customBackgroundRenderPreview, setCustomBackgroundRenderPreview] = useState<string | null>(null);
+  const [customBackgroundMediaKind, setCustomBackgroundMediaKind] = useState<CustomBackgroundMediaKind>('image');
   const [customBackgroundTarget, setCustomBackgroundTarget] = useState<BackgroundTargetSize>({ width: 1920, height: 1080 });
   const [customBackgroundZoom, setCustomBackgroundZoom] = useState(1);
   const [customBackgroundPanX, setCustomBackgroundPanX] = useState(0);
@@ -837,14 +911,16 @@ export function Settings() {
   const [customBackgroundError, setCustomBackgroundError] = useState<string | null>(null);
   const [draggingCustomBackground, setDraggingCustomBackground] = useState(false);
   const customBackgroundPointerRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const customBackgroundAutosaveTimerRef = useRef<number | null>(null);
   const [appearancePresets, setAppearancePresets] = useState<AppearancePresetRecord[]>(() => readStoredAppearancePresets());
   const [appearancePresetName, setAppearancePresetName] = useState('');
   const [appearancePresetStatus, setAppearancePresetStatus] = useState<string | null>(null);
   const [appearancePresetError, setAppearancePresetError] = useState<string | null>(null);
+  const [shopRarityTheme, setShopRarityTheme] = useState<ShopRarityThemeSettings>(() => readShopRarityThemeSettings());
   const appearanceImportRef = useRef<HTMLInputElement | null>(null);
   const [backgroundVisualOpacity, setBackgroundVisualOpacity] = useState<number>(() => {
     const stored = Number(localStorage.getItem(BACKGROUND_VISUAL_OPACITY_KEY));
-    if (Number.isFinite(stored)) return clampPercent(stored);
+    if (Number.isFinite(stored)) return clampBackgroundOpacity(stored);
     return 20;
   });
   const [taskbarSurfaceOpacity, setTaskbarSurfaceOpacity] = useState<number>(() => {
@@ -885,7 +961,7 @@ export function Settings() {
     const stored = localStorage.getItem(BUTTON_THEME_STORAGE_KEY);
     return stored === 'default' || stored === 'simple' || stored === 'cartoon' || stored === 'glass' || stored === 'neon' || stored === 'pixel' || stored === 'brutalist' || stored === 'pill' || stored === 'terminal' || stored === 'arcade'
       ? stored
-      : 'default';
+      : 'brutalist';
   });
   const [motionMode, setMotionMode] = useState<MotionMode>(() => {
     const stored = localStorage.getItem(MOTION_STORAGE_KEY);
@@ -1102,7 +1178,17 @@ export function Settings() {
 
   const loadSavedCustomBackground = async () => {
     try {
+      const videoAsset = await TauriApi.launcherBackgroundVideoLoad();
+      if (videoAsset) {
+        const videoUrl = videoAsset.dataUrl ?? videoAsset.path;
+        setCustomBackgroundMediaKind('video');
+        setCustomBackgroundSaved(videoUrl);
+        setCustomBackgroundSource(videoUrl);
+        setCustomBackgroundRenderPreview(videoUrl);
+        return;
+      }
       const dataUrl = await TauriApi.launcherBackgroundLoad();
+      setCustomBackgroundMediaKind(dataUrl ? 'image' : null);
       setCustomBackgroundSaved(dataUrl);
       if (!customBackgroundSource && dataUrl) {
         setCustomBackgroundSource(dataUrl);
@@ -1112,15 +1198,46 @@ export function Settings() {
     }
   };
 
+  const persistCustomBackground = async (
+    source: string,
+    target: BackgroundTargetSize,
+    zoom: number,
+    panX: number,
+    panY: number
+  ) => {
+    if (customBackgroundMediaKind !== 'image') return;
+    setCustomBackgroundSaving(true);
+    setCustomBackgroundError(null);
+    const rendered = await renderCustomBackgroundImage(source, target, zoom, panX, panY);
+    await TauriApi.launcherBackgroundSave(dataUrlToBytes(rendered));
+    setCustomBackgroundSaved(rendered);
+    applyBackground('custom');
+    window.dispatchEvent(new CustomEvent(BACKGROUND_CHANGE_EVENT, { detail: { background: 'custom', previewDataUrl: rendered, previewVideoUrl: null, previewMediaType: 'image' } }));
+  };
+
   const onCustomBackgroundFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
       setCustomBackgroundError(null);
+      if (file.type.startsWith('video/')) {
+        const objectUrl = URL.createObjectURL(file);
+        const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+        await TauriApi.launcherBackgroundVideoSave(file.name, file.type || 'video/mp4', bytes);
+        setCustomBackgroundMediaKind('video');
+        setCustomBackgroundSaved(objectUrl);
+        setCustomBackgroundSource(objectUrl);
+        setCustomBackgroundRenderPreview(objectUrl);
+        applyBackground('custom');
+        window.dispatchEvent(new CustomEvent(BACKGROUND_CHANGE_EVENT, { detail: { background: 'custom', previewDataUrl: null, previewVideoUrl: objectUrl, previewMediaType: 'video' } }));
+        return;
+      }
       const dataUrl = await fileToDataUrl(file);
       const image = await loadImageElement(dataUrl);
+      const nextTarget = resolveBackgroundTarget(image.naturalWidth, image.naturalHeight);
+      setCustomBackgroundMediaKind('image');
       setCustomBackgroundSource(dataUrl);
-      setCustomBackgroundTarget(resolveBackgroundTarget(image.naturalWidth, image.naturalHeight));
+      setCustomBackgroundTarget(nextTarget);
       setCustomBackgroundZoom(1);
       setCustomBackgroundPanX(0);
       setCustomBackgroundPanY(0);
@@ -1131,39 +1248,18 @@ export function Settings() {
     }
   };
 
-  const saveCustomBackground = async () => {
-    if (!customBackgroundSource) return;
-    try {
-      setCustomBackgroundSaving(true);
-      setCustomBackgroundError(null);
-      const rendered = await renderCustomBackgroundImage(
-        customBackgroundSource,
-        customBackgroundTarget,
-        customBackgroundZoom,
-        customBackgroundPanX,
-        customBackgroundPanY
-      );
-      await TauriApi.launcherBackgroundSave(dataUrlToBytes(rendered));
-      setCustomBackgroundSaved(rendered);
-      applyBackground('custom');
-      window.dispatchEvent(new CustomEvent(BACKGROUND_CHANGE_EVENT, { detail: { background: 'custom', previewDataUrl: rendered } }));
-    } catch (error) {
-      setCustomBackgroundError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setCustomBackgroundSaving(false);
-    }
-  };
-
   const clearCustomBackground = async () => {
     try {
       await TauriApi.launcherBackgroundClear();
+      setCustomBackgroundMediaKind(null);
       setCustomBackgroundSaved(null);
       setCustomBackgroundSource(null);
+      setCustomBackgroundRenderPreview(null);
       setCustomBackgroundError(null);
       if (backgroundMode === 'custom') {
         applyBackground('particles');
       }
-      window.dispatchEvent(new CustomEvent(BACKGROUND_CHANGE_EVENT, { detail: { background: 'particles', previewDataUrl: null } }));
+      window.dispatchEvent(new CustomEvent(BACKGROUND_CHANGE_EVENT, { detail: { background: 'particles', previewDataUrl: null, previewVideoUrl: null, previewMediaType: null } }));
     } catch (error) {
       setCustomBackgroundError(error instanceof Error ? error.message : String(error));
     }
@@ -1200,7 +1296,7 @@ export function Settings() {
     roundnessLevel,
     buttonRoundnessLevel,
     glassAmount,
-    customBackgroundDataUrl: customBackgroundSaved
+    customBackgroundDataUrl: customBackgroundMediaKind === 'image' ? customBackgroundSaved : null
   });
 
   const applyAppearancePresetPayload = async (payload: AppearancePresetPayload, presetLabel?: string) => {
@@ -1358,7 +1454,7 @@ export function Settings() {
   };
 
   const onCustomBackgroundPointerDown: PointerEventHandler<HTMLDivElement> = (event) => {
-    if (!customBackgroundSource) return;
+    if (!customBackgroundSource || customBackgroundMediaKind !== 'image') return;
     customBackgroundPointerRef.current = {
       x: event.clientX,
       y: event.clientY,
@@ -1369,7 +1465,7 @@ export function Settings() {
   };
 
   const onCustomBackgroundPointerMove: PointerEventHandler<HTMLDivElement> = (event) => {
-    if (!customBackgroundPointerRef.current) return;
+    if (!customBackgroundPointerRef.current || customBackgroundMediaKind !== 'image') return;
     const deltaX = event.clientX - customBackgroundPointerRef.current.x;
     const deltaY = event.clientY - customBackgroundPointerRef.current.y;
     setCustomBackgroundPanX(clamp01(customBackgroundPointerRef.current.panX + deltaX / 220));
@@ -1379,6 +1475,13 @@ export function Settings() {
   const onCustomBackgroundPointerUp = () => {
     customBackgroundPointerRef.current = null;
     setDraggingCustomBackground(false);
+  };
+
+  const onCustomBackgroundWheel = (event: WheelEvent<HTMLDivElement>) => {
+    if (!customBackgroundSource || customBackgroundMediaKind !== 'image') return;
+    event.preventDefault();
+    const factor = event.deltaY < 0 ? 1.08 : 0.92;
+    setCustomBackgroundZoom((current) => clamp(current * factor, 1, 2.8));
   };
 
   const runUpdateCheck = async () => {
@@ -1469,8 +1572,40 @@ export function Settings() {
   }, []);
 
   useEffect(() => {
+    if (!customBackgroundSource) return;
+    if (customBackgroundAutosaveTimerRef.current !== null) {
+      window.clearTimeout(customBackgroundAutosaveTimerRef.current);
+    }
+    customBackgroundAutosaveTimerRef.current = window.setTimeout(() => {
+      void persistCustomBackground(
+        customBackgroundSource,
+        customBackgroundTarget,
+        customBackgroundZoom,
+        customBackgroundPanX,
+        customBackgroundPanY
+      )
+        .catch((error) => {
+          setCustomBackgroundError(error instanceof Error ? error.message : String(error));
+        })
+        .finally(() => {
+          setCustomBackgroundSaving(false);
+        });
+    }, 280);
+    return () => {
+      if (customBackgroundAutosaveTimerRef.current !== null) {
+        window.clearTimeout(customBackgroundAutosaveTimerRef.current);
+        customBackgroundAutosaveTimerRef.current = null;
+      }
+    };
+  }, [customBackgroundMediaKind, customBackgroundSource, customBackgroundTarget, customBackgroundZoom, customBackgroundPanX, customBackgroundPanY]);
+
+  useEffect(() => {
     if (!customBackgroundSource) {
       setCustomBackgroundRenderPreview(customBackgroundSaved);
+      return;
+    }
+    if (customBackgroundMediaKind === 'video') {
+      setCustomBackgroundRenderPreview(customBackgroundSource);
       return;
     }
     let active = true;
@@ -1488,7 +1623,7 @@ export function Settings() {
     return () => {
       active = false;
     };
-  }, [customBackgroundSource, customBackgroundSaved, customBackgroundTarget, customBackgroundZoom, customBackgroundPanX, customBackgroundPanY]);
+  }, [customBackgroundMediaKind, customBackgroundSource, customBackgroundSaved, customBackgroundTarget, customBackgroundZoom, customBackgroundPanX, customBackgroundPanY]);
 
   const applyAccent = (next: AccentMode) => {
     setAccentMode(next);
@@ -1503,7 +1638,7 @@ export function Settings() {
   };
 
   const applyBackgroundVisualOpacity = (next: number) => {
-    const clamped = clampPercent(next);
+    const clamped = clampBackgroundOpacity(next);
     setBackgroundVisualOpacity(clamped);
     localStorage.setItem(BACKGROUND_VISUAL_OPACITY_KEY, String(clamped));
     window.dispatchEvent(new CustomEvent(BACKGROUND_VISUAL_OPACITY_CHANGE_EVENT, { detail: { value: clamped } }));
@@ -1557,6 +1692,37 @@ export function Settings() {
     setButtonTheme(next);
     localStorage.setItem(BUTTON_THEME_STORAGE_KEY, next);
     window.dispatchEvent(new CustomEvent(BUTTON_THEME_CHANGE_EVENT, { detail: { buttonTheme: next } }));
+  };
+
+  const applyShopRarityPreset = (presetId: ShopRarityPresetId) => {
+    const next = { ...shopRarityTheme, presetId };
+    setShopRarityTheme(next);
+    writeShopRarityThemeSettings(next);
+  };
+
+  const applyShopRarityCustomColor = (rarity: ShopRarityKey, field: keyof (typeof shopRarityTheme.custom)[ShopRarityKey], value: string) => {
+    const next = {
+      ...shopRarityTheme,
+      presetId: 'custom' as const,
+      custom: {
+        ...shopRarityTheme.custom,
+        [rarity]: {
+          ...shopRarityTheme.custom[rarity],
+          [field]: value
+        }
+      }
+    };
+    setShopRarityTheme(next);
+    writeShopRarityThemeSettings(next);
+  };
+
+  const resetShopRarityCustomColors = () => {
+    const next = {
+      presetId: 'custom' as const,
+      custom: getDefaultShopRarityCustomColors()
+    };
+    setShopRarityTheme(next);
+    writeShopRarityThemeSettings(next);
   };
 
   const applyMotion = (next: MotionMode) => {
@@ -2026,7 +2192,7 @@ export function Settings() {
                   <span className="text-sm font-extrabold text-white">{backgroundVisualOpacity}%</span>
                 </div>
                 <p className="text-xs g-muted mt-1">Lower values darken the launcher background more.</p>
-                <input type="range" min={0} max={100} step={1} value={backgroundVisualOpacity} onChange={(event) => applyBackgroundVisualOpacity(Number(event.target.value))} className="mt-3 w-full g-range" />
+                <input type="range" min={10} max={100} step={1} value={backgroundVisualOpacity} onChange={(event) => applyBackgroundVisualOpacity(Number(event.target.value))} className="mt-3 w-full g-range" />
               </div>
 
               <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
@@ -2041,30 +2207,23 @@ export function Settings() {
             </div>
 
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Custom Background Editor</p>
-                  <p className="text-xs g-muted mt-1">Upload, drag to position, then save the final 16:9 render Bloom uses.</p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <label className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] inline-flex items-center justify-center cursor-pointer">
-                    Upload Image
-                    <input type="file" accept="image/*" onChange={(event) => { void onCustomBackgroundFile(event); }} className="hidden" />
-                  </label>
-                  <button
-                    onClick={() => { void saveCustomBackground(); }}
-                    disabled={!customBackgroundSource || customBackgroundSaving}
-                    className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
-                  >
-                    {customBackgroundSaving ? 'Saving...' : 'Save'}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setCustomBackgroundPanX(0);
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Custom Background Editor</p>
+                    <p className="text-xs g-muted mt-1">Upload, drag, and scroll-zoom. Saves automatically to a 1920x1080 output.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <label className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] inline-flex items-center justify-center cursor-pointer">
+                      Upload Image / Video
+                      <input type="file" accept="image/*,video/mp4,video/webm,video/ogg" onChange={(event) => { void onCustomBackgroundFile(event); }} className="hidden" />
+                    </label>
+                    <button
+                      onClick={() => {
+                        setCustomBackgroundPanX(0);
                       setCustomBackgroundPanY(0);
                       setCustomBackgroundZoom(1);
                     }}
-                    disabled={!customBackgroundSource}
+                    disabled={!customBackgroundSource || customBackgroundMediaKind === 'video'}
                     className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
                   >
                     Reset View
@@ -2080,9 +2239,9 @@ export function Settings() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/55">
-                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">Output {customBackgroundTarget.width}x{customBackgroundTarget.height}</span>
-                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">{customBackgroundSaved ? 'Saved' : 'Not Saved'}</span>
-                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">Zoom {customBackgroundZoom.toFixed(2)}x</span>
+                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">{customBackgroundMediaKind === 'video' ? 'Local Video' : `Output ${customBackgroundTarget.width}x${customBackgroundTarget.height}`}</span>
+                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">{customBackgroundSaving ? 'Autosaving…' : customBackgroundSaved ? 'Saved' : 'Not Saved'}</span>
+                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">{customBackgroundMediaKind === 'video' ? 'Loop Playback' : `Zoom ${customBackgroundZoom.toFixed(2)}x`}</span>
               </div>
 
               <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_0.85fr] gap-4">
@@ -2092,22 +2251,34 @@ export function Settings() {
                     onPointerMove={onCustomBackgroundPointerMove}
                     onPointerUp={onCustomBackgroundPointerUp}
                     onPointerLeave={onCustomBackgroundPointerUp}
-                    className={clsx('relative aspect-video overflow-hidden rounded-2xl border border-white/10 bg-black/40', customBackgroundSource ? (draggingCustomBackground ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default')}
+                    onWheel={onCustomBackgroundWheel}
+                    className={clsx('relative aspect-video overflow-hidden rounded-2xl border border-white/10 bg-black/40', customBackgroundSource ? (customBackgroundMediaKind === 'image' ? (draggingCustomBackground ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default') : 'cursor-default')}
                   >
                     {customBackgroundSource ? (
                       <>
-                        <img
-                          src={customBackgroundSource}
-                          alt="Custom background editor"
-                          className="absolute inset-0 h-full w-full object-cover select-none pointer-events-none"
-                          style={{
-                            transform: `translate(${customBackgroundPanX * 14}%, ${customBackgroundPanY * 14}%) scale(${customBackgroundZoom})`
-                          }}
-                        />
+                        {customBackgroundMediaKind === 'video' ? (
+                          <video
+                            src={customBackgroundSource}
+                            className="absolute inset-0 h-full w-full object-cover select-none pointer-events-none"
+                            autoPlay
+                            loop
+                            muted
+                            playsInline
+                          />
+                        ) : (
+                          <img
+                            src={customBackgroundSource}
+                            alt="Custom background editor"
+                            className="absolute inset-0 h-full w-full object-cover select-none pointer-events-none"
+                            style={{
+                              transform: `translate(${customBackgroundPanX * 14}%, ${customBackgroundPanY * 14}%) scale(${customBackgroundZoom})`
+                            }}
+                          />
+                        )}
                         <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.06)_1px,transparent_1px)] [background-size:10%_10%]" />
-                        <div className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-white/60 shadow-[0_0_0_9999px_rgba(0,0,0,0.28)]" />
+                        {customBackgroundMediaKind === 'image' && <div className="pointer-events-none absolute left-[7%] top-[7%] h-[86%] w-[86%] rounded-xl border border-white/70 shadow-[0_0_0_9999px_rgba(0,0,0,0.36)]" />}
                         <div className="pointer-events-none absolute bottom-2 left-2 rounded-md border border-white/15 bg-black/45 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white/80">
-                          Drag to Pan
+                          {customBackgroundMediaKind === 'video' ? 'Stored locally on this device' : 'Drag to Pan • Scroll to Zoom'}
                         </div>
                       </>
                     ) : (
@@ -2115,29 +2286,6 @@ export function Settings() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-white/70">Horizontal</p>
-                        <span className="text-[11px] font-bold text-white/75">{customBackgroundPanX.toFixed(2)}</span>
-                      </div>
-                      <input type="range" min={-1} max={1} step={0.01} value={customBackgroundPanX} onChange={(event) => setCustomBackgroundPanX(Number(event.target.value))} className="mt-2 w-full g-range" />
-                    </div>
-                    <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-white/70">Vertical</p>
-                        <span className="text-[11px] font-bold text-white/75">{customBackgroundPanY.toFixed(2)}</span>
-                      </div>
-                      <input type="range" min={-1} max={1} step={0.01} value={customBackgroundPanY} onChange={(event) => setCustomBackgroundPanY(Number(event.target.value))} className="mt-2 w-full g-range" />
-                    </div>
-                    <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-white/70">Zoom</p>
-                        <span className="text-[11px] font-bold text-white/75">{customBackgroundZoom.toFixed(2)}x</span>
-                      </div>
-                      <input type="range" min={1} max={2.8} step={0.01} value={customBackgroundZoom} onChange={(event) => setCustomBackgroundZoom(Number(event.target.value))} className="mt-2 w-full g-range" />
-                    </div>
-                  </div>
                 </div>
 
                 <div className="space-y-3">
@@ -2145,12 +2293,16 @@ export function Settings() {
                   <div className="rounded-2xl border border-white/10 bg-black/40 p-3">
                     <div className="aspect-video overflow-hidden rounded-xl border border-white/10 bg-black/50">
                       {customBackgroundRenderPreview ? (
-                        <img src={customBackgroundRenderPreview} alt="Custom background output preview" className="h-full w-full object-cover" />
+                        customBackgroundMediaKind === 'video' ? (
+                          <video src={customBackgroundRenderPreview} className="h-full w-full object-cover" autoPlay loop muted playsInline />
+                        ) : (
+                          <img src={customBackgroundRenderPreview} alt="Custom background output preview" className="h-full w-full object-cover" />
+                        )
                       ) : (
                         <div className="flex h-full items-center justify-center text-sm font-bold text-white/38">Saved output preview appears here</div>
                       )}
                     </div>
-                    <p className="mt-3 text-xs g-muted">This preview is rendered from the same output Bloom will save and use as your launcher background.</p>
+                    <p className="mt-3 text-xs g-muted">{customBackgroundMediaKind === 'video' ? 'This video is stored locally in Bloom app data and plays directly from disk.' : 'This preview is rendered from the same output Bloom will save and use as your launcher background.'}</p>
                   </div>
                 </div>
               </div>
@@ -2252,7 +2404,8 @@ export function Settings() {
                 { id: 'script-studio', label: 'Script Studio (IDE)' },
                 { id: 'host-server', label: 'Host Server' },
                 { id: 'games', label: 'Games' },
-                { id: 'help', label: 'Help' }
+                { id: 'help', label: 'Help' },
+                { id: 'information', label: 'Information' }
               ] as { id: SidebarTabId; label: string }[]).map((tabOption) => (
                 <div key={tabOption.id} className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2.5 flex items-center justify-between gap-3">
                   <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-white/78">{tabOption.label}</p>
@@ -2432,6 +2585,58 @@ export function Settings() {
                 <span className="text-xs font-extrabold text-white">{motionOffsetY}px</span>
               </div>
               <input type="range" min={-70} max={70} step={1} value={motionOffsetY} onChange={(event) => applyMotionTuning({ offsetY: Number(event.target.value) })} className="w-full mt-1 g-range" />
+            </div>
+          </AppearanceDropdown>
+                </>
+              )}
+
+              {appearanceSection === 'shop' && (
+                <>
+          <AppearanceDropdown title="Preset Palette" description="Choose a single rarity palette for the cosmetic shop. Default uses colors from the listing data.">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {SHOP_RARITY_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  onClick={() => applyShopRarityPreset(preset.id)}
+                  className={clsx('rounded-xl border p-3 text-left', shopRarityTheme.presetId === preset.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}
+                >
+                  <p className="text-sm font-extrabold text-white">{preset.label}</p>
+                  <p className="text-xs g-muted mt-1">{preset.description}</p>
+                </button>
+              ))}
+            </div>
+          </AppearanceDropdown>
+
+          <AppearanceDropdown title="Custom Rarity Colors" description="Set each rarity to its own gradient and glow. Editing here automatically switches the shop theme to Custom.">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs g-muted">These colors apply to shop cards, badges, and rarity accents.</p>
+              <button onClick={resetShopRarityCustomColors} className="g-btn h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]">
+                Reset Custom Colors
+              </button>
+            </div>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+              {SHOP_RARITY_ORDER.map((rarity) => {
+                const colors = shopRarityTheme.custom[rarity];
+                return (
+                  <div key={rarity} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <div
+                      className="rounded-lg border border-white/10 p-3"
+                      style={{
+                        background: `linear-gradient(145deg, ${colors.start}, ${colors.end})`,
+                        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.08), 0 0 22px ${colors.glow}`
+                      }}
+                    >
+                      <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/80">{SHOP_RARITY_LABELS[rarity]}</p>
+                      <p className="text-xs text-white/65 mt-1">{rarity}</p>
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+                      <ShopColorField label="Start" value={colors.start} onChange={(next: string) => applyShopRarityCustomColor(rarity, 'start', next)} />
+                      <ShopColorField label="End" value={colors.end} onChange={(next: string) => applyShopRarityCustomColor(rarity, 'end', next)} />
+                      <ShopColorField label="Glow" value={colors.glow} onChange={(next: string) => applyShopRarityCustomColor(rarity, 'glow', next)} />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </AppearanceDropdown>
                 </>

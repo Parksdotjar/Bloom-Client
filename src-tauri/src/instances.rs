@@ -8,6 +8,8 @@ use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use tauri::AppHandle;
 
+const DEFAULT_CURSEFORGE_RELAY_URL: &str = "https://sb.bloomclient.org/functions/v1/main/curseforge";
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Instance {
@@ -148,6 +150,43 @@ struct MrpackEnv {
     pub client: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BloomExportOptions {
+    pub include_mods: bool,
+    pub include_resourcepacks: bool,
+    pub include_shaderpacks: bool,
+    pub include_config: bool,
+    pub include_options: bool,
+    pub include_server_data: bool,
+    pub include_saves: bool,
+    pub include_screenshots: bool,
+    pub include_logs: bool,
+    pub include_all_files: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BloomPackManifest {
+    format_version: u32,
+    exported_at: i64,
+    source: String,
+    original_instance_id: String,
+    export_options: BloomExportOptions,
+    instance: Instance,
+    files: Vec<String>,
+}
+
+const BLOOM_PACK_MANIFEST_NAME: &str = "bloom.modpack.json";
+const BLOOM_PACK_PAYLOAD_DIR: &str = "payload";
+const INSTANCE_EXPORT_OPTION_FILES: &[&str] = &[
+    "options.txt",
+    "optionsof.txt",
+    "optionsshaders.txt",
+    "options.amecsapi.txt",
+    "options.amecsapi-hotkeys.txt",
+];
+
 fn is_valid_jar(bytes: &[u8]) -> bool {
     bytes.len() >= 4 && bytes[0] == 0x50 && bytes[1] == 0x4B
 }
@@ -155,7 +194,10 @@ fn is_valid_jar(bytes: &[u8]) -> bool {
 fn is_valid_pack_file(bytes: &[u8], file_name: &str) -> bool {
     let lowered = file_name.to_ascii_lowercase();
     let is_supported_ext =
-        lowered.ends_with(".jar") || lowered.ends_with(".zip") || lowered.ends_with(".mrpack");
+        lowered.ends_with(".jar")
+            || lowered.ends_with(".zip")
+            || lowered.ends_with(".mrpack")
+            || lowered.ends_with(".bloom");
     is_supported_ext && bytes.len() >= 4 && bytes[0] == 0x50 && bytes[1] == 0x4B
 }
 
@@ -272,6 +314,59 @@ fn chrono_now_millis() -> i64 {
         .unwrap_or(0)
 }
 
+fn read_env_trimmed(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn resolve_curseforge_relay_url() -> String {
+    read_env_trimmed("BLOOM_CURSEFORGE_RELAY_URL")
+        .unwrap_or_else(|| DEFAULT_CURSEFORGE_RELAY_URL.to_string())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+async fn curseforge_get_json(
+    client: &reqwest::Client,
+    direct_path: &str,
+    relay_path: &str,
+) -> Result<serde_json::Value, String> {
+    if let Some(api_key) = read_env_trimmed("CURSEFORGE_API_KEY") {
+        return client
+            .get(format!("https://api.curseforge.com{}", direct_path))
+            .header("x-api-key", api_key)
+            .header("User-Agent", "BloomClient/0.1.0")
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string());
+    }
+
+    let mut request = client
+        .get(format!("{}{}", resolve_curseforge_relay_url(), relay_path))
+        .header("User-Agent", "BloomClient/0.1.0");
+
+    if let Some(shared_key) = read_env_trimmed("BLOOM_RELAY_SHARED_KEY") {
+        request = request.header("x-bloom-relay-key", shared_key);
+    }
+
+    request
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())
+}
+
 fn load_instance_from_dir(instance_dir: &Path) -> Result<Instance, String> {
     let content = fs::read_to_string(instance_dir.join("instance.json")).map_err(|e| e.to_string())?;
     serde_json::from_str(&content).map_err(|e| e.to_string())
@@ -302,6 +397,191 @@ fn mrpack_client_enabled(env: &Option<MrpackEnv>) -> bool {
         },
         None => true,
     }
+}
+
+fn write_instance_to_dir(instance_dir: &Path, instance: &Instance) -> Result<(), String> {
+    let instance_file = instance_dir.join("instance.json");
+    let content = serde_json::to_string_pretty(instance).map_err(|e| e.to_string())?;
+    fs::write(&instance_file, content).map_err(|e| e.to_string())
+}
+
+fn push_recursive_files(
+    root: &Path,
+    relative_dir: &str,
+    out: &mut Vec<String>,
+) -> Result<(), String> {
+    let dir = root.join(relative_dir);
+    if !dir.exists() || !dir.is_dir() {
+        return Ok(());
+    }
+    let entries = fs::read_dir(&dir).map_err(|e| e.to_string())?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let name = entry
+            .file_name()
+            .to_str()
+            .ok_or("Invalid UTF-8 path in instance files.")?
+            .to_string();
+        let rel = if relative_dir.is_empty() {
+            name
+        } else {
+            format!("{}/{}", relative_dir, name)
+        };
+        if path.is_dir() {
+            push_recursive_files(root, &rel, out)?;
+        } else if path.is_file() {
+            out.push(rel);
+        }
+    }
+    Ok(())
+}
+
+fn collect_bloom_export_files(
+    instance_dir: &Path,
+    options: &BloomExportOptions,
+) -> Result<Vec<String>, String> {
+    let mut files = Vec::new();
+
+    if options.include_all_files {
+        push_recursive_files(instance_dir, "", &mut files)?;
+        files.retain(|path| {
+            path != "instance.json"
+                && path != BLOOM_PACK_MANIFEST_NAME
+                && !path.ends_with(".bloom")
+        });
+        files.sort();
+        files.dedup();
+        return Ok(files);
+    }
+
+    if options.include_mods {
+        push_recursive_files(instance_dir, "mods", &mut files)?;
+    }
+    if options.include_resourcepacks {
+        push_recursive_files(instance_dir, "resourcepacks", &mut files)?;
+    }
+    if options.include_shaderpacks {
+        push_recursive_files(instance_dir, "shaderpacks", &mut files)?;
+    }
+    if options.include_config {
+        push_recursive_files(instance_dir, "config", &mut files)?;
+    }
+    if options.include_server_data {
+        push_recursive_files(instance_dir, "servers", &mut files)?;
+        let server_dat = instance_dir.join("servers.dat");
+        if server_dat.is_file() {
+            files.push("servers.dat".to_string());
+        }
+    }
+    if options.include_saves {
+        push_recursive_files(instance_dir, "saves", &mut files)?;
+    }
+    if options.include_screenshots {
+        push_recursive_files(instance_dir, "screenshots", &mut files)?;
+    }
+    if options.include_logs {
+        push_recursive_files(instance_dir, "logs", &mut files)?;
+        let latest_log = instance_dir.join("latest.log");
+        if latest_log.is_file() {
+            files.push("latest.log".to_string());
+        }
+    }
+    if options.include_options {
+        for name in INSTANCE_EXPORT_OPTION_FILES {
+            if instance_dir.join(name).is_file() {
+                files.push((*name).to_string());
+            }
+        }
+    }
+
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
+fn import_bloom_archive(
+    instance_dir: &Path,
+    pack_bytes: &[u8],
+    source_path: &Path,
+    requested_name: Option<String>,
+) -> Result<Instance, String> {
+    let cursor = Cursor::new(pack_bytes);
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|e| format!("Invalid .bloom archive: {}", e))?;
+
+    let mut manifest_entry = archive
+        .by_name(BLOOM_PACK_MANIFEST_NAME)
+        .map_err(|_| "This .bloom archive is missing bloom.modpack.json".to_string())?;
+    let mut manifest_raw = String::new();
+    manifest_entry
+        .read_to_string(&mut manifest_raw)
+        .map_err(|e| format!("Failed reading bloom.modpack.json: {}", e))?;
+    drop(manifest_entry);
+
+    let manifest: BloomPackManifest = serde_json::from_str(&manifest_raw)
+        .map_err(|e| format!("Invalid bloom.modpack.json: {}", e))?;
+    if manifest.format_version != 1 {
+        return Err(format!(
+            "Unsupported .bloom format version {}.",
+            manifest.format_version
+        ));
+    }
+
+    let mut instance = manifest.instance.clone();
+    let folder_name = instance_dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or("Invalid instance destination.")?
+        .to_string();
+    instance.id = folder_name;
+    let imported_name = build_import_instance_name(source_path, requested_name);
+    instance.name = if imported_name.trim().is_empty() {
+        manifest.instance.name.clone()
+    } else {
+        imported_name
+    };
+    instance.created_at = chrono_now_millis();
+    instance.updated_at = chrono_now_millis();
+
+    fs::create_dir_all(instance_dir).map_err(|e| e.to_string())?;
+
+    for rel in &manifest.files {
+        let archive_path = format!("{}/{}", BLOOM_PACK_PAYLOAD_DIR, rel);
+        let mut entry = archive
+            .by_name(&archive_path)
+            .map_err(|_| format!("Missing archive payload entry: {}", rel))?;
+        let target = safe_join_relative(instance_dir, rel)
+            .ok_or_else(|| format!("Blocked unsafe Bloom pack path: {}", rel))?;
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+        fs::write(&target, bytes).map_err(|e| e.to_string())?;
+    }
+
+    fs::write(
+        instance_dir.join("modpack_source.txt"),
+        format!(
+            "source=bloom\nfile={}\noriginal_instance_id={}\n",
+            source_path.display(),
+            manifest.original_instance_id
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        instance_dir.join("modpack_install_report.txt"),
+        format!(
+            "Bloom pack import completed\nexported_at={}\nfiles_restored={}\n",
+            manifest.exported_at,
+            manifest.files.len()
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+
+    write_instance_to_dir(instance_dir, &instance)?;
+    Ok(instance)
 }
 
 async fn install_modrinth_mrpack_contents(
@@ -1051,26 +1331,17 @@ async fn install_marketplace_mod_into_instance(
     }
 
     if source_mode == "curseforge" {
-        let api_key = env::var("CURSEFORGE_API_KEY").map_err(|_| {
-            "CurseForge API key missing. Set CURSEFORGE_API_KEY in your environment.".to_string()
-        })?;
-
-        let files_url = format!(
-            "https://api.curseforge.com/v1/mods/{}/files?gameVersion={}&pageSize=40&index=0",
+        let files_query = format!(
+            "/v1/mods/{}/files?gameVersion={}&pageSize=40&index=0",
             project_id,
             urlencoding::encode(&game_version)
         );
-        let body: serde_json::Value = client
-            .get(files_url)
-            .header("x-api-key", &api_key)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?
-            .json()
-            .await
-            .map_err(|e| e.to_string())?;
+        let body: serde_json::Value = curseforge_get_json(
+            &client,
+            &files_query,
+            &format!("/mods/{}/files?gameVersion={}&pageSize=40&index=0", project_id, urlencoding::encode(&game_version)),
+        )
+        .await?;
         let data = body
             .get("data")
             .and_then(|v| v.as_array())
@@ -1118,17 +1389,12 @@ async fn install_marketplace_mod_into_instance(
 
         let target = mods_dir.join(&file_name);
         fs::write(&target, bytes).map_err(|e| e.to_string())?;
-        let mod_info: serde_json::Value = client
-            .get(format!("https://api.curseforge.com/v1/mods/{}", project_id))
-            .header("x-api-key", api_key)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?
-            .json()
-            .await
-            .map_err(|e| e.to_string())?;
+        let mod_info: serde_json::Value = curseforge_get_json(
+            &client,
+            &format!("/v1/mods/{}", project_id),
+            &format!("/mods/{}", project_id),
+        )
+        .await?;
         let meta = InstalledModMeta {
             icon_url: mod_info
                 .get("data")
@@ -1422,60 +1688,53 @@ pub async fn marketplace_search_mods(
     }
 
     if source_mode == "all" || source_mode == "curseforge" {
-        let curse_api_key = env::var("CURSEFORGE_API_KEY").ok();
-        if let Some(api_key) = curse_api_key {
-            let curse_url = format!(
-                "https://api.curseforge.com/v1/mods/search?gameId=432&classId=6&searchFilter={}&pageSize=30&sortField=2&sortOrder=desc&gameVersion={}",
-                urlencoding::encode(q),
-                urlencoding::encode(&version_value)
-            );
-            let res = client
-                .get(curse_url)
-                .header("x-api-key", api_key)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-
-            if res.status().is_success() {
-                let body: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
-                if let Some(items) = body.get("data").and_then(|v| v.as_array()) {
-                    for item in items {
-                        out.push(MarketplaceMod {
-                            id: item
-                                .get("id")
-                                .and_then(|v| v.as_i64())
-                                .unwrap_or_default()
-                                .to_string(),
-                            source: "curseforge".to_string(),
-                            title: item
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Unknown")
-                                .to_string(),
-                            description: item
-                                .get("summary")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                            icon_url: item
-                                .get("logo")
-                                .and_then(|v| v.get("thumbnailUrl"))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string()),
-                            author: item
-                                .get("authors")
-                                .and_then(|v| v.as_array())
-                                .and_then(|arr| arr.first())
-                                .and_then(|a| a.get("name"))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string()),
-                            downloads: item
-                                .get("downloadCount")
-                                .and_then(|v| v.as_f64())
-                                .unwrap_or(0.0) as u64,
-                        });
-                    }
-                }
+        let curse_query = format!(
+            "gameId=432&classId=6&searchFilter={}&pageSize=30&sortField=2&sortOrder=desc&gameVersion={}",
+            urlencoding::encode(q),
+            urlencoding::encode(&version_value)
+        );
+        let body: serde_json::Value = curseforge_get_json(
+            &client,
+            &format!("/v1/mods/search?{}", curse_query),
+            &format!("/mods/search?{}", curse_query),
+        )
+        .await?;
+        if let Some(items) = body.get("data").and_then(|v| v.as_array()) {
+            for item in items {
+                out.push(MarketplaceMod {
+                    id: item
+                        .get("id")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or_default()
+                        .to_string(),
+                    source: "curseforge".to_string(),
+                    title: item
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown")
+                        .to_string(),
+                    description: item
+                        .get("summary")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    icon_url: item
+                        .get("logo")
+                        .and_then(|v| v.get("thumbnailUrl"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    author: item
+                        .get("authors")
+                        .and_then(|v| v.as_array())
+                        .and_then(|arr| arr.first())
+                        .and_then(|a| a.get("name"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    downloads: item
+                        .get("downloadCount")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as u64,
+                });
             }
         }
     }
@@ -1595,75 +1854,68 @@ pub async fn marketplace_search_modpacks(
     }
 
     if source_mode == "all" || source_mode == "curseforge" {
-        let curse_api_key = env::var("CURSEFORGE_API_KEY").ok();
-        if let Some(api_key) = curse_api_key {
-            let curse_url = format!(
-                "https://api.curseforge.com/v1/mods/search?gameId=432&classId=4471&searchFilter={}&pageSize=30&sortField=2&sortOrder=desc",
-                urlencoding::encode(q)
-            );
-            let res = client
-                .get(curse_url)
-                .header("x-api-key", api_key)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-
-            if res.status().is_success() {
-                let body: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
-                if let Some(items) = body.get("data").and_then(|v| v.as_array()) {
-                    for item in items {
-                        let available_versions = item
-                            .get("latestFilesIndexes")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|idx| {
-                                        idx.get("gameVersion")
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_string())
-                                    })
-                                    .collect::<Vec<String>>()
+        let curse_query = format!(
+            "gameId=432&classId=4471&searchFilter={}&pageSize=30&sortField=2&sortOrder=desc",
+            urlencoding::encode(q)
+        );
+        let body: serde_json::Value = curseforge_get_json(
+            &client,
+            &format!("/v1/mods/search?{}", curse_query),
+            &format!("/mods/search?{}", curse_query),
+        )
+        .await?;
+        if let Some(items) = body.get("data").and_then(|v| v.as_array()) {
+            for item in items {
+                let available_versions = item
+                    .get("latestFilesIndexes")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|idx| {
+                                idx.get("gameVersion")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
                             })
-                            .unwrap_or_default();
+                            .collect::<Vec<String>>()
+                    })
+                    .unwrap_or_default();
 
-                        out.push(MarketplacePack {
-                            id: item
-                                .get("id")
-                                .and_then(|v| v.as_i64())
-                                .unwrap_or_default()
-                                .to_string(),
-                            source: "curseforge".to_string(),
-                            title: item
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Unknown")
-                                .to_string(),
-                            description: item
-                                .get("summary")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                            icon_url: item
-                                .get("logo")
-                                .and_then(|v| v.get("thumbnailUrl"))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string()),
-                            author: item
-                                .get("authors")
-                                .and_then(|v| v.as_array())
-                                .and_then(|arr| arr.first())
-                                .and_then(|a| a.get("name"))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string()),
-                            downloads: item
-                                .get("downloadCount")
-                                .and_then(|v| v.as_f64())
-                                .unwrap_or(0.0) as u64,
-                            available_versions,
-                            supported_loaders: vec![],
-                        });
-                    }
-                }
+                out.push(MarketplacePack {
+                    id: item
+                        .get("id")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or_default()
+                        .to_string(),
+                    source: "curseforge".to_string(),
+                    title: item
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown")
+                        .to_string(),
+                    description: item
+                        .get("summary")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    icon_url: item
+                        .get("logo")
+                        .and_then(|v| v.get("thumbnailUrl"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    author: item
+                        .get("authors")
+                        .and_then(|v| v.as_array())
+                        .and_then(|arr| arr.first())
+                        .and_then(|a| a.get("name"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    downloads: item
+                        .get("downloadCount")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as u64,
+                    available_versions,
+                    supported_loaders: vec![],
+                });
             }
         }
     }
@@ -1751,25 +2003,17 @@ pub async fn marketplace_install_modpack_instance(
 
         (file.filename.clone(), bytes, selected_loader, title)
     } else if source_mode == "curseforge" {
-        let api_key = env::var("CURSEFORGE_API_KEY").map_err(|_| {
-            "CurseForge API key missing. Set CURSEFORGE_API_KEY in your environment.".to_string()
-        })?;
-
-        let files_url = format!(
-            "https://api.curseforge.com/v1/mods/{}/files?gameVersion={}&pageSize=40&index=0",
+        let files_query = format!(
+            "/v1/mods/{}/files?gameVersion={}&pageSize=40&index=0",
             project_id,
             urlencoding::encode(&game_version)
         );
-        let files_res = client
-            .get(files_url)
-            .header("x-api-key", api_key.clone())
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?;
-
-        let body: serde_json::Value = files_res.json().await.map_err(|e| e.to_string())?;
+        let body: serde_json::Value = curseforge_get_json(
+            &client,
+            &files_query,
+            &format!("/mods/{}/files?gameVersion={}&pageSize=40&index=0", project_id, urlencoding::encode(&game_version)),
+        )
+        .await?;
         let data = body
             .get("data")
             .and_then(|v| v.as_array())
@@ -1812,18 +2056,12 @@ pub async fn marketplace_install_modpack_instance(
             .map_err(|e| e.to_string())?
             .to_vec();
 
-        let mod_url = format!("https://api.curseforge.com/v1/mods/{}", project_id);
-        let mod_info: serde_json::Value = client
-            .get(mod_url)
-            .header("x-api-key", api_key)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?
-            .json()
-            .await
-            .map_err(|e| e.to_string())?;
+        let mod_info: serde_json::Value = curseforge_get_json(
+            &client,
+            &format!("/v1/mods/{}", project_id),
+            &format!("/mods/{}", project_id),
+        )
+        .await?;
         let title = mod_info
             .get("data")
             .and_then(|v| v.get("name"))
@@ -1894,6 +2132,73 @@ pub async fn marketplace_install_modpack_instance(
 }
 
 #[tauri::command]
+pub fn instance_export_bloom(
+    app: AppHandle,
+    instance_id: String,
+    output_path: String,
+    options: BloomExportOptions,
+) -> Result<String, String> {
+    let paths = paths_get(app)?;
+    let instance_dir = paths.instances.join(&instance_id);
+    if !instance_dir.exists() {
+        return Err("Instance not found".into());
+    }
+
+    let instance = load_instance_from_dir(&instance_dir)?;
+    let target_path = PathBuf::from(&output_path);
+    if target_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| !value.eq_ignore_ascii_case("bloom"))
+        .unwrap_or(true)
+    {
+        return Err("Bloom exports must use the .bloom extension.".into());
+    }
+
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let files = collect_bloom_export_files(&instance_dir, &options)?;
+    let manifest = BloomPackManifest {
+        format_version: 1,
+        exported_at: chrono_now_millis(),
+        source: "bloom-client".to_string(),
+        original_instance_id: instance.id.clone(),
+        export_options: options.clone(),
+        instance,
+        files: files.clone(),
+    };
+
+    let file = fs::File::create(&target_path).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipWriter::new(file);
+    let entry_options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    let manifest_raw =
+        serde_json::to_vec_pretty(&manifest).map_err(|e| format!("Manifest error: {}", e))?;
+    zip.start_file(BLOOM_PACK_MANIFEST_NAME, entry_options)
+        .map_err(|e| e.to_string())?;
+    use std::io::Write;
+    zip.write_all(&manifest_raw).map_err(|e| e.to_string())?;
+
+    for rel in files {
+        let source = safe_join_relative(&instance_dir, &rel)
+            .ok_or_else(|| format!("Blocked unsafe instance path: {}", rel))?;
+        if !source.is_file() {
+            continue;
+        }
+        let bytes = fs::read(&source).map_err(|e| e.to_string())?;
+        zip.start_file(format!("{}/{}", BLOOM_PACK_PAYLOAD_DIR, rel), entry_options)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(&bytes).map_err(|e| e.to_string())?;
+    }
+
+    zip.finish().map_err(|e| e.to_string())?;
+    Ok(target_path.display().to_string())
+}
+
+#[tauri::command]
 pub async fn import_local_modpack_instance(
     app: AppHandle,
     file_path: String,
@@ -1916,10 +2221,17 @@ pub async fn import_local_modpack_instance(
     let pack_bytes = fs::read(&source_path).map_err(|e| e.to_string())?;
 
     if !is_valid_pack_file(&pack_bytes, &safe_name) {
-        return Err("Selected file is not a valid .mrpack or .zip modpack archive.".into());
+        return Err("Selected file is not a valid .mrpack, .bloom, or .zip modpack archive.".into());
     }
 
+    let lower_file_name = safe_name.to_ascii_lowercase();
     let id = format!("import-{}", chrono_now_millis());
+    let instance_dir = paths.instances.join(&id);
+
+    if lower_file_name.ends_with(".bloom") {
+        return import_bloom_archive(&instance_dir, &pack_bytes, &source_path, instance_name);
+    }
+
     let mut instance = build_default_instance(
         id.clone(),
         build_import_instance_name(&source_path, instance_name),
@@ -1927,7 +2239,6 @@ pub async fn import_local_modpack_instance(
         "fabric".to_string(),
     );
 
-    let instance_dir = paths.instances.join(&id);
     fs::create_dir_all(instance_dir.join("mods")).map_err(|e| e.to_string())?;
     fs::create_dir_all(instance_dir.join("resourcepacks")).map_err(|e| e.to_string())?;
     fs::create_dir_all(instance_dir.join("shaderpacks")).map_err(|e| e.to_string())?;
@@ -1941,7 +2252,6 @@ pub async fn import_local_modpack_instance(
     )
     .map_err(|e| e.to_string())?;
 
-    let lower_file_name = safe_name.to_ascii_lowercase();
     let install_report = if lower_file_name.ends_with(".mrpack") {
         let (fabric_loader, minecraft_version, downloaded_count, override_count) =
             install_modrinth_mrpack_contents(&instance_dir, &pack_bytes, &client).await?;
@@ -1966,30 +2276,17 @@ pub async fn import_local_modpack_instance(
     )
     .map_err(|e| e.to_string())?;
 
-    let instance_file = instance_dir.join("instance.json");
-    let content = serde_json::to_string_pretty(&instance).map_err(|e| e.to_string())?;
-    fs::write(&instance_file, content).map_err(|e| e.to_string())?;
+    write_instance_to_dir(&instance_dir, &instance)?;
 
     Ok(instance)
 }
 
 async fn fetch_curseforge_class_id(
     client: &reqwest::Client,
-    api_key: &str,
     slugs: &[&str],
 ) -> Result<Option<i64>, String> {
-    let res = client
-        .get("https://api.curseforge.com/v1/categories?gameId=432")
-        .header("x-api-key", api_key)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if !res.status().is_success() {
-        return Ok(None);
-    }
-
-    let body: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    let body: serde_json::Value =
+        curseforge_get_json(client, "/v1/categories?gameId=432", "/categories?gameId=432").await?;
     let categories = match body.get("data").and_then(|value| value.as_array()) {
         Some(value) => value,
         None => return Ok(None),
@@ -2104,86 +2401,77 @@ async fn marketplace_search_packs(
     }
 
     if source_mode == "all" || source_mode == "curseforge" {
-        let curse_api_key = env::var("CURSEFORGE_API_KEY").ok();
-        if let Some(api_key) = curse_api_key {
-            let resolved_class_id = match curseforge_class_id {
-                Some(value) => Some(value),
-                None => {
-                    fetch_curseforge_class_id(&client, &api_key, curseforge_class_slugs).await?
-                }
-            };
+        let resolved_class_id = match curseforge_class_id {
+            Some(value) => Some(value),
+            None => fetch_curseforge_class_id(&client, curseforge_class_slugs).await?,
+        };
 
-            if let Some(class_id) = resolved_class_id {
-                let curse_url = format!(
-                    "https://api.curseforge.com/v1/mods/search?gameId=432&classId={}&searchFilter={}&pageSize=30&sortField=2&sortOrder=desc&gameVersion={}",
-                    class_id,
-                    urlencoding::encode(q),
-                    urlencoding::encode(&version_value)
-                );
-                let res = client
-                    .get(curse_url)
-                    .header("x-api-key", api_key)
-                    .send()
-                    .await
-                    .map_err(|e| e.to_string())?;
-
-                if res.status().is_success() {
-                    let body: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
-                    if let Some(items) = body.get("data").and_then(|v| v.as_array()) {
-                        for item in items {
-                            let available_versions = item
-                                .get("latestFilesIndexes")
-                                .and_then(|v| v.as_array())
-                                .map(|arr| {
-                                    arr.iter()
-                                        .filter_map(|idx| {
-                                            idx.get("gameVersion")
-                                                .and_then(|v| v.as_str())
-                                                .map(|s| s.to_string())
-                                        })
-                                        .collect::<Vec<String>>()
+        if let Some(class_id) = resolved_class_id {
+            let curse_query = format!(
+                "gameId=432&classId={}&searchFilter={}&pageSize=30&sortField=2&sortOrder=desc&gameVersion={}",
+                class_id,
+                urlencoding::encode(q),
+                urlencoding::encode(&version_value)
+            );
+            let body: serde_json::Value = curseforge_get_json(
+                &client,
+                &format!("/v1/mods/search?{}", curse_query),
+                &format!("/mods/search?{}", curse_query),
+            )
+            .await?;
+            if let Some(items) = body.get("data").and_then(|v| v.as_array()) {
+                for item in items {
+                    let available_versions = item
+                        .get("latestFilesIndexes")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|idx| {
+                                    idx.get("gameVersion")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string())
                                 })
-                                .unwrap_or_default();
+                                .collect::<Vec<String>>()
+                        })
+                        .unwrap_or_default();
 
-                            out.push(MarketplacePack {
-                                id: item
-                                    .get("id")
-                                    .and_then(|v| v.as_i64())
-                                    .unwrap_or_default()
-                                    .to_string(),
-                                source: "curseforge".to_string(),
-                                title: item
-                                    .get("name")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("Unknown")
-                                    .to_string(),
-                                description: item
-                                    .get("summary")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                icon_url: item
-                                    .get("logo")
-                                    .and_then(|v| v.get("thumbnailUrl"))
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string()),
-                                author: item
-                                    .get("authors")
-                                    .and_then(|v| v.as_array())
-                                    .and_then(|arr| arr.first())
-                                    .and_then(|a| a.get("name"))
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string()),
-                                downloads: item
-                                    .get("downloadCount")
-                                    .and_then(|v| v.as_f64())
-                                    .unwrap_or(0.0)
-                                    as u64,
-                                available_versions,
-                                supported_loaders: vec![],
-                            });
-                        }
-                    }
+                    out.push(MarketplacePack {
+                        id: item
+                            .get("id")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or_default()
+                            .to_string(),
+                        source: "curseforge".to_string(),
+                        title: item
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown")
+                            .to_string(),
+                        description: item
+                            .get("summary")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        icon_url: item
+                            .get("logo")
+                            .and_then(|v| v.get("thumbnailUrl"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        author: item
+                            .get("authors")
+                            .and_then(|v| v.as_array())
+                            .and_then(|arr| arr.first())
+                            .and_then(|a| a.get("name"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        downloads: item
+                            .get("downloadCount")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0)
+                            as u64,
+                        available_versions,
+                        supported_loaders: vec![],
+                    });
                 }
             }
         }
@@ -2266,25 +2554,17 @@ async fn install_marketplace_pack(
     }
 
     if source_mode == "curseforge" {
-        let api_key = env::var("CURSEFORGE_API_KEY").map_err(|_| {
-            "CurseForge API key missing. Set CURSEFORGE_API_KEY in your environment.".to_string()
-        })?;
-
-        let files_url = format!(
-            "https://api.curseforge.com/v1/mods/{}/files?gameVersion={}&pageSize=40&index=0",
+        let files_query = format!(
+            "/v1/mods/{}/files?gameVersion={}&pageSize=40&index=0",
             project_id,
             urlencoding::encode(&version_value)
         );
-        let files_res = client
-            .get(files_url)
-            .header("x-api-key", api_key)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?;
-
-        let body: serde_json::Value = files_res.json().await.map_err(|e| e.to_string())?;
+        let body: serde_json::Value = curseforge_get_json(
+            &client,
+            &files_query,
+            &format!("/mods/{}/files?gameVersion={}&pageSize=40&index=0", project_id, urlencoding::encode(&version_value)),
+        )
+        .await?;
         let data = body
             .get("data")
             .and_then(|v| v.as_array())

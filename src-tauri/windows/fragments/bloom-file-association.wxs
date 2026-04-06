@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <DirectoryRef Id="TARGETDIR">
+      <Component Id="BloomFileAssociationRegistry" Guid="*">
+        <RegistryKey Root="HKMU" Key="Software\Classes\.bloom" Action="createAndRemoveOnUninstall">
+          <RegistryValue Type="string" Value="BloomClient.Modpack" KeyPath="yes" />
+          <RegistryValue Name="Content Type" Type="string" Value="application/x-bloom-modpack" />
+        </RegistryKey>
+        <RegistryKey Root="HKMU" Key="Software\Classes\BloomClient.Modpack" Action="createAndRemoveOnUninstall">
+          <RegistryValue Type="string" Value="Bloom Modpack" />
+        </RegistryKey>
+        <RegistryKey Root="HKMU" Key="Software\Classes\BloomClient.Modpack\DefaultIcon" Action="createAndRemoveOnUninstall">
+          <RegistryValue Type="string" Value="[INSTALLDIR]Bloom Client.exe,0" />
+        </RegistryKey>
+        <RegistryKey Root="HKMU" Key="Software\Classes\BloomClient.Modpack\shell" Action="createAndRemoveOnUninstall">
+          <RegistryValue Type="string" Value="open" />
+        </RegistryKey>
+        <RegistryKey Root="HKMU" Key="Software\Classes\BloomClient.Modpack\shell\open" Action="createAndRemoveOnUninstall">
+          <RegistryValue Type="string" Value="Open with Bloom Client" />
+        </RegistryKey>
+        <RegistryKey Root="HKMU" Key="Software\Classes\BloomClient.Modpack\shell\open\command" Action="createAndRemoveOnUninstall">
+          <RegistryValue Type="string" Value="&quot;[INSTALLDIR]Bloom Client.exe&quot; &quot;%1&quot;" />
+        </RegistryKey>
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>

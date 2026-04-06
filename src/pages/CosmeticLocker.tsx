@@ -7,6 +7,7 @@ import { useAuth } from '../hooks/useAuth';
 import { COSMETICS_MOD_MENU_EVENT, consumeCosmeticsModMenuRequest } from '../constants/cosmeticsModMenu';
 import { CapeMeshRenderer } from '../components/cosmetics/CapeMeshRenderer';
 import { MinecraftPlayerPreview } from '../components/cosmetics/MinecraftPlayerPreview';
+import { capeTextureLoader } from '../services/capeTextures';
 import {
   createPartnerGroup,
   createPendingCurrencyPurchase,
@@ -16,6 +17,7 @@ import {
   loadCurrentLoadout,
   loadOwnedCapes,
   loadPartnerGroups,
+  loadAllCapeIdsForOwner,
   loadPreviewAppearance,
   loadShopCapes,
   loadWallet,
@@ -28,8 +30,10 @@ import {
   subscribePreviewAppearance,
   subscribeOwnLoadout,
   subscribeOwnWallet,
+  subscribeCapes,
   upsertPreviewAppearance,
   updateCapeListing,
+  updateCapeRenderPose,
   DEFAULT_PREVIEW_APPEARANCE,
   type CapeRecord,
   type CommerceProfile,
@@ -40,6 +44,12 @@ import {
   type UpdateCapeInput,
   type WalletLedgerRecord
 } from '../services/cosmetics';
+import {
+  readShopRarityThemeSettings,
+  resolveShopRarityColors,
+  SHOP_RARITY_THEME_CHANGE_EVENT,
+  type ShopRarityThemeSettings
+} from '../services/shopTheme';
 
 type LockerTab = 'partners' | 'locker' | 'shop' | 'wallet';
 type LockerCategory = 'capes';
@@ -58,11 +68,37 @@ type DisplayCape = {
   rarity_color_start: string | null;
   rarity_color_end: string | null;
   rarity_glow: string | null;
+  render_pos_x: number | null;
+  render_pos_y: number | null;
+  render_pos_z: number | null;
+  render_rot_x: number | null;
+  render_rot_y: number | null;
+  render_rot_z: number | null;
+  render_depth_z: number | null;
+  render_brightness: number | null;
   sort_order: number;
   is_active?: boolean;
   is_featured?: boolean;
   owned: boolean;
   ownedSource?: string | null;
+};
+
+type CapeSectionKey =
+  | 'partners'
+  | 'featured'
+  | 'unique'
+  | 'mythic'
+  | 'legendary'
+  | 'epic'
+  | 'uncommon'
+  | 'common'
+  | 'custom';
+
+type CapeSection = {
+  key: CapeSectionKey;
+  label: string;
+  color: string;
+  items: DisplayCape[];
 };
 
 type PurchaseGuardState = {
@@ -114,7 +150,29 @@ type OwnerPreviewContextMenuState = {
   y: number;
 };
 
-type OwnerCapeEditorSection = 'identity' | 'pricing' | 'appearance' | 'presets';
+type OwnerCapeEditorSection = 'identity' | 'pricing' | 'appearance' | 'render' | 'presets';
+
+type SharedCardPose = {
+  x: number;
+  y: number;
+  z: number;
+  rotX: number;
+  rotY: number;
+  rotZ: number;
+  depth: number;
+  brightness: number;
+};
+
+type BloomDialogState =
+  | {
+      kind: 'confirm-delete-shop';
+      cape: DisplayCape;
+    }
+  | {
+      kind: 'confirm-delete-custom';
+      cape: DisplayCape;
+      input: string;
+    };
 
 type PreviewAppearanceKey =
   | 'exposure'
@@ -294,11 +352,129 @@ function pickRarityLabel(cape: DisplayCape) {
   return (cape.rarity_label?.trim() || fallback).toUpperCase();
 }
 
-function pickRarityGradient(cape: DisplayCape) {
-  const start = cape.rarity_color_start || 'rgba(138, 92, 255, 0.42)';
-  const end = cape.rarity_color_end || 'rgba(37, 27, 63, 0.92)';
-  const glow = cape.rarity_glow || 'rgba(138, 92, 255, 0.34)';
-  return { start, end, glow };
+function pickRarityGradient(cape: DisplayCape, shopRarityTheme: ShopRarityThemeSettings) {
+  const fallback = {
+    start: cape.rarity_color_start || 'rgba(138, 92, 255, 0.42)',
+    end: cape.rarity_color_end || 'rgba(37, 27, 63, 0.92)',
+    glow: cape.rarity_glow || 'rgba(138, 92, 255, 0.34)'
+  };
+  return resolveShopRarityColors(cape.rarity, fallback, shopRarityTheme);
+}
+
+const CAPE_SECTION_ORDER: CapeSectionKey[] = [
+  'partners',
+  'featured',
+  'unique',
+  'mythic',
+  'legendary',
+  'epic',
+  'uncommon',
+  'common',
+  'custom'
+];
+
+function resolveCapeSectionKey(cape: DisplayCape): CapeSectionKey {
+  if ((cape.partner_group || '').trim()) return 'partners';
+  if (cape.is_featured) return 'featured';
+  const rarity = normalizeRarityDisplay(cape.rarity || '');
+  switch (rarity) {
+    case 'partner':
+      return 'partners';
+    case 'featured':
+      return 'featured';
+    case 'unique':
+      return 'unique';
+    case 'mythic':
+      return 'mythic';
+    case 'legendary':
+      return 'legendary';
+    case 'epic':
+      return 'epic';
+    case 'uncommon':
+      return 'uncommon';
+    case 'common':
+      return 'common';
+    default:
+      return 'custom';
+  }
+}
+
+function formatCapeSectionLabel(key: CapeSectionKey) {
+  switch (key) {
+    case 'partners':
+      return 'PARTNERS';
+    case 'featured':
+      return 'FEATURED';
+    case 'unique':
+      return 'UNIQUE';
+    case 'mythic':
+      return 'MYTHIC';
+    case 'legendary':
+      return 'LEGENDARY';
+    case 'epic':
+      return 'EPIC';
+    case 'uncommon':
+      return 'UNCOMMON';
+    case 'common':
+      return 'COMMON';
+    case 'custom':
+      return 'CUSTOM';
+  }
+}
+
+function pickCapeSectionColor(key: CapeSectionKey, items: DisplayCape[], shopRarityTheme: ShopRarityThemeSettings) {
+  const first = items[0];
+  const fallback = {
+    start:
+      first?.rarity_color_start ||
+      (key === 'partners'
+        ? '#f2b38f'
+        : key === 'featured'
+          ? '#f5df8a'
+          : key === 'unique'
+            ? '#8f86ff'
+            : key === 'mythic'
+              ? '#ff69d6'
+              : key === 'legendary'
+                ? '#f3ac2a'
+                : key === 'epic'
+                  ? '#a979ff'
+                  : key === 'uncommon'
+                    ? '#91ff7a'
+                    : key === 'common'
+                      ? '#d5d7de'
+                      : '#f472b6'),
+    end: first?.rarity_color_end || 'rgba(18, 18, 24, 0.92)',
+    glow: first?.rarity_glow || 'rgba(255, 255, 255, 0.18)'
+  };
+  return resolveShopRarityColors(key, fallback, shopRarityTheme).start;
+}
+
+function groupCapesForDisplay(capes: DisplayCape[], shopRarityTheme: ShopRarityThemeSettings) {
+  const buckets = new Map<CapeSectionKey, DisplayCape[]>();
+  for (const cape of capes) {
+    const key = resolveCapeSectionKey(cape);
+    const existing = buckets.get(key);
+    if (existing) existing.push(cape);
+    else buckets.set(key, [cape]);
+  }
+
+  return CAPE_SECTION_ORDER
+    .map<CapeSection | null>((key) => {
+      const items = buckets.get(key);
+      if (!items?.length) return null;
+      const sorted = [...items].sort((a, b) => {
+        if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+        return a.name.localeCompare(b.name);
+      });
+      return {
+        key,
+        label: formatCapeSectionLabel(key),
+        color: pickCapeSectionColor(key, sorted, shopRarityTheme),
+        items: sorted
+      };
+    })
+    .filter((section): section is CapeSection => section !== null);
 }
 
 function toDisplayFromOwned(owned: OwnedCapeRecord): DisplayCape {
@@ -316,6 +492,14 @@ function toDisplayFromOwned(owned: OwnedCapeRecord): DisplayCape {
     rarity_color_start: owned.rarity_color_start,
     rarity_color_end: owned.rarity_color_end,
     rarity_glow: owned.rarity_glow,
+    render_pos_x: owned.render_pos_x,
+    render_pos_y: owned.render_pos_y,
+    render_pos_z: owned.render_pos_z,
+    render_rot_x: owned.render_rot_x,
+    render_rot_y: owned.render_rot_y,
+    render_rot_z: owned.render_rot_z,
+    render_depth_z: owned.render_depth_z,
+    render_brightness: owned.render_brightness,
     sort_order: owned.sort_order,
     is_active: owned.is_active,
     owned: true,
@@ -354,7 +538,56 @@ function toOwnerCapeEditDraft(cape: DisplayCape): OwnerCapeEditDraft {
     rarity_color_start: cape.rarity_color_start,
     rarity_color_end: cape.rarity_color_end,
     rarity_glow: cape.rarity_glow,
+    render_pos_x: cape.render_pos_x ?? 0,
+    render_pos_y: cape.render_pos_y ?? 0,
+    render_pos_z: cape.render_pos_z ?? 0,
+    render_rot_x: cape.render_rot_x ?? 0,
+    render_rot_y: cape.render_rot_y ?? -38,
+    render_rot_z: cape.render_rot_z ?? 0,
+    render_depth_z: cape.render_depth_z ?? 0,
+    render_brightness: cape.render_brightness ?? 1,
     sort_order: cape.sort_order,
+    is_active: cape.is_active ?? true,
+    is_featured: Boolean(cape.is_featured)
+  };
+}
+
+function toRenderPoseOverride(editor: OwnerCapeEditDraft) {
+  return {
+    render_pos_x: Number.isFinite(Number(editor.render_pos_x)) ? Number(editor.render_pos_x) : 0,
+    render_pos_y: Number.isFinite(Number(editor.render_pos_y)) ? Number(editor.render_pos_y) : 0,
+    render_pos_z: Number.isFinite(Number(editor.render_pos_z)) ? Number(editor.render_pos_z) : 0,
+    render_rot_x: Number.isFinite(Number(editor.render_rot_x)) ? Number(editor.render_rot_x) : 0,
+    render_rot_y: Number.isFinite(Number(editor.render_rot_y)) ? Number(editor.render_rot_y) : -38,
+    render_rot_z: Number.isFinite(Number(editor.render_rot_z)) ? Number(editor.render_rot_z) : 0,
+    render_depth_z: Number.isFinite(Number(editor.render_depth_z)) ? Number(editor.render_depth_z) : 0,
+    render_brightness: Number.isFinite(Number(editor.render_brightness)) ? Number(editor.render_brightness) : 1
+  };
+}
+
+function toUpdateCapeInput(cape: DisplayCape, poseOverride?: ReturnType<typeof toRenderPoseOverride>): UpdateCapeInput {
+  return {
+    slug: cape.slug.trim().toLowerCase(),
+    name: cape.name.trim(),
+    description: cape.description?.trim() || null,
+    partner_group: cape.partner_group?.trim() || null,
+    texture_url: cape.texture_url.trim(),
+    preview_url: cape.preview_url?.trim() || null,
+    price_bb: Math.max(0, Number(cape.price_bb) || 0),
+    rarity: cape.rarity.trim().toLowerCase(),
+    rarity_label: cape.rarity_label?.trim() || null,
+    rarity_color_start: cape.rarity_color_start?.trim() || null,
+    rarity_color_end: cape.rarity_color_end?.trim() || null,
+    rarity_glow: cape.rarity_glow?.trim() || null,
+    render_pos_x: poseOverride?.render_pos_x ?? (Number.isFinite(Number(cape.render_pos_x)) ? Number(cape.render_pos_x) : 0),
+    render_pos_y: poseOverride?.render_pos_y ?? (Number.isFinite(Number(cape.render_pos_y)) ? Number(cape.render_pos_y) : 0),
+    render_pos_z: poseOverride?.render_pos_z ?? (Number.isFinite(Number(cape.render_pos_z)) ? Number(cape.render_pos_z) : 0),
+    render_rot_x: poseOverride?.render_rot_x ?? (Number.isFinite(Number(cape.render_rot_x)) ? Number(cape.render_rot_x) : 0),
+    render_rot_y: poseOverride?.render_rot_y ?? (Number.isFinite(Number(cape.render_rot_y)) ? Number(cape.render_rot_y) : -38),
+    render_rot_z: poseOverride?.render_rot_z ?? (Number.isFinite(Number(cape.render_rot_z)) ? Number(cape.render_rot_z) : 0),
+    render_depth_z: poseOverride?.render_depth_z ?? (Number.isFinite(Number(cape.render_depth_z)) ? Number(cape.render_depth_z) : 0),
+    render_brightness: poseOverride?.render_brightness ?? (Number.isFinite(Number(cape.render_brightness)) ? Number(cape.render_brightness) : 1),
+    sort_order: Number(cape.sort_order) || 0,
     is_active: cape.is_active ?? true,
     is_featured: Boolean(cape.is_featured)
   };
@@ -409,6 +642,7 @@ function normalizePreviewAppearance(value: PreviewAppearanceRecord): PreviewAppe
 }
 
 export function CosmeticLocker() {
+  const [shopRarityTheme, setShopRarityTheme] = useState<ShopRarityThemeSettings>(() => readShopRarityThemeSettings());
   const navigate = useNavigate();
   const location = useLocation();
   const { authState, startLogin } = useAuth();
@@ -416,7 +650,7 @@ export function CosmeticLocker() {
   const [activeCategory, setActiveCategory] = useState<LockerCategory>('capes');
   const [selectedPartnerGroup, setSelectedPartnerGroup] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [rarityFilter, setRarityFilter] = useState<string | null>(null);
+  const [rarityFilter] = useState<string | null>(null);
   const [shopCapes, setShopCapes] = useState<CapeRecord[]>([]);
   const [partnerGroupRecords, setPartnerGroupRecords] = useState<PartnerGroupRecord[]>([]);
   const [ownedCapes, setOwnedCapes] = useState<OwnedCapeRecord[]>([]);
@@ -447,6 +681,7 @@ export function CosmeticLocker() {
   const [ownerAppearancePanelOpen, setOwnerAppearancePanelOpen] = useState(false);
   const [ownerCapeEditor, setOwnerCapeEditor] = useState<OwnerCapeEditDraft | null>(null);
   const [ownerCapeEditorSection, setOwnerCapeEditorSection] = useState<OwnerCapeEditorSection>('identity');
+  const [sharedCardPose, setSharedCardPose] = useState<SharedCardPose | null>(null);
   const [ownerEditSaving, setOwnerEditSaving] = useState(false);
   const [tagPresets, setTagPresets] = useState<TagPreset[]>([]);
   const [tagPresetNameInput, setTagPresetNameInput] = useState('');
@@ -458,6 +693,26 @@ export function CosmeticLocker() {
   const [previewAppearance, setPreviewAppearance] = useState<PreviewAppearanceRecord>(DEFAULT_PREVIEW_APPEARANCE);
   const [previewAppearanceSaving, setPreviewAppearanceSaving] = useState(false);
   const previewAppearanceWriteTimerRef = useRef<number | null>(null);
+  const middlePanelRef = useRef<HTMLDivElement | null>(null);
+  const sectionRefs = useRef(new Map<CapeSectionKey, HTMLDivElement | null>());
+  const [activeVisibleSection, setActiveVisibleSection] = useState<CapeSectionKey | null>(null);
+  const [dialogState, setDialogState] = useState<BloomDialogState | null>(null);
+
+  useEffect(() => {
+    const onShopRarityThemeChange = (event: Event) => {
+      const custom = event as CustomEvent<ShopRarityThemeSettings>;
+      if (custom.detail) setShopRarityTheme(custom.detail);
+      else setShopRarityTheme(readShopRarityThemeSettings());
+    };
+    window.addEventListener(SHOP_RARITY_THEME_CHANGE_EVENT, onShopRarityThemeChange as EventListener);
+    return () => window.removeEventListener(SHOP_RARITY_THEME_CHANGE_EVENT, onShopRarityThemeChange as EventListener);
+  }, []);
+
+  const jumpToSection = (key: CapeSectionKey) => {
+    const target = sectionRefs.current.get(key);
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   const ownedSourcesByCapeId = useMemo(() => {
     const map = new Map<string, string>();
@@ -467,7 +722,25 @@ export function CosmeticLocker() {
     return map;
   }, [ownedCapes]);
   const ownedIds = useMemo(() => new Set(ownedSourcesByCapeId.keys()), [ownedSourcesByCapeId]);
-  const ownedDisplay = useMemo(() => ownedCapes.map((cape) => toDisplayFromOwned(cape)), [ownedCapes]);
+  const ownedDisplay = useMemo(() => {
+    const byCapeId = new Map(shopCapes.map((cape) => [cape.id, cape] as const));
+    return ownedCapes.map((owned) => {
+      const merged = toDisplayFromOwned(owned);
+      const shop = byCapeId.get(owned.cape_id);
+      if (!shop) return merged;
+      return {
+        ...merged,
+        render_pos_x: shop.render_pos_x,
+        render_pos_y: shop.render_pos_y,
+        render_pos_z: shop.render_pos_z,
+        render_rot_x: shop.render_rot_x,
+        render_rot_y: shop.render_rot_y,
+        render_rot_z: shop.render_rot_z,
+        render_depth_z: shop.render_depth_z,
+        render_brightness: shop.render_brightness
+      };
+    });
+  }, [ownedCapes, shopCapes]);
   const shopDisplay = useMemo(
     () => shopCapes.map((cape) => toDisplayFromShop(cape, ownedSourcesByCapeId)),
     [shopCapes, ownedSourcesByCapeId]
@@ -520,17 +793,66 @@ export function CosmeticLocker() {
   }, [partnerGroups, selectedPartnerGroup]);
 
   const activeList = activeTab === 'locker' ? lockerList : activeTab === 'shop' ? shopList : activeTab === 'partners' ? partnersList : [];
+  const activeSections = useMemo(() => groupCapesForDisplay(activeList, shopRarityTheme), [activeList, shopRarityTheme]);
   const selectedCape = useMemo(
     () => [...shopDisplay, ...ownedDisplay].find((cape) => cape.id === selectedCapeId) ?? null,
     [ownedDisplay, selectedCapeId, shopDisplay]
   );
 
-  const rarityOptions = useMemo(() => {
-    const base = activeTab === 'locker' ? lockerList : shopDisplay;
-    const values = Array.from(new Set(base.map((cape) => cape.rarity.toLowerCase())));
-    values.sort((a, b) => a.localeCompare(b));
-    return values;
-  }, [activeTab, lockerList, shopDisplay]);
+  const resolveCardPose = (cape: DisplayCape): SharedCardPose => {
+    if (sharedCardPose) return sharedCardPose;
+    return {
+      x: cape.render_pos_x ?? 0,
+      y: cape.render_pos_y ?? 0,
+      z: cape.render_pos_z ?? 0,
+      rotX: cape.render_rot_x ?? 0,
+      rotY: cape.render_rot_y ?? -38,
+      rotZ: cape.render_rot_z ?? 0,
+      depth: cape.render_depth_z ?? 0,
+      brightness: cape.render_brightness ?? 1
+    };
+  };
+
+  useEffect(() => {
+    setActiveVisibleSection(activeSections[0]?.key ?? null);
+  }, [activeSections, activeTab]);
+
+  useEffect(() => {
+    const container = middlePanelRef.current;
+    if (!container || activeSections.length === 0) return;
+
+    const updateActiveSection = () => {
+      const containerTop = container.getBoundingClientRect().top;
+      let bestKey = activeSections[0]?.key ?? null;
+      let bestDistance = Number.POSITIVE_INFINITY;
+
+      for (const section of activeSections) {
+        const node = sectionRefs.current.get(section.key);
+        if (!node) continue;
+        const nodeTop = node.getBoundingClientRect().top;
+        const distance = Math.abs(nodeTop - (containerTop + 28));
+        if (nodeTop <= containerTop + 56 && distance <= bestDistance) {
+          bestDistance = distance;
+          bestKey = section.key;
+        }
+      }
+
+      if (!bestKey) {
+        bestKey = activeSections[0]?.key ?? null;
+      }
+
+      setActiveVisibleSection((current) => (current === bestKey ? current : bestKey));
+    };
+
+    updateActiveSection();
+    container.addEventListener('scroll', updateActiveSection, { passive: true });
+    window.addEventListener('resize', updateActiveSection);
+    return () => {
+      container.removeEventListener('scroll', updateActiveSection);
+      window.removeEventListener('resize', updateActiveSection);
+    };
+  }, [activeSections]);
+
   const isOwner = commerceProfile?.role === 'owner';
   const capeSqlReady =
     capeSqlDraft.slug.trim().length > 0 &&
@@ -827,6 +1149,12 @@ export function CosmeticLocker() {
   }, [activeTab, authState]);
 
   useEffect(() => {
+    const preload = activeList.slice(0, 180);
+    if (!preload.length) return;
+    void Promise.allSettled(preload.map((cape) => capeTextureLoader.loadFull(cape.slug, cape.texture_url)));
+  }, [activeList]);
+
+  useEffect(() => {
     if (!authState || activeTab !== 'wallet') return;
     let cancelled = false;
     void loadCurrencyPacks()
@@ -862,6 +1190,28 @@ export function CosmeticLocker() {
       unsubscribe();
     };
   }, [authState]);
+
+  useEffect(() => {
+    if (!authState) return;
+    let cancelled = false;
+    const syncCapes = () => {
+      const reload = activeTab === 'partners' ? loadShopCapes('', null) : loadShopCapes(searchQuery, rarityFilter);
+      void reload
+        .then((rows) => {
+          if (cancelled) return;
+          setShopCapes(rows);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setErrorMessage(formatUiError(error));
+        });
+    };
+    const unsubscribe = subscribeCapes(syncCapes);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [activeTab, authState, rarityFilter, searchQuery]);
 
   useEffect(() => {
     if (!supabaseUserId) return;
@@ -1149,6 +1499,12 @@ export function CosmeticLocker() {
     selectOwnerCapeEditorCape(capeId);
   };
 
+  const openOwnerCapeRenderEditor = (capeId: string) => {
+    setOwnerContextMenu(null);
+    selectOwnerCapeEditorCape(capeId);
+    setOwnerCapeEditorSection('render');
+  };
+
   const applyTagPreset = (preset: TagPreset) => {
     setOwnerCapeEditor((current) =>
       current
@@ -1210,26 +1566,49 @@ export function CosmeticLocker() {
     setOwnerEditSaving(true);
     setErrorMessage(null);
     try {
-      const updatedCape = await updateCapeListing(ownerCapeEditor.id, {
-        slug: ownerCapeEditor.slug.trim().toLowerCase(),
-        name: ownerCapeEditor.name.trim(),
-        description: ownerCapeEditor.description?.trim() || null,
-        partner_group: ownerCapeEditor.partner_group?.trim() || null,
-        texture_url: ownerCapeEditor.texture_url.trim(),
-        preview_url: ownerCapeEditor.preview_url?.trim() || null,
-        price_bb: Math.max(0, Number(ownerCapeEditor.price_bb) || 0),
-        rarity: ownerCapeEditor.rarity.trim().toLowerCase(),
-        rarity_label: ownerCapeEditor.rarity_label?.trim() || null,
-        rarity_color_start: ownerCapeEditor.rarity_color_start?.trim() || null,
-        rarity_color_end: ownerCapeEditor.rarity_color_end?.trim() || null,
-        rarity_glow: ownerCapeEditor.rarity_glow?.trim() || null,
-        sort_order: Number(ownerCapeEditor.sort_order) || 0,
-        is_active: ownerCapeEditor.is_active,
-        is_featured: ownerCapeEditor.is_featured
+      const poseOverride = toRenderPoseOverride(ownerCapeEditor);
+      const currentAsDisplay: DisplayCape = {
+        ...ownerCapeEditor,
+        owned: true,
+        ownedSource: 'owner_edit'
+      };
+      const updatedCape = await updateCapeListing(ownerCapeEditor.id, toUpdateCapeInput(currentAsDisplay, poseOverride));
+
+      const allCapeIds = await loadAllCapeIdsForOwner();
+      await Promise.all(
+        allCapeIds
+          .filter((capeId) => capeId !== ownerCapeEditor.id)
+          .map((capeId) =>
+            updateCapeRenderPose(capeId, {
+              render_pos_x: poseOverride.render_pos_x,
+              render_pos_y: poseOverride.render_pos_y,
+              render_pos_z: poseOverride.render_pos_z,
+              render_rot_x: poseOverride.render_rot_x,
+              render_rot_y: poseOverride.render_rot_y,
+              render_rot_z: poseOverride.render_rot_z,
+              render_depth_z: poseOverride.render_depth_z,
+              render_brightness: poseOverride.render_brightness
+            })
+          )
+      );
+
+      const [refreshedShop, refreshedOwned] = await Promise.all([
+        loadShopCapes('', null),
+        loadOwnedCapes()
+      ]);
+      setShopCapes(refreshedShop);
+      setOwnedCapes(refreshedOwned);
+      setSharedCardPose({
+        x: poseOverride.render_pos_x,
+        y: poseOverride.render_pos_y,
+        z: poseOverride.render_pos_z,
+        rotX: poseOverride.render_rot_x,
+        rotY: poseOverride.render_rot_y,
+        rotZ: poseOverride.render_rot_z,
+        depth: poseOverride.render_depth_z,
+        brightness: poseOverride.render_brightness
       });
-      const refreshed = await loadShopCapes(searchQuery, rarityFilter);
-      setShopCapes(refreshed);
-      setStatusMessage(`Cape updated: ${ownerCapeEditor.name}`);
+      setStatusMessage(`Render pose synced to ${allCapeIds.length} cape cards.`);
       setOwnerCapeEditor({
         id: updatedCape.id,
         slug: updatedCape.slug,
@@ -1244,6 +1623,14 @@ export function CosmeticLocker() {
         rarity_color_start: updatedCape.rarity_color_start,
         rarity_color_end: updatedCape.rarity_color_end,
         rarity_glow: updatedCape.rarity_glow,
+        render_pos_x: updatedCape.render_pos_x,
+        render_pos_y: updatedCape.render_pos_y,
+        render_pos_z: updatedCape.render_pos_z,
+        render_rot_x: updatedCape.render_rot_x,
+        render_rot_y: updatedCape.render_rot_y,
+        render_rot_z: updatedCape.render_rot_z,
+        render_depth_z: updatedCape.render_depth_z,
+        render_brightness: updatedCape.render_brightness,
         sort_order: updatedCape.sort_order,
         is_active: updatedCape.is_active,
         is_featured: updatedCape.is_featured
@@ -1257,8 +1644,10 @@ export function CosmeticLocker() {
 
   const handleDeleteShopCape = async (cape: DisplayCape) => {
     if (!isOwner) return;
-    const confirmed = window.confirm(`Delete "${cape.name}" from all shop views?`);
-    if (!confirmed) return;
+    setDialogState({ kind: 'confirm-delete-shop', cape });
+  };
+
+  const confirmDeleteShopCape = async (cape: DisplayCape) => {
     setActionBusy(true);
     setErrorMessage(null);
     try {
@@ -1273,13 +1662,16 @@ export function CosmeticLocker() {
       setErrorMessage(formatUiError(error));
     } finally {
       setActionBusy(false);
+      setDialogState(null);
     }
   };
 
   const handleDeleteOwnCustomCape = async (cape: DisplayCape) => {
     if (!cape.owned || cape.ownedSource !== 'custom_export') return;
-    const typed = window.prompt(`type confirm to delete this cape forever:\n${cape.name}`);
-    if ((typed ?? '').trim().toLowerCase() !== 'confirm') return;
+    setDialogState({ kind: 'confirm-delete-custom', cape, input: '' });
+  };
+
+  const confirmDeleteOwnCustomCape = async (cape: DisplayCape) => {
     setActionBusy(true);
     setErrorMessage(null);
     try {
@@ -1294,6 +1686,7 @@ export function CosmeticLocker() {
       setErrorMessage(formatUiError(error));
     } finally {
       setActionBusy(false);
+      setDialogState(null);
     }
   };
 
@@ -1525,6 +1918,36 @@ export function CosmeticLocker() {
                     </button>
                   </div>
                 )}
+                {activeSections.length > 0 && (
+                  <div className="mt-4 rounded-xl border border-[rgba(105,112,124,0.16)] bg-white/[0.02] p-2.5 shadow-none">
+                    <p className="text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/45">Jump To Tag</p>
+                    <div className="mt-2 space-y-1.5">
+                        {activeSections.map((section) => (
+                          <button
+                            key={section.key}
+                            onClick={() => jumpToSection(section.key)}
+                            className={clsx(
+                              'relative overflow-hidden rounded-lg px-3 py-2.5 text-left transition-all duration-200',
+                              activeVisibleSection === section.key
+                                ? 'w-[calc(100%+10px)] pr-6 bg-white/[0.055]'
+                                : 'w-full bg-white/[0.015] hover:bg-white/[0.04]'
+                            )}
+                          >
+                            <div
+                              aria-hidden
+                              className="absolute inset-y-0 right-0 w-[48%]"
+                              style={{
+                              background: `linear-gradient(270deg, ${section.color} 0%, color-mix(in srgb, ${section.color} 52%, transparent) 20%, color-mix(in srgb, ${section.color} 20%, transparent) 46%, transparent 78%)`
+                            }}
+                            />
+                            <span className="relative z-[1] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/86">
+                              {section.label}
+                            </span>
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <>
@@ -1541,32 +1964,36 @@ export function CosmeticLocker() {
                     <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-white/84">Capes</p>
                   </button>
                 </div>
-                <div className="mt-4">
-                  <p className="text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/45">Rarity Filter</p>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    <button
-                      onClick={() => setRarityFilter(null)}
-                      className={clsx(
-                        'rounded-md border px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.1em]',
-                        rarityFilter === null ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03] text-white/70'
-                      )}
-                    >
-                      All
-                    </button>
-                    {rarityOptions.map((rarity) => (
-                      <button
-                        key={rarity}
-                        onClick={() => setRarityFilter(rarity)}
-                        className={clsx(
-                          'rounded-md border px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.1em]',
-                          rarityFilter === rarity ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03] text-white/70'
-                        )}
-                      >
-                        {normalizeRarityDisplay(rarity)}
-                      </button>
-                    ))}
+                {activeSections.length > 0 && (
+                  <div className="mt-4 rounded-xl border border-[rgba(105,112,124,0.16)] bg-white/[0.02] p-2.5 shadow-none">
+                    <p className="text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/45">Jump To Tag</p>
+                    <div className="mt-2 space-y-1.5">
+                        {activeSections.map((section) => (
+                          <button
+                            key={section.key}
+                            onClick={() => jumpToSection(section.key)}
+                            className={clsx(
+                              'relative overflow-hidden rounded-lg px-3 py-2.5 text-left transition-all duration-200',
+                              activeVisibleSection === section.key
+                                ? 'w-[calc(100%+10px)] pr-6 bg-white/[0.055]'
+                                : 'w-full bg-white/[0.015] hover:bg-white/[0.04]'
+                            )}
+                          >
+                            <div
+                              aria-hidden
+                              className="absolute inset-y-0 right-0 w-[48%]"
+                              style={{
+                              background: `linear-gradient(270deg, ${section.color} 0%, color-mix(in srgb, ${section.color} 52%, transparent) 20%, color-mix(in srgb, ${section.color} 20%, transparent) 46%, transparent 78%)`
+                            }}
+                            />
+                            <span className="relative z-[1] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/86">
+                              {section.label}
+                            </span>
+                          </button>
+                        ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </>
             )}
           </aside>
@@ -1578,10 +2005,10 @@ export function CosmeticLocker() {
               </p>
               {shopLoading && <p className="text-[11px] text-white/55">Refreshing catalog...</p>}
             </div>
-            <div className="mt-3 flex-1 min-h-0 overflow-y-auto">
+            <div ref={middlePanelRef} className="mt-3 flex-1 min-h-0 overflow-y-auto">
               {loading ? (
                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/60">Loading cosmetics...</div>
-              ) : activeList.length === 0 ? (
+              ) : activeSections.length === 0 ? (
                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/62">
                   {activeTab === 'locker'
                     ? 'No owned capes yet. Buy one in Shop and it will appear here immediately.'
@@ -1590,98 +2017,124 @@ export function CosmeticLocker() {
                     : 'No capes match this filter.'}
                 </div>
               ) : (
-                <div className="pl-6 pr-2 pb-4 pt-6">
-                  <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-3">
-                    {activeList.map((cape) => {
-                      const rarityVisual = pickRarityGradient(cape);
-                      const isSelected = cape.id === selectedCapeId;
-                      const isEquipped = cape.id === equippedCapeId;
-                      return (
-                        <button
-                          key={cape.id}
-                          onClick={() => setSelectedCapeId(cape.id)}
-                          onContextMenu={(event) => {
-                            if (!isOwner) return;
-                            event.preventDefault();
-                            setOwnerPreviewContextMenu(null);
-                            setOwnerContextMenu({ x: event.clientX, y: event.clientY, capeId: cape.id });
-                          }}
-                          className={clsx(
-                            'relative overflow-hidden rounded-xl border text-left transition aspect-square min-w-0',
-                            isSelected
-                              ? 'border-[var(--g-accent)] shadow-[0_0_0_1px_var(--g-accent-soft),0_14px_30px_rgba(0,0,0,0.38)]'
-                              : 'border-white/10 hover:border-white/25'
-                          )}
-                          style={{
-                            background: `linear-gradient(160deg, ${rarityVisual.start}, ${rarityVisual.end})`,
-                            boxShadow: isSelected ? `0 0 0 1px var(--g-accent-soft), 0 0 26px ${rarityVisual.glow}` : `0 0 20px ${rarityVisual.glow}`
-                          }}
+                <div className="pl-6 pr-2 pb-4 pt-6 space-y-6">
+                  {activeSections.map((section) => (
+                    <div
+                      key={section.key}
+                      ref={(node) => {
+                        sectionRefs.current.set(section.key, node);
+                      }}
+                      className="space-y-3 scroll-mt-6"
+                    >
+                      <div className="flex items-center gap-4 pr-2">
+                        <span
+                          className="shrink-0 text-[12px] font-black uppercase tracking-[0.18em]"
+                          style={{ color: section.color }}
                         >
-                          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.18),transparent_56%)]" />
-                          {isOwner && activeTab === 'shop' && (
+                          {section.label}
+                        </span>
+                        <div
+                          className="h-px flex-1"
+                          style={{
+                            background: `linear-gradient(90deg, ${section.color} 0%, color-mix(in srgb, ${section.color} 55%, transparent) 28%, transparent 100%)`
+                          }}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-3">
+                        {section.items.map((cape) => {
+                          const rarityVisual = pickRarityGradient(cape, shopRarityTheme);
+                          const isSelected = cape.id === selectedCapeId;
+                          const isEquipped = cape.id === equippedCapeId;
+                          return (
                             <button
-                              onClick={(event) => {
+                              key={cape.id}
+                              onClick={() => setSelectedCapeId(cape.id)}
+                              onContextMenu={(event) => {
+                                if (!isOwner) return;
                                 event.preventDefault();
-                                event.stopPropagation();
-                                void handleDeleteShopCape(cape);
+                                setOwnerPreviewContextMenu(null);
+                                setOwnerContextMenu({ x: event.clientX, y: event.clientY, capeId: cape.id });
                               }}
-                              className="absolute right-2 top-2 z-[3] h-7 w-7 rounded-md border border-red-300/40 bg-red-500/20 text-red-100 hover:bg-red-500/30 flex items-center justify-center"
-                              title="Delete from shop"
-                              aria-label={`Delete ${cape.name} from shop`}
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          )}
-                          {cape.owned && cape.ownedSource === 'custom_export' && (
-                            <button
-                              onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                void handleDeleteOwnCustomCape(cape);
+                              className={clsx(
+                                'relative overflow-hidden rounded-xl border text-left transition aspect-square min-w-0',
+                                isSelected
+                                  ? 'border-[var(--g-accent)] shadow-[0_0_0_1px_var(--g-accent-soft),0_14px_30px_rgba(0,0,0,0.38)]'
+                                  : 'border-white/10 hover:border-white/25'
+                              )}
+                              style={{
+                                background: `linear-gradient(160deg, ${rarityVisual.start}, ${rarityVisual.end})`,
+                                boxShadow: isSelected ? `0 0 0 1px var(--g-accent-soft), 0 0 26px ${rarityVisual.glow}` : `0 0 20px ${rarityVisual.glow}`
                               }}
-                              className="absolute right-2 top-10 z-[3] h-7 w-7 rounded-md border border-red-300/40 bg-red-500/20 text-red-100 hover:bg-red-500/30 flex items-center justify-center"
-                              title="Delete forever (type confirm)"
-                              aria-label={`Delete ${cape.name} forever`}
                             >
-                              <Trash2 size={13} />
-                            </button>
-                          )}
-                          <div className="absolute -top-[2px] left-0 z-[2]">
-                            <span className="rounded-md border border-white/25 bg-black/35 px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-white/90 leading-none">
-                              {pickRarityLabel(cape)}
-                            </span>
-                          </div>
-                          <div className="relative p-2 h-full flex flex-col">
-                            <div className="flex-1 border border-white/15 bg-black/28 overflow-hidden">
-                              <CapeMeshRenderer
-                                slug={cape.slug}
-                                textureUrl={cape.texture_url}
-                                name={cape.name}
-                                glowColor={rarityVisual.glow}
-                                sway={false}
-                                className="h-full w-full"
-                              />
-                            </div>
-                            <div className="mt-1.5 rounded-lg border border-white/15 bg-black/35 px-2 py-1.5">
-                              <div className="flex items-start justify-between gap-2">
-                                <p className="text-[12px] font-extrabold text-white leading-tight truncate">{cape.name}</p>
-                                {isEquipped ? (
-                                  <span className="rounded-md border border-emerald-300/45 bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.1em] text-emerald-100">Equipped</span>
-                                ) : cape.owned ? (
-                                  <span className="rounded-md border border-emerald-300/45 bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.1em] text-emerald-100">Owned</span>
-                                ) : (
-                                  <span className="rounded-md border border-white/20 bg-white/10 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.1em] text-white/70">
-                                    {cape.price_bb.toLocaleString()} BB
-                                  </span>
-                                )}
+                              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.18),transparent_56%)]" />
+                              {isOwner && activeTab === 'shop' && (
+                                <button
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    void handleDeleteShopCape(cape);
+                                  }}
+                                  className="absolute right-2 top-2 z-[3] h-7 w-7 rounded-md border border-red-300/40 bg-red-500/20 text-red-100 hover:bg-red-500/30 flex items-center justify-center"
+                                  title="Delete from shop"
+                                  aria-label={`Delete ${cape.name} from shop`}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
+                              {cape.owned && cape.ownedSource === 'custom_export' && (
+                                <button
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    void handleDeleteOwnCustomCape(cape);
+                                  }}
+                                  className="absolute right-2 top-10 z-[3] h-7 w-7 rounded-md border border-red-300/40 bg-red-500/20 text-red-100 hover:bg-red-500/30 flex items-center justify-center"
+                                  title="Delete forever (type confirm)"
+                                  aria-label={`Delete ${cape.name} forever`}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
+                              <div className="absolute -top-[2px] left-0 z-[2]">
+                                <span className="rounded-md border border-white/25 bg-black/35 px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-white/90 leading-none">
+                                  {pickRarityLabel(cape)}
+                                </span>
                               </div>
-                            </div>
-                          </div>
-                          <div className="h-1.5 w-full" style={{ background: `linear-gradient(90deg, ${rarityVisual.start}, ${rarityVisual.end})` }} />
-                        </button>
-                      );
-                    })}
-                  </div>
+                              <div className="relative p-2 h-full flex flex-col">
+                                <div className="flex-1 border border-white/15 bg-black/28 overflow-hidden">
+                                  <CapeMeshRenderer
+                                    slug={cape.slug}
+                                    textureUrl={cape.texture_url}
+                                    name={cape.name}
+                                    glowColor={rarityVisual.glow}
+                                    sway={false}
+                                    pose={resolveCardPose(cape)}
+                                    className="h-full w-full"
+                                  />
+                                </div>
+                                <div className="mt-1.5 rounded-lg border border-white/15 bg-black/35 px-2 py-1.5">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <p className="text-[12px] font-extrabold text-white leading-tight truncate">{cape.name}</p>
+                                    {isEquipped ? (
+                                      <span className="rounded-md border border-emerald-300/45 bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.1em] text-emerald-100">Equipped</span>
+                                    ) : cape.owned ? (
+                                      <span className="rounded-md border border-emerald-300/45 bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.1em] text-emerald-100">Owned</span>
+                                    ) : (
+                                      <span className="rounded-md border border-white/20 bg-white/10 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.1em] text-white/70">
+                                        {cape.price_bb.toLocaleString()} BB
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="h-1.5 w-full" style={{ background: `linear-gradient(90deg, ${rarityVisual.start}, ${rarityVisual.end})` }} />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -1778,6 +2231,12 @@ export function CosmeticLocker() {
             className="w-full rounded-lg border border-white/15 bg-white/[0.02] px-2.5 py-2 text-left text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/90 hover:bg-white/[0.09]"
           >
             Edit Cape
+          </button>
+          <button
+            onClick={() => openOwnerCapeRenderEditor(ownerContextMenu.capeId)}
+            className="mt-1.5 w-full rounded-lg border border-white/15 bg-white/[0.02] px-2.5 py-2 text-left text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/90 hover:bg-white/[0.09]"
+          >
+            Edit Render Pose
           </button>
         </div>
       )}
@@ -1879,6 +2338,7 @@ export function CosmeticLocker() {
                 ['identity', 'Identity'],
                 ['pricing', 'Pricing'],
                 ['appearance', 'Appearance'],
+                ['render', 'Render'],
                 ['presets', 'Presets']
               ] as Array<[OwnerCapeEditorSection, string]>).map(([key, label]) => (
                 <button
@@ -1897,7 +2357,7 @@ export function CosmeticLocker() {
               ))}
             </div>
 
-            <div className="mt-3 grid grid-cols-1 lg:grid-cols-[230px_minmax(0,1fr)] gap-3">
+            <div className="mt-3 grid grid-cols-1 lg:grid-cols-[230px_minmax(0,1fr)_280px] gap-3">
               <aside className="rounded-xl border border-white/15 bg-white/[0.02] p-3 min-h-0 max-h-[72vh] overflow-y-auto">
                 <p className="text-[10px] uppercase tracking-[0.14em] font-black text-white/45">Capes</p>
                 <div className="mt-2 space-y-1.5">
@@ -1927,6 +2387,9 @@ export function CosmeticLocker() {
                 </div>
                 <div className={clsx(ownerCapeEditorSection !== 'pricing' && 'hidden')}>
                   <p className="mb-2 text-[10px] uppercase tracking-[0.14em] font-black text-white/50">Pricing & Flags</p>
+                </div>
+                <div className={clsx(ownerCapeEditorSection !== 'render' && 'hidden')}>
+                  <p className="mb-2 text-[10px] uppercase tracking-[0.14em] font-black text-white/50">Card Render Pose</p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   <div className={clsx(ownerCapeEditorSection !== 'identity' && 'hidden', 'md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-2')}>
@@ -2041,6 +2504,45 @@ export function CosmeticLocker() {
                     />
                     is_featured
                   </label>
+                  </div>
+                  <div className={clsx(ownerCapeEditorSection !== 'render' && 'hidden', 'md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-2')}>
+                    {([
+                      ['render_pos_x', 'pos_x', -140, 140, 0.1],
+                      ['render_pos_y', 'pos_y', -140, 140, 0.1],
+                      ['render_pos_z', 'pos_z', -140, 140, 0.1],
+                      ['render_depth_z', 'depth_z', -220, 220, 0.1],
+                      ['render_rot_x', 'rot_x (deg)', -360, 360, 0.25],
+                      ['render_rot_y', 'rot_y (deg)', -360, 360, 0.25],
+                      ['render_rot_z', 'rot_z (deg)', -360, 360, 0.25],
+                      ['render_brightness', 'brightness', 0.1, 6, 0.01]
+                    ] as Array<[keyof OwnerCapeEditDraft, string, number, number, number]>).map(([key, label, min, max, step]) => (
+                      <div key={String(key)} className="rounded-lg border border-white/20 bg-black/35 px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-white/65">{label}</span>
+                          <input
+                            type="number"
+                            min={min}
+                            max={max}
+                            step={step}
+                            value={Number(ownerCapeEditor[key] ?? 0)}
+                            onChange={(event) => updateOwnerEditor(key, Number(event.target.value) as OwnerCapeEditDraft[keyof OwnerCapeEditDraft])}
+                            className="h-7 w-[92px] rounded-md border border-white/20 bg-black/35 px-2 text-xs text-white outline-none normal-case tracking-normal"
+                          />
+                        </div>
+                        <input
+                          type="range"
+                          min={min}
+                          max={max}
+                          step={step}
+                          value={Number(ownerCapeEditor[key] ?? 0)}
+                          onChange={(event) => updateOwnerEditor(key, Number(event.target.value) as OwnerCapeEditDraft[keyof OwnerCapeEditDraft])}
+                          className="mt-2 w-full accent-white"
+                        />
+                      </div>
+                    ))}
+                    <p className="md:col-span-2 text-[11px] text-white/58">
+                      Saving render pose syncs to all cape cards live for every client.
+                    </p>
                   </div>
                 </div>
 
@@ -2199,6 +2701,29 @@ export function CosmeticLocker() {
                   </button>
                 </div>
               </div>
+
+              <aside className="rounded-xl border border-white/15 bg-white/[0.02] p-3 h-fit">
+                <p className="text-[10px] uppercase tracking-[0.14em] font-black text-white/45">Live Card Preview</p>
+                <div className="mt-2 aspect-square border border-white/15 bg-black/35 overflow-hidden">
+                  <CapeMeshRenderer
+                    slug={ownerCapeEditor.slug}
+                    textureUrl={ownerCapeEditor.texture_url}
+                    name={ownerCapeEditor.name || 'Cape'}
+                    className="h-full w-full"
+                    pose={{
+                      x: ownerCapeEditor.render_pos_x ?? 0,
+                      y: ownerCapeEditor.render_pos_y ?? 0,
+                      z: ownerCapeEditor.render_pos_z ?? 0,
+                      rotX: ownerCapeEditor.render_rot_x ?? 0,
+                      rotY: ownerCapeEditor.render_rot_y ?? -38,
+                      rotZ: ownerCapeEditor.render_rot_z ?? 0,
+                      depth: ownerCapeEditor.render_depth_z ?? 0,
+                      brightness: ownerCapeEditor.render_brightness ?? 1
+                    }}
+                  />
+                </div>
+                <p className="mt-2 text-[11px] text-white/58">Updates instantly while you move sliders.</p>
+              </aside>
             </div>
           </div>
         </div>
@@ -2466,8 +2991,83 @@ export function CosmeticLocker() {
           </div>
         </div>
       )}
+
+      {dialogState && (
+        <div className="fixed inset-0 z-[530] flex items-center justify-center p-4 app-region-no-drag">
+          <div className="absolute inset-0 bg-black/78 backdrop-blur-md" onClick={() => !actionBusy && setDialogState(null)} />
+          <div className="relative w-full max-w-[520px] overflow-hidden rounded-[28px] border border-white/14 bg-[#09090b] shadow-[0_40px_100px_rgba(0,0,0,0.72)]">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_58%)] pointer-events-none" />
+            <div className="relative p-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/45">Bloom Cosmetics</p>
+                  <h3 className="mt-2 text-2xl font-extrabold text-white">
+                    {dialogState.kind === 'confirm-delete-shop' ? 'Delete Shop Listing' : 'Delete Custom Cape'}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => !actionBusy && setDialogState(null)}
+                  className="h-10 w-10 rounded-full border border-white/18 bg-white/[0.04] text-white/75 hover:bg-white/[0.08] disabled:opacity-40"
+                  disabled={actionBusy}
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-sm text-white/78">
+                  {dialogState.kind === 'confirm-delete-shop'
+                    ? <>Delete <span className="font-extrabold text-white">"{dialogState.cape.name}"</span> from all shop views?</>
+                    : <>Type <span className="font-extrabold text-white">confirm</span> to delete <span className="font-extrabold text-white">"{dialogState.cape.name}"</span> forever.</>}
+                </p>
+
+                {dialogState.kind === 'confirm-delete-custom' && (
+                  <input
+                    value={dialogState.input}
+                    onChange={(event) =>
+                      setDialogState((current) =>
+                        current?.kind === 'confirm-delete-custom' ? { ...current, input: event.target.value } : current
+                      )
+                    }
+                    placeholder="type confirm"
+                    className="mt-4 h-11 w-full rounded-xl border border-white/14 bg-black/35 px-4 text-sm text-white placeholder:text-white/32 outline-none"
+                  />
+                )}
+              </div>
+
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setDialogState(null)}
+                  disabled={actionBusy}
+                  className="h-11 rounded-xl border border-white/16 bg-white/[0.04] px-5 text-[11px] font-extrabold uppercase tracking-[0.16em] text-white/78 hover:bg-white/[0.08] disabled:opacity-40"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (dialogState.kind === 'confirm-delete-shop') {
+                      void confirmDeleteShopCape(dialogState.cape);
+                      return;
+                    }
+                    if (dialogState.input.trim().toLowerCase() !== 'confirm') return;
+                    void confirmDeleteOwnCustomCape(dialogState.cape);
+                  }}
+                  disabled={
+                    actionBusy ||
+                    (dialogState.kind === 'confirm-delete-custom' && dialogState.input.trim().toLowerCase() !== 'confirm')
+                  }
+                  className="h-11 rounded-xl border border-red-300/30 bg-red-500/18 px-5 text-[11px] font-extrabold uppercase tracking-[0.16em] text-red-100 hover:bg-red-500/24 disabled:opacity-40"
+                >
+                  {actionBusy ? 'Working...' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
-

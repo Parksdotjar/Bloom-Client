@@ -146,8 +146,7 @@ export function MinecraftPlayerPreview({
             height,
             bytes: 0,
             fromDiskCache: false,
-            generatedAt: Date.now(),
-            viaDirectUrl: true
+            generatedAt: Date.now()
           });
         })
         .catch(() => {

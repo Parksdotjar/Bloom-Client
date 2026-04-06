@@ -1,7 +1,7 @@
 import { open } from '@tauri-apps/plugin-dialog';
 import { FolderUp, Package2, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageWidgets, type PageWidget } from '../components/PageWidgets';
 import { TauriApi, type MarketplacePack } from '../services/tauri';
 import { useInstances } from '../hooks/useInstances';
@@ -18,6 +18,7 @@ function compactDownloads(value: number): string {
 
 export function Downloads() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { instances, loadInstances } = useInstances();
   const [query, setQuery] = useState('Fabulously Optimized');
   const [gameVersion, setGameVersion] = useState('1.21.1');
@@ -30,6 +31,7 @@ export function Downloads() {
   const [blockingTitle, setBlockingTitle] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const totalInstances = instances.length;
+  const [startupImportHandled, setStartupImportHandled] = useState(false);
 
   const featuredTitle = useMemo(() => {
     const top = results[0];
@@ -58,6 +60,51 @@ export function Downloads() {
       setSearching(false);
     }
   };
+
+  useEffect(() => {
+    if (startupImportHandled) return;
+    const pendingQueryPath = searchParams.get('open');
+    if (pendingQueryPath) {
+      setStartupImportHandled(true);
+      void (async () => {
+        setLocalImporting(true);
+        setBlockingTitle('Importing opened archive...');
+        setStatus(`Importing ${pendingQueryPath.split(/[\\/]/).pop() || 'archive'}...`);
+        try {
+          const instance = await TauriApi.importLocalModpackInstance(pendingQueryPath, gameVersion);
+          await loadInstances();
+          setStatus(`Imported ${instance.name} from opened archive.`);
+          setSearchParams((current) => {
+            const next = new URLSearchParams(current);
+            next.delete('open');
+            return next;
+          }, { replace: true });
+          navigate(`/instance-editor?id=${encodeURIComponent(instance.id)}`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setStatus(`Opened archive import failed: ${message}`);
+        } finally {
+          setLocalImporting(false);
+          setBlockingTitle(null);
+        }
+      })();
+      return;
+    }
+
+    void TauriApi.startupOpenFileTake()
+      .then((pendingPath) => {
+        if (!pendingPath) return;
+        setStartupImportHandled(true);
+        setSearchParams((current) => {
+          const next = new URLSearchParams(current);
+          next.set('open', pendingPath);
+          return next;
+        }, { replace: true });
+      })
+      .catch(() => {
+        setStartupImportHandled(true);
+      });
+  }, [gameVersion, loadInstances, navigate, searchParams, setSearchParams, startupImportHandled]);
 
   useEffect(() => {
     const onKeybindAction = (event: Event) => {
@@ -99,7 +146,7 @@ export function Downloads() {
     try {
       const selected = await open({
         multiple: false,
-        filters: [{ name: 'Modpacks', extensions: ['mrpack', 'zip'] }]
+        filters: [{ name: 'Modpacks', extensions: ['bloom', 'mrpack', 'zip'] }]
       });
       if (!selected || Array.isArray(selected)) return;
 
@@ -120,7 +167,7 @@ export function Downloads() {
     <section className="g-panel-strong p-6">
       <p className="text-[10px] uppercase tracking-[0.2em] font-extrabold g-accent-text">Importer</p>
       <h1 className="mt-1 text-5xl font-extrabold text-white">Modpack Importer</h1>
-      <p className="mt-1 text-sm g-muted">Pull Modrinth packs into a fresh instance or import a local `.mrpack` or `.zip`.</p>
+      <p className="mt-1 text-sm g-muted">Pull Modrinth packs into a fresh instance or import a local `.bloom`, `.mrpack`, or `.zip`.</p>
     </section>
   );
 
@@ -207,7 +254,7 @@ export function Downloads() {
     <section className="g-panel p-6 space-y-4">
       <div>
         <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/55">Local Archive Import</p>
-        <p className="mt-1 text-sm g-muted">Pick a local `.mrpack` or `.zip`. `.mrpack` imports will unpack overrides and downloads automatically.</p>
+        <p className="mt-1 text-sm g-muted">Pick a local `.bloom`, `.mrpack`, or `.zip`. `.bloom` restores a Bloom export directly, while `.mrpack` imports unpack overrides and downloads automatically.</p>
       </div>
 
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
@@ -220,7 +267,7 @@ export function Downloads() {
         />
         <button onClick={() => { void importLocalFile(); }} disabled={localImporting} className="g-btn mt-4 h-11 w-full px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50 inline-flex items-center justify-center gap-2">
           <FolderUp size={14} />
-          {localImporting ? 'Importing...' : 'Choose .mrpack or .zip'}
+          {localImporting ? 'Importing...' : 'Choose .bloom, .mrpack, or .zip'}
         </button>
       </div>
 
@@ -228,6 +275,7 @@ export function Downloads() {
         <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/45">Importer Notes</p>
         <div className="mt-3 space-y-2 text-sm g-muted">
           <p>Modrinth marketplace packs create a new Fabric instance directly.</p>
+          <p>Local `.bloom` imports recreate a Bloom-exported instance with the files that were packaged.</p>
           <p>Local `.mrpack` imports unpack pack contents and write an install report into the instance folder.</p>
           <p>Local `.zip` imports are stored with the instance so you can manage the pack manually afterward.</p>
         </div>

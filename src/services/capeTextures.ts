@@ -9,7 +9,6 @@ export type CapeTextureAsset = {
   height: number;
   bytes: number;
   fromDiskCache: boolean;
-  viaDirectUrl?: boolean;
   generatedAt: number;
 };
 
@@ -255,7 +254,6 @@ class CapeTextureLoader {
     const promise = (async () => {
       let fromDiskCache = false;
       let sourceBlob: Blob | null = null;
-      let viaDirectUrl = false;
 
       try {
         sourceBlob = await this.readFromDisk(cacheKey);
@@ -267,16 +265,14 @@ class CapeTextureLoader {
           await this.writeToDisk(cacheKey, sourceBlob);
         }
       } catch (error) {
-        console.error(
-          `${logPrefix(slug)} full_fetch_or_decode_failed reason=${error instanceof Error ? error.message : String(error)} url=${textureUrl}`
-        );
-        viaDirectUrl = true;
+        console.error(`${logPrefix(slug)} full_fetch_or_decode_failed reason=${error instanceof Error ? error.message : String(error)} url=${textureUrl}`);
+        throw error;
       }
 
       let width = 64;
       let height = 32;
       let bytes = 0;
-      let objectUrl = textureUrl;
+      let objectUrl = '';
       if (sourceBlob) {
         const bitmap = await blobToBitmap(sourceBlob);
         width = bitmap.width;
@@ -295,12 +291,11 @@ class CapeTextureLoader {
         height,
         bytes,
         fromDiskCache,
-        viaDirectUrl,
         generatedAt: Date.now()
       };
       this.memory.set(cacheKey, asset);
       console.debug(
-        `${logPrefix(slug)} full_registered width=${width} height=${height} bytes=${bytes} from_disk=${fromDiskCache} direct_url=${viaDirectUrl} url=${textureUrl}`
+        `${logPrefix(slug)} full_registered width=${width} height=${height} bytes=${bytes} from_disk=${fromDiskCache} url=${textureUrl}`
       );
       return asset;
     })()

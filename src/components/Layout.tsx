@@ -72,7 +72,7 @@ type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
 type SoundPackMode = 'off' | 'soft' | 'arcade' | 'retro';
 type StartupSceneTheme = 'nova' | 'horizon' | 'matrix';
 type StartupSceneSoundProfile = 'off' | 'shimmer' | 'impact';
-type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help';
+type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help' | 'information';
 type SidebarTabsVisibility = Record<SidebarTabId, boolean>;
 
 type SearchEntry = {
@@ -156,7 +156,8 @@ const SIDEBAR_TABS_VISIBILITY_DEFAULTS: SidebarTabsVisibility = {
   'script-studio': false,
   'host-server': false,
   games: false,
-  help: true
+  help: true,
+  information: true
 };
 
 function readSidebarTabsVisibility(): SidebarTabsVisibility {
@@ -176,7 +177,8 @@ function readSidebarTabsVisibility(): SidebarTabsVisibility {
       'script-studio': typeof parsed['script-studio'] === 'boolean' ? parsed['script-studio'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['script-studio'],
       'host-server': typeof parsed['host-server'] === 'boolean' ? parsed['host-server'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['host-server'],
       games: typeof parsed.games === 'boolean' ? parsed.games : SIDEBAR_TABS_VISIBILITY_DEFAULTS.games,
-      help: typeof parsed.help === 'boolean' ? parsed.help : SIDEBAR_TABS_VISIBILITY_DEFAULTS.help
+      help: typeof parsed.help === 'boolean' ? parsed.help : SIDEBAR_TABS_VISIBILITY_DEFAULTS.help,
+      information: typeof parsed.information === 'boolean' ? parsed.information : SIDEBAR_TABS_VISIBILITY_DEFAULTS.information
     };
   } catch {
     return { ...SIDEBAR_TABS_VISIBILITY_DEFAULTS };
@@ -272,6 +274,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       : 'particles';
   });
   const [customBackgroundDataUrl, setCustomBackgroundDataUrl] = useState<string | null>(null);
+  const [customBackgroundVideoUrl, setCustomBackgroundVideoUrl] = useState<string | null>(null);
   const [backgroundVisualOpacity, setBackgroundVisualOpacity] = useState<number>(() => {
     const stored = Number(localStorage.getItem(BACKGROUND_VISUAL_OPACITY_KEY));
     if (Number.isFinite(stored)) return clampPercent(stored);
@@ -315,7 +318,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     const stored = localStorage.getItem(BUTTON_THEME_STORAGE_KEY);
     return stored === 'default' || stored === 'simple' || stored === 'cartoon' || stored === 'glass' || stored === 'neon' || stored === 'pixel' || stored === 'brutalist' || stored === 'pill' || stored === 'terminal' || stored === 'arcade'
       ? stored
-      : 'default';
+      : 'brutalist';
   });
   const [motionMode, setMotionMode] = useState<MotionMode>(() => {
     const stored = localStorage.getItem(MOTION_STORAGE_KEY);
@@ -454,6 +457,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     if (sidebarTabsVisibility['script-studio']) base.push({ id: 'script-studio', label: 'Script Studio', description: 'IDE-style BloomScript editor and runtime', route: '/script-studio' });
     if (showGamesSection && sidebarTabsVisibility.games) base.push({ id: 'games', label: 'Games', description: 'Play Bloom Clicker, Flappy Bird, and Whiteboard', route: '/games' });
     if (hostServersUnlocked && sidebarTabsVisibility['host-server']) base.push({ id: 'host-server', label: 'Host Server', description: 'Run and manage local multiplayer servers', route: '/host-server' });
+    if (sidebarTabsVisibility.information) base.push({ id: 'information', label: 'Information', description: 'Terms, privacy, and payment policies', route: '/information' });
     base.push({ id: 'settings', label: 'Settings', description: 'Theme and launcher options', route: '/settings' });
     if (!authState) base.push({ id: 'signin', label: 'Sign In', description: 'Connect Microsoft account', action: 'signin' });
     return base;
@@ -800,13 +804,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const onBackgroundChange = (event: Event) => {
-      const custom = event as CustomEvent<{ background?: BackgroundMode; previewDataUrl?: string | null }>;
+      const custom = event as CustomEvent<{ background?: BackgroundMode; previewDataUrl?: string | null; previewVideoUrl?: string | null }>;
       const requestedBackground = custom.detail?.background;
       if (requestedBackground === 'none' || requestedBackground === 'plus' || requestedBackground === 'particles' || requestedBackground === 'aurora' || requestedBackground === 'scanlines' || requestedBackground === 'nebula' || requestedBackground === 'custom') {
         setBackgroundMode(requestedBackground);
       }
       if (typeof custom.detail?.previewDataUrl !== 'undefined') {
         setCustomBackgroundDataUrl(custom.detail.previewDataUrl ?? null);
+      }
+      if (typeof custom.detail?.previewVideoUrl !== 'undefined') {
+        setCustomBackgroundVideoUrl(custom.detail.previewVideoUrl ?? null);
       }
     };
 
@@ -850,12 +857,26 @@ export function Layout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (backgroundMode !== 'custom') return;
     let active = true;
-    void TauriApi.launcherBackgroundLoad()
-      .then((dataUrl) => {
-        if (active) setCustomBackgroundDataUrl(dataUrl);
+    void TauriApi.launcherBackgroundVideoLoad()
+      .then((videoAsset) => {
+        if (!active) return;
+        if (videoAsset) {
+          setCustomBackgroundVideoUrl(videoAsset.dataUrl ?? videoAsset.path);
+          setCustomBackgroundDataUrl(null);
+          return;
+        }
+        return TauriApi.launcherBackgroundLoad().then((dataUrl) => {
+          if (active) {
+            setCustomBackgroundDataUrl(dataUrl);
+            setCustomBackgroundVideoUrl(null);
+          }
+        });
       })
       .catch(() => {
-        if (active) setCustomBackgroundDataUrl(null);
+        if (active) {
+          setCustomBackgroundDataUrl(null);
+          setCustomBackgroundVideoUrl(null);
+        }
       });
     return () => {
       active = false;
@@ -1921,13 +1942,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
     openOnboarding(authState ? 1 : 0);
   };
 
+  const clearAppRevealTimers = useCallback(() => {
+    if (appRevealTimerRef.current) {
+      clearTimeout(appRevealTimerRef.current);
+      appRevealTimerRef.current = null;
+    }
+    appBlackoutTimersRef.current.forEach((timer) => clearTimeout(timer));
+    appBlackoutTimersRef.current = [];
+  }, []);
+
   const completeOnboarding = () => {
     if (onboardingDoneKey) {
       localStorage.setItem(onboardingDoneKey, 'true');
     }
     setOnboardingCompleted(true);
-    appBlackoutTimersRef.current.forEach((timer) => clearTimeout(timer));
-    appBlackoutTimersRef.current = [];
+    clearAppRevealTimers();
     setOnboardingExitActive(true);
     setAppBlackoutPhase('fade-in');
 
@@ -2062,7 +2091,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
         />
       )}
       <div className="pointer-events-none absolute inset-0" style={{ opacity: backgroundVisualOpacity / 100 }}>
-        {backgroundMode === 'custom' && customBackgroundDataUrl && (
+        {backgroundMode === 'custom' && customBackgroundVideoUrl && (
+          <video
+            key={customBackgroundVideoUrl}
+            src={customBackgroundVideoUrl}
+            className="absolute inset-0 h-full w-full object-cover"
+            autoPlay
+            loop
+            muted
+            playsInline
+          />
+        )}
+        {backgroundMode === 'custom' && !customBackgroundVideoUrl && customBackgroundDataUrl && (
           <div
             className="absolute inset-0"
             style={{

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent } from 'react';
 import { clsx } from 'clsx';
 import { Coins, Download, ImagePlus, Move, RefreshCw, ZoomIn } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { MinecraftPlayerPreview } from '../components/cosmetics/MinecraftPlayerPreview';
 import { AnimatedSpriteSheetStudio } from '../components/cosmetics/AnimatedSpriteSheetStudio';
@@ -98,6 +99,7 @@ async function saveCustomCapeDebugArtifacts(
 }
 
 export function CustomCape() {
+  const navigate = useNavigate();
   const [studioTab, setStudioTab] = useState<'static' | 'animated'>('static');
   const { authState, startLogin } = useAuth();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -136,6 +138,13 @@ export function CustomCape() {
   const [ownerListingPrice, setOwnerListingPrice] = useState<number>(1200);
   const [ownerListingDescription, setOwnerListingDescription] = useState('');
   const [publishingToShop, setPublishingToShop] = useState(false);
+  const [staticStudioEpoch, setStaticStudioEpoch] = useState(0);
+
+  useEffect(() => {
+    if (studioTab === 'static') {
+      setStaticStudioEpoch((current) => current + 1);
+    }
+  }, [studioTab]);
 
   const fileInfo = useMemo(
     () => ({
@@ -259,6 +268,7 @@ export function CustomCape() {
   );
 
   useEffect(() => {
+    if (studioTab !== 'static') return;
     const node = workspaceRef.current;
     if (!node) return;
     const update = () => {
@@ -269,10 +279,16 @@ export function CustomCape() {
       });
     };
     update();
+    const frameA = window.requestAnimationFrame(update);
+    const frameB = window.requestAnimationFrame(update);
     const observer = new ResizeObserver(update);
     observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
+    return () => {
+      window.cancelAnimationFrame(frameA);
+      window.cancelAnimationFrame(frameB);
+      observer.disconnect();
+    };
+  }, [studioTab, staticStudioEpoch]);
 
   useEffect(() => {
     if (!sourceImageElement) return;
@@ -658,6 +674,13 @@ export function CustomCape() {
     <div className="max-w-[1280px] mx-auto h-[calc(100vh-92px)] py-6 space-y-4 overflow-hidden flex flex-col">
       <section className="g-panel p-4 grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] items-center gap-3">
         <div className="lg:justify-self-start">
+          <button
+            type="button"
+            onClick={() => navigate('/cosmetics')}
+            className="mb-3 inline-flex h-8 items-center rounded-lg border border-white/12 bg-white/[0.03] px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] text-white/78 transition hover:bg-white/[0.07]"
+          >
+            Back To Locker
+          </button>
           <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Bloom Cosmetics</p>
           <h1 className="text-2xl font-extrabold text-white mt-1">Cape Studio</h1>
         </div>
@@ -714,7 +737,7 @@ export function CustomCape() {
       )}
 
       {studioTab === 'static' ? (
-      <section className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)_340px] gap-4 min-h-0">
+      <section key={`static-studio-${staticStudioEpoch}`} className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)_340px] gap-4 min-h-0">
         <aside className="g-panel p-4 min-h-0 overflow-y-auto">
           <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Setup</p>
           <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/jpg,image/webp" className="hidden" onChange={handleFileChange} />
@@ -988,6 +1011,7 @@ export function CustomCape() {
             <div className="h-[310px]">
               {sourceImageElement && previewTextureObjectUrl ? (
                 <MinecraftPlayerPreview
+                  key={`static-preview-${staticStudioEpoch}-${previewTextureObjectUrl ?? 'none'}`}
                   playerUuid={authState.profile.id}
                   playerName={authState.profile.name}
                   playerSkinUrl={authState.profile.skinUrl ?? null}

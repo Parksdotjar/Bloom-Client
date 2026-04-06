@@ -152,8 +152,29 @@ export interface HostedServerTunnelSession {
     message: string;
 }
 
+export interface StoredBackgroundVideo {
+    path: string;
+    fileName: string;
+    mimeType: string;
+    dataUrl?: string | null;
+}
+
+export interface BloomExportOptions {
+    includeMods: boolean;
+    includeResourcepacks: boolean;
+    includeShaderpacks: boolean;
+    includeConfig: boolean;
+    includeOptions: boolean;
+    includeServerData: boolean;
+    includeSaves: boolean;
+    includeScreenshots: boolean;
+    includeLogs: boolean;
+    includeAllFiles: boolean;
+}
+
 export const TauriApi = {
     pathsGet: () => invoke<any>('paths_get'),
+    startupOpenFileTake: () => invoke<string | null>('startup_open_file_take'),
 
     instancesList: () => invoke<Instance[]>('instances_list'),
     instancesGet: (id: string) => invoke<Instance>('instances_get', { id }),
@@ -263,6 +284,12 @@ export const TauriApi = {
         invoke<string | null>('launcher_background_load'),
     launcherBackgroundClear: () =>
         invoke<void>('launcher_background_clear'),
+    launcherBackgroundVideoSave: (fileName: string, mimeType: string, data: number[]) =>
+        invoke<StoredBackgroundVideo>('launcher_background_video_save', { fileName, mimeType, data }),
+    launcherBackgroundVideoLoad: () =>
+        invoke<StoredBackgroundVideo | null>('launcher_background_video_load'),
+    instanceExportBloom: (instanceId: string, outputPath: string, options: BloomExportOptions) =>
+        invoke<string>('instance_export_bloom', { instanceId, outputPath, options }),
     saveBinaryFile: (path: string, data: number[]) =>
         invoke<void>('save_binary_file', { path, data })
 };

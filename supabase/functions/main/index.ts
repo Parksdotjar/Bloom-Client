@@ -39,6 +39,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 const KOFI_VERIFICATION_TOKEN = Deno.env.get("KOFI_VERIFICATION_TOKEN") ?? "";
+const CURSEFORGE_API_KEY = Deno.env.get("CURSEFORGE_API_KEY") ?? "";
 
 const DRAFT_BUCKET = Deno.env.get("BLOOM_CAPE_DRAFT_BUCKET") ?? "cape-drafts";
 const PUBLISHED_BUCKET = Deno.env.get("BLOOM_CAPE_PUBLISHED_BUCKET") ?? "cape-published";
@@ -105,6 +106,45 @@ function normalizeUrl(value: unknown): string | null {
   } catch {
     return raw.replace(/\/+$/, "");
   }
+}
+
+function hasRelaySecret(request: Request) {
+  const expected = Deno.env.get("BLOOM_RELAY_SHARED_KEY") ?? "";
+  if (!expected) return true;
+  const provided = request.headers.get("x-bloom-relay-key")?.trim() ?? "";
+  return provided.length > 0 && provided === expected;
+}
+
+async function relayCurseforge(request: Request, path: string, query: URLSearchParams) {
+  if (!CURSEFORGE_API_KEY) {
+    return jsonResponse(503, { ok: false, error: "curseforge_key_not_configured" });
+  }
+  if (!hasRelaySecret(request)) {
+    return jsonResponse(401, { ok: false, error: "invalid_relay_credentials" });
+  }
+
+  const upstream = new URL(`https://api.curseforge.com/v1${path}`);
+  for (const [key, value] of query.entries()) {
+    upstream.searchParams.append(key, value);
+  }
+
+  const response = await fetch(upstream, {
+    method: "GET",
+    headers: {
+      "x-api-key": CURSEFORGE_API_KEY,
+      "User-Agent": "BloomClientRelay/1.0",
+      Accept: "application/json",
+    },
+  });
+
+  const text = await response.text();
+  return new Response(text, {
+    status: response.status,
+    headers: {
+      ...CORS_HEADERS,
+      "Content-Type": "application/json",
+    },
+  });
 }
 
 function stableStringify(value: unknown): string {
@@ -1166,6 +1206,47 @@ Deno.serve(async (request) => {
     if (request.method === "GET" && route === "/custom-cape/draft/latest") return handleCustomCapeDraftLatest(request);
     if (request.method === "POST" && route === "/custom-cape/draft") return handleCustomCapeDraft(request);
     if (request.method === "POST" && route === "/custom-cape/finalize") return handleCustomCapeFinalize(request);
+
+    if (request.method === "GET" && route === "/curseforge/categories") {
+      const params = new URLSearchParams();
+      params.set("gameId", url.searchParams.get("gameId") ?? "432");
+      return relayCurseforge(request, "/categories", params);
+    }
+    if (request.method === "GET" && route === "/curseforge/mods/search") {
+      const params = new URLSearchParams();
+      const allowed = [
+        "gameId",
+        "classId",
+        "categoryId",
+        "searchFilter",
+        "gameVersion",
+        "modLoaderType",
+        "pageSize",
+        "index",
+        "sortField",
+        "sortOrder",
+      ];
+      for (const key of allowed) {
+        const value = url.searchParams.get(key);
+        if (value) params.set(key, value);
+      }
+      if (!params.get("gameId")) params.set("gameId", "432");
+      return relayCurseforge(request, "/mods/search", params);
+    }
+    const curseforgeModMatch = route.match(/^\/curseforge\/mods\/(\d+)$/);
+    if (request.method === "GET" && curseforgeModMatch) {
+      return relayCurseforge(request, `/mods/${curseforgeModMatch[1]}`, new URLSearchParams());
+    }
+    const curseforgeFilesMatch = route.match(/^\/curseforge\/mods\/(\d+)\/files$/);
+    if (request.method === "GET" && curseforgeFilesMatch) {
+      const params = new URLSearchParams();
+      const allowed = ["gameVersion", "modLoaderType", "pageSize", "index"];
+      for (const key of allowed) {
+        const value = url.searchParams.get(key);
+        if (value) params.set(key, value);
+      }
+      return relayCurseforge(request, `/mods/${curseforgeFilesMatch[1]}/files`, params);
+    }
 
     if (request.method === "POST" && route === "/gif-cape/projects") return handleGifCapeCreateProject(request);
     if (request.method === "POST" && route === "/gif-cape/project") return handleGifCapeCreateProject(request);

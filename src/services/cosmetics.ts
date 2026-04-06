@@ -24,6 +24,14 @@ export type CapeRecord = {
   rarity_color_start: string | null;
   rarity_color_end: string | null;
   rarity_glow: string | null;
+  render_pos_x: number | null;
+  render_pos_y: number | null;
+  render_pos_z: number | null;
+  render_rot_x: number | null;
+  render_rot_y: number | null;
+  render_rot_z: number | null;
+  render_depth_z: number | null;
+  render_brightness: number | null;
   sort_order: number;
   is_active: boolean;
   is_featured: boolean;
@@ -47,6 +55,14 @@ export type OwnedCapeRecord = {
   rarity_color_start: string | null;
   rarity_color_end: string | null;
   rarity_glow: string | null;
+  render_pos_x: number | null;
+  render_pos_y: number | null;
+  render_pos_z: number | null;
+  render_rot_x: number | null;
+  render_rot_y: number | null;
+  render_rot_z: number | null;
+  render_depth_z: number | null;
+  render_brightness: number | null;
   sort_order: number;
   is_active: boolean;
 };
@@ -132,6 +148,14 @@ export type UpdateCapeInput = {
   rarity_color_start: string | null;
   rarity_color_end: string | null;
   rarity_glow: string | null;
+  render_pos_x: number | null;
+  render_pos_y: number | null;
+  render_pos_z: number | null;
+  render_rot_x: number | null;
+  render_rot_y: number | null;
+  render_rot_z: number | null;
+  render_depth_z: number | null;
+  render_brightness: number | null;
   sort_order: number;
   is_active: boolean;
   is_featured: boolean;
@@ -245,7 +269,7 @@ export async function loadShopCapes(search: string, rarity: string | null) {
   let query = supabase
     .from('commerce_capes')
     .select(
-      'id,slug,name,description,partner_group,texture_url,preview_url,price_bb,rarity,rarity_label,rarity_color_start,rarity_color_end,rarity_glow,sort_order,is_active,is_featured,created_at,updated_at'
+      'id,slug,name,description,partner_group,texture_url,preview_url,price_bb,rarity,rarity_label,rarity_color_start,rarity_color_end,rarity_glow,render_pos_x,render_pos_y,render_pos_z,render_rot_x,render_rot_y,render_rot_z,render_depth_z,render_brightness,sort_order,is_active,is_featured,created_at,updated_at'
     )
     .eq('is_active', true)
     .order('is_featured', { ascending: false })
@@ -398,13 +422,21 @@ export async function updateCapeListing(capeId: string, patch: UpdateCapeInput) 
       rarity_color_start: patch.rarity_color_start,
       rarity_color_end: patch.rarity_color_end,
       rarity_glow: patch.rarity_glow,
+      render_pos_x: patch.render_pos_x,
+      render_pos_y: patch.render_pos_y,
+      render_pos_z: patch.render_pos_z,
+      render_rot_x: patch.render_rot_x,
+      render_rot_y: patch.render_rot_y,
+      render_rot_z: patch.render_rot_z,
+      render_depth_z: patch.render_depth_z,
+      render_brightness: patch.render_brightness,
       sort_order: patch.sort_order,
       is_active: patch.is_active,
       is_featured: patch.is_featured
     })
     .eq('id', capeId)
     .select(
-      'id,slug,name,description,partner_group,texture_url,preview_url,price_bb,rarity,rarity_label,rarity_color_start,rarity_color_end,rarity_glow,sort_order,is_active,is_featured,created_at,updated_at'
+      'id,slug,name,description,partner_group,texture_url,preview_url,price_bb,rarity,rarity_label,rarity_color_start,rarity_color_end,rarity_glow,render_pos_x,render_pos_y,render_pos_z,render_rot_x,render_rot_y,render_rot_z,render_depth_z,render_brightness,sort_order,is_active,is_featured,created_at,updated_at'
     )
     .single();
   if (error) throw error;
@@ -476,6 +508,41 @@ export async function getSupabaseUserId() {
   const { data, error } = await supabase.auth.getUser();
   if (error) throw error;
   return data.user?.id ?? null;
+}
+
+export async function loadAllCapeIdsForOwner() {
+  const { data, error } = await supabase.from('commerce_capes').select('id');
+  if (error) throw error;
+  return ((data ?? []) as Array<{ id: string }>).map((row) => row.id);
+}
+
+export async function updateCapeRenderPose(
+  capeId: string,
+  pose: {
+    render_pos_x: number;
+    render_pos_y: number;
+    render_pos_z: number;
+    render_rot_x: number;
+    render_rot_y: number;
+    render_rot_z: number;
+    render_depth_z: number;
+    render_brightness: number;
+  }
+) {
+  const { error } = await supabase
+    .from('commerce_capes')
+    .update({
+      render_pos_x: pose.render_pos_x,
+      render_pos_y: pose.render_pos_y,
+      render_pos_z: pose.render_pos_z,
+      render_rot_x: pose.render_rot_x,
+      render_rot_y: pose.render_rot_y,
+      render_rot_z: pose.render_rot_z,
+      render_depth_z: pose.render_depth_z,
+      render_brightness: pose.render_brightness
+    })
+    .eq('id', capeId);
+  if (error) throw error;
 }
 
 export async function deactivateCapeListing(capeId: string) {
@@ -668,6 +735,17 @@ export function subscribePartnerGroups(onChange: () => void) {
   const channel = supabase
     .channel('commerce-partner-groups')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'commerce_partner_groups' }, () => onChange())
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
+}
+
+export function subscribeCapes(onChange: () => void) {
+  const channel = supabase
+    .channel('commerce-capes-live')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'commerce_capes' }, () => onChange())
     .subscribe();
 
   return () => {

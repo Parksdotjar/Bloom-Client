@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEventHandler, type DragEventHandler, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Copy, Download, FolderOpen, ImageIcon, Package2, RefreshCcw, Save, Search, ShieldPlus, Sparkles, Trash2, UploadCloud } from 'lucide-react';
-import { open } from '@tauri-apps/plugin-dialog';
+import { ArrowLeft, Copy, Download, FolderOpen, ImageIcon, MoreHorizontal, Package2, Play, RefreshCcw, Save, Search, ShieldPlus, Sparkles, Trash2, UploadCloud, X } from 'lucide-react';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { useInstances } from '../hooks/useInstances';
-import { TauriApi, type InstanceContentFile, type InstanceModFile, type MarketplaceMod, type MarketplacePack, type ModInstallResult } from '../services/tauri';
+import { useAuth } from '../hooks/useAuth';
+import { useDownloader } from '../hooks/useDownloader';
+import { TauriApi, type BloomExportOptions, type InstanceContentFile, type InstanceModFile, type MarketplaceMod, type MarketplacePack, type ModInstallResult } from '../services/tauri';
 import { UniversalLoadingOverlay } from '../components/UniversalLoadingOverlay';
 
 type EditorTab = 'mods' | 'resourcepacks' | 'shaders' | 'settings';
@@ -14,6 +16,18 @@ type NativeFile = File & { path?: string };
 
 const INSTANCE_OPTIONS_CLIPBOARD_KEY = 'bloom_instance_options_clipboard';
 const KEYBIND_ACTION_EVENT = 'bloom-keybind-action';
+const DEFAULT_BLOOM_EXPORT_OPTIONS: BloomExportOptions = {
+  includeMods: true,
+  includeResourcepacks: true,
+  includeShaderpacks: true,
+  includeConfig: true,
+  includeOptions: true,
+  includeServerData: false,
+  includeSaves: false,
+  includeScreenshots: false,
+  includeLogs: false,
+  includeAllFiles: false
+};
 
 function humanSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -60,6 +74,8 @@ export function InstanceEditor() {
         : 'mods';
 
   const { instances, updateInstance, loading, loadInstances, getInstance } = useInstances();
+  const { authState } = useAuth();
+  const { startDownload, activeDownloads } = useDownloader();
 
   const instance = useMemo(() => {
     if (!instanceId) return null;
@@ -106,6 +122,7 @@ export function InstanceEditor() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [lastInstallResult, setLastInstallResult] = useState<ModInstallResult | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [launchingInstanceId, setLaunchingInstanceId] = useState<string | null>(null);
   const [modsQuery, setModsQuery] = useState('');
   const [modsSource, setModsSource] = useState<SourceFilter>('all');
   const [modsSearching, setModsSearching] = useState(false);
@@ -121,10 +138,14 @@ export function InstanceEditor() {
   const [shadersSearching, setShadersSearching] = useState(false);
   const [shadersResults, setShadersResults] = useState<MarketplacePack[]>([]);
   const [shadersInstallingId, setShadersInstallingId] = useState<string | null>(null);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+  const [exportPanelOpen, setExportPanelOpen] = useState(false);
+  const [exportOptions, setExportOptions] = useState<BloomExportOptions>(DEFAULT_BLOOM_EXPORT_OPTIONS);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const iconInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
+  const actionsMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (instance) {
@@ -221,6 +242,19 @@ export function InstanceEditor() {
     void reloadResourcepacks();
     void reloadShaderpacks();
   }, [instance?.id]);
+
+  useEffect(() => {
+    if (!launchingInstanceId) return;
+    const current = activeDownloads[launchingInstanceId];
+    if (!current) {
+      setLaunchingInstanceId(null);
+      return;
+    }
+    if (current.status.toLowerCase().startsWith('error:')) {
+      const timer = window.setTimeout(() => setLaunchingInstanceId(null), 1200);
+      return () => window.clearTimeout(timer);
+    }
+  }, [activeDownloads, launchingInstanceId]);
 
   const saveSettings = async () => {
     if (!instance) return;
@@ -337,6 +371,60 @@ export function InstanceEditor() {
     window.addEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
     return () => window.removeEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
   }, [instance, activeTab, optionsClipboard, saveSettings, pasteOptionsSetup]);
+
+  const launchStatus = launchingInstanceId ? activeDownloads[launchingInstanceId]?.status || 'Preparing launch...' : null;
+
+  const handleLaunch = async () => {
+    if (!instance) return;
+    if (activeDownloads[instance.id] && activeDownloads[instance.id].status !== 'Complete') return;
+    setLaunchingInstanceId(instance.id);
+    await startDownload(instance, authState);
+  };
+
+  useEffect(() => {
+    if (!actionsMenuOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (actionsMenuRef.current && event.target instanceof Node && !actionsMenuRef.current.contains(event.target)) {
+        setActionsMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    return () => window.removeEventListener('mousedown', onPointerDown);
+  }, [actionsMenuOpen]);
+
+  const updateExportOption = (key: keyof BloomExportOptions, value: boolean) => {
+    setExportOptions((current) => {
+      if (key === 'includeAllFiles') {
+        return { ...current, includeAllFiles: value };
+      }
+      return { ...current, [key]: value, includeAllFiles: false };
+    });
+  };
+
+  const handleExportBloom = async () => {
+    if (!instance) return;
+    setActionsMenuOpen(false);
+    const selectedPath = await save({
+      title: 'Export Bloom Modpack',
+      defaultPath: `${instance.name.replace(/[<>:"/\\\\|?*]+/g, '').trim() || 'instance'}.bloom`,
+      filters: [{ name: 'Bloom Modpack', extensions: ['bloom'] }]
+    });
+    if (!selectedPath) return;
+
+    setExportPanelOpen(false);
+    setBlockingTitle('Exporting Bloom pack...');
+    setStatusMessage(`Exporting ${instance.name}...`);
+    try {
+      const outputPath = selectedPath.toLowerCase().endsWith('.bloom') ? selectedPath : `${selectedPath}.bloom`;
+      const savedPath = await TauriApi.instanceExportBloom(instance.id, outputPath, exportOptions);
+      setStatusMessage(`Exported Bloom pack to ${savedPath}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Bloom export failed: ${message}`);
+    } finally {
+      setBlockingTitle(null);
+    }
+  };
 
   const handleIconFile: ChangeEventHandler<HTMLInputElement> = (event) => {
     const file = event.target.files?.[0];
@@ -821,12 +909,73 @@ export function InstanceEditor() {
   return (
     <div className="min-h-full w-full max-w-[1360px] mx-auto p-4 md:p-6 space-y-4">
       <UniversalLoadingOverlay
-        open={!!blockingTitle}
+        open={!!blockingTitle || !!launchStatus}
         fixed
-        eyebrow="Working"
-        title={blockingTitle || 'Working...'}
-        description="Bloom is applying changes to this instance."
+        eyebrow={launchStatus ? 'Launching' : blockingTitle?.toLowerCase().includes('export') ? 'Exporting' : 'Working'}
+        title={blockingTitle || launchStatus || 'Working...'}
+        description={launchStatus ? 'Bloom is installing files and starting Minecraft.' : blockingTitle?.toLowerCase().includes('export') ? 'Bloom is building your portable .bloom archive.' : 'Bloom is applying changes to this instance.'}
       />
+      {exportPanelOpen && (
+        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/65 px-4">
+          <div className="w-full max-w-3xl rounded-[28px] border border-white/12 bg-[#0f0d12] p-6 shadow-[0_28px_90px_rgba(0,0,0,0.45)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] g-accent-text">Export</p>
+                <h2 className="mt-2 text-3xl font-black text-white">Export as `.bloom`</h2>
+                <p className="mt-2 text-sm text-white/60">Choose what this pack should include. The defaults cover the usual client-side pieces needed to share a Bloom modpack cleanly.</p>
+              </div>
+              <button onClick={() => setExportPanelOpen(false)} className="g-btn h-10 w-10 inline-flex items-center justify-center">
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="mt-6 grid gap-3 md:grid-cols-2">
+              {([
+                ['includeMods', 'Mods', 'Installed mods folder.'],
+                ['includeResourcepacks', 'Resource Packs', 'Local resource packs folder.'],
+                ['includeShaderpacks', 'Shaderpacks', 'Local shader packs folder.'],
+                ['includeConfig', 'Config', 'Config and mod settings folders.'],
+                ['includeOptions', 'Options Files', 'options.txt and related client option files.'],
+                ['includeServerData', 'Server Data', 'servers.dat and local multiplayer server data.'],
+                ['includeSaves', 'World Saves', 'Singleplayer worlds in this instance.'],
+                ['includeScreenshots', 'Screenshots', 'The screenshots folder for this instance.'],
+                ['includeLogs', 'Logs', 'latest.log and the logs folder.'],
+                ['includeAllFiles', 'All Files', 'Export the full instance folder instead of a curated pack.']
+              ] as const).map(([key, label, description]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => updateExportOption(key, !exportOptions[key])}
+                  className={[
+                    'rounded-2xl border p-4 text-left transition',
+                    exportOptions[key] ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.05]'
+                  ].join(' ')}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-black text-white">{label}</p>
+                    <span className="text-[10px] font-black uppercase tracking-[0.14em] text-white/70">{exportOptions[key] ? 'On' : 'Off'}</span>
+                  </div>
+                  <p className="mt-2 text-xs text-white/58">{description}</p>
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-6 flex items-center justify-between gap-3 border-t border-white/10 pt-5">
+              <button onClick={() => setExportOptions(DEFAULT_BLOOM_EXPORT_OPTIONS)} className="g-btn h-10 px-4 text-[10px] font-black uppercase tracking-[0.12em]">
+                Reset Defaults
+              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setExportPanelOpen(false)} className="g-btn h-10 px-4 text-[10px] font-black uppercase tracking-[0.12em]">
+                  Cancel
+                </button>
+                <button onClick={() => { void handleExportBloom(); }} className="g-btn-accent h-10 px-5 text-[10px] font-black uppercase tracking-[0.12em] inline-flex items-center gap-2">
+                  <Download size={13} /> Export
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <section className="g-panel-strong p-6">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3">
@@ -847,8 +996,29 @@ export function InstanceEditor() {
           </div>
 
           <div className="flex items-center gap-2">
+            <div className="relative" ref={actionsMenuRef}>
+              <button onClick={() => setActionsMenuOpen((current) => !current)} className="g-btn h-11 w-11 inline-flex items-center justify-center">
+                <MoreHorizontal size={16} />
+              </button>
+              {actionsMenuOpen && (
+                <div className="absolute right-0 top-[calc(100%+8px)] z-30 min-w-[180px] rounded-2xl border border-white/12 bg-[#0e0c11] p-2 shadow-[0_18px_50px_rgba(0,0,0,0.38)]">
+                  <button
+                    onClick={() => {
+                      setActionsMenuOpen(false);
+                      setExportPanelOpen(true);
+                    }}
+                    className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-xs font-black uppercase tracking-[0.12em] text-white/85 transition hover:bg-white/[0.06]"
+                  >
+                    <Download size={13} /> Export
+                  </button>
+                </div>
+              )}
+            </div>
             <button onClick={goBack} className="g-btn h-11 px-4 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-2">
               <ArrowLeft size={14} /> Back
+            </button>
+            <button onClick={() => void handleLaunch()} disabled={!!activeDownloads[instance.id] && activeDownloads[instance.id].status !== 'Complete'} className="g-btn h-11 px-4 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-2 disabled:opacity-45">
+              <Play size={14} /> Launch
             </button>
             <button onClick={saveSettings} disabled={saving} className="g-btn-accent h-11 px-5 text-xs font-black tracking-[0.14em] uppercase disabled:opacity-45 inline-flex items-center gap-2">
               <Save size={14} /> {saving ? 'Saving...' : 'Save'}

@@ -1,7 +1,8 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { HOST_SERVERS_UNLOCK_EVENT, HOST_SERVERS_UNLOCK_KEY, readHostServersUnlocked } from './constants/hostServerAccess';
+import { TauriApi } from './services/tauri';
 import './App.css';
 
 const Home = lazy(() => import('./pages/Home').then((module) => ({ default: module.Home })));
@@ -13,11 +14,27 @@ const Games = lazy(() => import('./pages/Games').then((module) => ({ default: mo
 const InstanceEditor = lazy(() => import('./pages/InstanceEditor').then((module) => ({ default: module.InstanceEditor })));
 const Marketplace = lazy(() => import('./pages/Marketplace').then((module) => ({ default: module.Marketplace })));
 const Help = lazy(() => import('./pages/Help').then((module) => ({ default: module.Help })));
+const Information = lazy(() => import('./pages/Information').then((module) => ({ default: module.Information })));
 const ScriptStudio = lazy(() => import('./pages/ScriptStudio').then((module) => ({ default: module.ScriptStudio })));
 const HostServer = lazy(() => import('./pages/HostServer').then((module) => ({ default: module.HostServer })));
 const Chat = lazy(() => import('./pages/Chat').then((module) => ({ default: module.Chat })));
 const CosmeticLocker = lazy(() => import('./pages/CosmeticLocker').then((module) => ({ default: module.CosmeticLocker })));
 const CustomCape = lazy(() => import('./pages/CustomCape').then((module) => ({ default: module.CustomCape })));
+
+function StartupPackRouteHandler() {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    void TauriApi.startupOpenFileTake()
+      .then((pendingPath) => {
+        if (!pendingPath) return;
+        navigate(`/importer?open=${encodeURIComponent(pendingPath)}`, { replace: true });
+      })
+      .catch(() => {});
+  }, [navigate]);
+
+  return null;
+}
 
 function App() {
   const [hostServersUnlocked, setHostServersUnlocked] = useState<boolean>(() => readHostServersUnlocked());
@@ -49,6 +66,7 @@ function App() {
 
   return (
     <Router>
+      <StartupPackRouteHandler />
       <Layout>
         <Suspense fallback={<div className="mx-auto max-w-[1360px] px-4 py-6 text-sm font-extrabold uppercase tracking-[0.16em] text-white/45">Loading page...</div>}>
           <Routes>
@@ -67,6 +85,7 @@ function App() {
             <Route path="/custom-cape" element={<CustomCape />} />
             <Route path="/games" element={<Games />} />
             <Route path="/help" element={<Help />} />
+            <Route path="/information" element={<Information />} />
             <Route path="/chat" element={<Chat />} />
             <Route path="/script-studio" element={<ScriptStudio />} />
             <Route path="/host-server" element={hostServersUnlocked ? <HostServer /> : <Navigate to="/" replace />} />

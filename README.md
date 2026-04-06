@@ -128,3 +128,31 @@ Bloom now includes a built-in local server hosting surface with a compact contro
   - `BLOOM_RELAY_API_KEY` (optional bearer token)
   - `BLOOM_RELAY_ENDPOINT` (optional informational relay endpoint string)
 - Without relay API configuration, tunnel commands remain safe placeholders (no raw home-IP exposure flow is added in renderer).
+
+## CurseForge Relay
+
+Bloom now supports a safer CurseForge integration path for shipped desktop clients.
+
+- The desktop app will use `CURSEFORGE_API_KEY` directly only if you set it locally for development.
+- Otherwise it falls back to a relay endpoint, which by default points to:
+  - `https://sb.bloomclient.org/functions/v1/main/curseforge`
+- Override that relay URL with:
+  - `BLOOM_CURSEFORGE_RELAY_URL`
+
+### Recommended production setup
+
+1. Deploy the Supabase edge function in `supabase/functions/main`.
+2. Set the edge function secret:
+   - `CURSEFORGE_API_KEY=<your official curseforge api key>`
+3. Optional hardening:
+   - `BLOOM_RELAY_SHARED_KEY=<shared secret>`
+   - If you set this, also set the same value in the desktop runtime as `BLOOM_RELAY_SHARED_KEY`.
+
+### Relay endpoints used by the client
+
+- `GET /curseforge/categories`
+- `GET /curseforge/mods/search`
+- `GET /curseforge/mods/:id`
+- `GET /curseforge/mods/:id/files`
+
+This keeps the real CurseForge key on infrastructure you control instead of embedding it in the Tauri binary shipped to end users.

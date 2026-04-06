@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { CircleHelp, Code2, FolderUp, Gamepad2, LayoutDashboard, Layers3, LogIn, MessageSquareMore, Plus, Server, Settings, Shirt, Sparkles, User } from 'lucide-react';
+import { CircleHelp, Code2, FileText, FolderUp, Gamepad2, LayoutDashboard, Layers3, LogIn, MessageSquareMore, Plus, Server, Settings, Shirt, Sparkles, User } from 'lucide-react';
 import { animate, remove, set } from 'animejs';
 import { clsx } from 'clsx';
 import logo from '../assets/logo.png';
@@ -27,7 +27,7 @@ type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'o
 type SidebarMode = 'rail' | 'classic' | 'expanded';
 type SidebarPosition = 'left' | 'right' | 'top' | 'bottom';
 type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
-type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help';
+type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help' | 'information';
 type SidebarTabsVisibility = Record<SidebarTabId, boolean>;
 
 const EXTRA_CHANGE_EVENT = 'bloom-extra-change';
@@ -53,7 +53,8 @@ const SIDEBAR_TABS_VISIBILITY_DEFAULTS: SidebarTabsVisibility = {
   'script-studio': false,
   'host-server': false,
   games: false,
-  help: true
+  help: true,
+  information: true
 };
 
 function readSidebarTabsVisibility(): SidebarTabsVisibility {
@@ -73,7 +74,8 @@ function readSidebarTabsVisibility(): SidebarTabsVisibility {
       'script-studio': typeof parsed['script-studio'] === 'boolean' ? parsed['script-studio'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['script-studio'],
       'host-server': typeof parsed['host-server'] === 'boolean' ? parsed['host-server'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['host-server'],
       games: typeof parsed.games === 'boolean' ? parsed.games : SIDEBAR_TABS_VISIBILITY_DEFAULTS.games,
-      help: typeof parsed.help === 'boolean' ? parsed.help : SIDEBAR_TABS_VISIBILITY_DEFAULTS.help
+      help: typeof parsed.help === 'boolean' ? parsed.help : SIDEBAR_TABS_VISIBILITY_DEFAULTS.help,
+      information: typeof parsed.information === 'boolean' ? parsed.information : SIDEBAR_TABS_VISIBILITY_DEFAULTS.information
     };
   } catch {
     return { ...SIDEBAR_TABS_VISIBILITY_DEFAULTS };
@@ -165,6 +167,7 @@ export function SidebarRail(props: SidebarProps) {
     ...((showHostServer && activeTabVisibility['host-server']) ? [{ icon: Server, path: '/host-server', label: 'Host' }] : []),
     ...((showGamesSection && activeTabVisibility.games) ? [{ icon: Sparkles, path: '/games', label: 'Games' }] : []),
     ...(activeTabVisibility.help ? [{ icon: CircleHelp, path: '/help', label: 'Help' }] : []),
+    ...(activeTabVisibility.information ? [{ icon: FileText, path: '/information', label: 'Info' }] : []),
     { icon: Settings, path: '/settings', label: 'Settings' }
   ];
 
