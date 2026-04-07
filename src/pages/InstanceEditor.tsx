@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEventHandler, type DragEventHandler, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Copy, Download, FolderOpen, ImageIcon, MoreHorizontal, Package2, Play, RefreshCcw, Save, Search, ShieldPlus, Sparkles, Trash2, UploadCloud, X } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Copy, Download, FolderOpen, ImageIcon, MoreHorizontal, Package2, Play, RefreshCcw, Save, Search, ShieldPlus, Sparkles, Trash2, UploadCloud, X } from 'lucide-react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { useInstances } from '../hooks/useInstances';
 import { useAuth } from '../hooks/useAuth';
 import { useDownloader } from '../hooks/useDownloader';
-import { TauriApi, type BloomExportOptions, type InstanceContentFile, type InstanceModFile, type MarketplaceMod, type MarketplacePack, type ModInstallResult } from '../services/tauri';
+import { TauriApi, type BloomExportOptions, type InstanceContentFile, type InstanceModFile, type InstanceTransferOptions, type MarketplaceMod, type MarketplacePack, type ModInstallResult } from '../services/tauri';
 import { UniversalLoadingOverlay } from '../components/UniversalLoadingOverlay';
 
 type EditorTab = 'mods' | 'resourcepacks' | 'shaders' | 'settings';
@@ -14,7 +14,6 @@ type SourceFilter = 'all' | 'modrinth' | 'curseforge';
 type LibraryView = 'installed' | 'install';
 type NativeFile = File & { path?: string };
 
-const INSTANCE_OPTIONS_CLIPBOARD_KEY = 'bloom_instance_options_clipboard';
 const KEYBIND_ACTION_EVENT = 'bloom-keybind-action';
 const DEFAULT_BLOOM_EXPORT_OPTIONS: BloomExportOptions = {
   includeMods: true,
@@ -27,6 +26,13 @@ const DEFAULT_BLOOM_EXPORT_OPTIONS: BloomExportOptions = {
   includeScreenshots: false,
   includeLogs: false,
   includeAllFiles: false
+};
+const DEFAULT_INSTANCE_TRANSFER_OPTIONS: InstanceTransferOptions = {
+  includeOptions: true,
+  includeServerData: true,
+  includeConfig: true,
+  includeResourcepacks: false,
+  includeShaderpacks: false
 };
 
 function humanSize(bytes: number) {
@@ -82,6 +88,11 @@ export function InstanceEditor() {
     return instances.find((item) => item.id === instanceId) || null;
   }, [instances, instanceId]);
 
+  const transferableInstances = useMemo(
+    () => instances.filter((item) => item.id !== instanceId),
+    [instances, instanceId]
+  );
+
   const [activeTab, setActiveTab] = useState<EditorTab>(initialTab);
   const [modsView, setModsView] = useState<LibraryView>('installed');
   const [resourcepacksView, setResourcepacksView] = useState<LibraryView>('installed');
@@ -99,17 +110,6 @@ export function InstanceEditor() {
   const [iconFrame, setIconFrame] = useState<'square' | 'rounded' | 'diamond'>('rounded');
   const [saving, setSaving] = useState(false);
   const [blockingTitle, setBlockingTitle] = useState<string | null>(null);
-  const [optionsClipboard, setOptionsClipboard] = useState<{ instanceId: string; instanceName: string } | null>(() => {
-    try {
-      const raw = localStorage.getItem(INSTANCE_OPTIONS_CLIPBOARD_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as { instanceId?: string; instanceName?: string };
-      return parsed.instanceId && parsed.instanceName ? { instanceId: parsed.instanceId, instanceName: parsed.instanceName } : null;
-    } catch {
-      return null;
-    }
-  });
-  const [pastingOptions, setPastingOptions] = useState(false);
 
   const [mods, setMods] = useState<InstanceModFile[]>([]);
   const [resourcepacks, setResourcepacks] = useState<InstanceContentFile[]>([]);
@@ -141,11 +141,21 @@ export function InstanceEditor() {
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [exportPanelOpen, setExportPanelOpen] = useState(false);
   const [exportOptions, setExportOptions] = useState<BloomExportOptions>(DEFAULT_BLOOM_EXPORT_OPTIONS);
+  const [transferPanelOpen, setTransferPanelOpen] = useState(false);
+  const [transferSourceInstanceId, setTransferSourceInstanceId] = useState('');
+  const [transferOptions, setTransferOptions] = useState<InstanceTransferOptions>(DEFAULT_INSTANCE_TRANSFER_OPTIONS);
+  const [transferSourceMenuOpen, setTransferSourceMenuOpen] = useState(false);
+
+  const selectedTransferSource = useMemo(
+    () => transferableInstances.find((item) => item.id === transferSourceInstanceId) || null,
+    [transferSourceInstanceId, transferableInstances]
+  );
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const iconInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement | null>(null);
+  const transferSourceMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (instance) {
@@ -195,6 +205,27 @@ export function InstanceEditor() {
     if (!instanceId || instance || loading) return;
     void loadInstances();
   }, [instanceId, instance, loading, loadInstances]);
+
+  useEffect(() => {
+    if (!transferableInstances.length) {
+      setTransferSourceInstanceId('');
+      return;
+    }
+    if (!transferableInstances.some((item) => item.id === transferSourceInstanceId)) {
+      setTransferSourceInstanceId(transferableInstances[0].id);
+    }
+  }, [transferSourceInstanceId, transferableInstances]);
+
+  useEffect(() => {
+    if (!transferSourceMenuOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (transferSourceMenuRef.current && event.target instanceof Node && !transferSourceMenuRef.current.contains(event.target)) {
+        setTransferSourceMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    return () => window.removeEventListener('mousedown', onPointerDown);
+  }, [transferSourceMenuOpen]);
 
   const goBack = () => navigate('/instances');
 
@@ -283,25 +314,22 @@ export function InstanceEditor() {
     }
   };
 
-  const copyOptionsSetup = () => {
-    if (!instance) return;
-    const payload = { instanceId: instance.id, instanceName: instance.name };
-    localStorage.setItem(INSTANCE_OPTIONS_CLIPBOARD_KEY, JSON.stringify(payload));
-    setOptionsClipboard(payload);
-    setStatusMessage(`Copied ${instance.name} option profile. Open another instance and press Paste Options.`);
-  };
-
-  const pasteOptionsSetup = async () => {
-    if (!instance || !optionsClipboard) return;
-    setPastingOptions(true);
+  const handleTransferFiles = async () => {
+    if (!instance || !transferSourceInstanceId) return;
+    setActionsMenuOpen(false);
+    setTransferPanelOpen(false);
+    setTransferSourceMenuOpen(false);
+    setBlockingTitle('Importing instance files...');
+    setStatusMessage(`Importing selected files into ${instance.name}...`);
     try {
-      const result = await TauriApi.instanceCopyGameOptions(optionsClipboard.instanceId, instance.id);
-      setStatusMessage(`${result} Applied to ${instance.name}.`);
+      const result = await TauriApi.instanceTransferFiles(transferSourceInstanceId, instance.id, transferOptions);
+      const sourceName = transferableInstances.find((item) => item.id === transferSourceInstanceId)?.name || 'source instance';
+      setStatusMessage(`${result} Imported from ${sourceName} into ${instance.name}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setStatusMessage(`Options paste failed: ${message}`);
+      setStatusMessage(`Instance file import failed: ${message}`);
     } finally {
-      setPastingOptions(false);
+      setBlockingTitle(null);
     }
   };
 
@@ -340,14 +368,6 @@ export function InstanceEditor() {
         if (activeTab === 'shaders') setShadersView('install');
         return;
       }
-      if (action === 'copy-instance-options') {
-        copyOptionsSetup();
-        return;
-      }
-      if (action === 'paste-instance-options') {
-        void pasteOptionsSetup();
-        return;
-      }
       if (action === 'refresh-active-page') {
         void reloadMods();
         void reloadResourcepacks();
@@ -370,7 +390,7 @@ export function InstanceEditor() {
     };
     window.addEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
     return () => window.removeEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
-  }, [instance, activeTab, optionsClipboard, saveSettings, pasteOptionsSetup]);
+  }, [instance, activeTab, saveSettings]);
 
   const launchStatus = launchingInstanceId ? activeDownloads[launchingInstanceId]?.status || 'Preparing launch...' : null;
 
@@ -399,6 +419,10 @@ export function InstanceEditor() {
       }
       return { ...current, [key]: value, includeAllFiles: false };
     });
+  };
+
+  const updateTransferOption = (key: keyof InstanceTransferOptions, value: boolean) => {
+    setTransferOptions((current) => ({ ...current, [key]: value }));
   };
 
   const handleExportBloom = async () => {
@@ -911,10 +935,108 @@ export function InstanceEditor() {
       <UniversalLoadingOverlay
         open={!!blockingTitle || !!launchStatus}
         fixed
-        eyebrow={launchStatus ? 'Launching' : blockingTitle?.toLowerCase().includes('export') ? 'Exporting' : 'Working'}
+        eyebrow={launchStatus ? 'Launching' : blockingTitle?.toLowerCase().includes('export') ? 'Exporting' : blockingTitle?.toLowerCase().includes('import') ? 'Importing' : 'Working'}
         title={blockingTitle || launchStatus || 'Working...'}
-        description={launchStatus ? 'Bloom is installing files and starting Minecraft.' : blockingTitle?.toLowerCase().includes('export') ? 'Bloom is building your portable .bloom archive.' : 'Bloom is applying changes to this instance.'}
+        description={launchStatus ? 'Bloom is installing files and starting Minecraft.' : blockingTitle?.toLowerCase().includes('export') ? 'Bloom is building your portable .bloom archive.' : blockingTitle?.toLowerCase().includes('import') ? 'Bloom is copying the selected instance files into this profile.' : 'Bloom is applying changes to this instance.'}
       />
+      {transferPanelOpen && (
+        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/65 px-4">
+          <div className="w-full max-w-2xl rounded-[28px] border border-white/10 bg-black p-6 shadow-[0_28px_90px_rgba(0,0,0,0.45)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] g-accent-text">Transfer</p>
+                <h2 className="mt-2 text-3xl font-black text-white">Import Instance Files</h2>
+                <p className="mt-2 text-sm text-white/60">Copy selected files from another instance into <span className="font-bold text-white">{instance?.name}</span>. This is useful for moving options profiles and multiplayer server lists without reinstalling everything else.</p>
+              </div>
+              <button onClick={() => setTransferPanelOpen(false)} className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-black text-white/75 transition hover:bg-white/[0.04] hover:text-white">
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="mt-6 space-y-4">
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-[0.18em] text-white/50">Source Instance</label>
+                <div className="relative mt-2" ref={transferSourceMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => transferableInstances.length > 0 && setTransferSourceMenuOpen((current) => !current)}
+                    className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-black px-4 py-3 text-left text-sm font-semibold text-white transition hover:bg-white/[0.04]"
+                  >
+                    <span className="truncate">
+                      {selectedTransferSource ? `${selectedTransferSource.name} · ${selectedTransferSource.loader.toUpperCase()} ${selectedTransferSource.mcVersion}` : 'No other instances available'}
+                    </span>
+                    <ChevronDown size={16} className={`shrink-0 text-white/60 transition ${transferSourceMenuOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {transferSourceMenuOpen && transferableInstances.length > 0 && (
+                    <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-20 overflow-hidden rounded-2xl border border-white/10 bg-black shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
+                      {transferableInstances.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => {
+                            setTransferSourceInstanceId(item.id);
+                            setTransferSourceMenuOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold transition ${item.id === transferSourceInstanceId ? 'bg-white/[0.08] text-white' : 'text-white/75 hover:bg-white/[0.04] hover:text-white'}`}
+                        >
+                          <span className="truncate">{item.name}</span>
+                          <span className="ml-3 shrink-0 text-[10px] font-black uppercase tracking-[0.14em] text-white/38">{item.loader} {item.mcVersion}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                {([
+                  ['includeOptions', 'Options Files', 'options.txt, OptiFine settings, shader options, keybind support files.'],
+                  ['includeServerData', 'Server Data', 'servers.dat and the local servers folder for multiplayer addresses and icons.'],
+                  ['includeConfig', 'Config Folder', 'Everything under config/ for mod configs, UI layouts, and client tweaks.'],
+                  ['includeResourcepacks', 'Resource Packs', 'Installed local resource packs for this profile.'],
+                  ['includeShaderpacks', 'Shaderpacks', 'Installed local shader packs for this profile.']
+                ] as const).map(([key, label, description]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => updateTransferOption(key, !transferOptions[key])}
+                    className={[
+                      'rounded-2xl border p-4 text-left transition',
+                      transferOptions[key]
+                        ? 'border-white/10 bg-[color:color-mix(in_srgb,var(--g-accent)_18%,black)] hover:bg-[color:color-mix(in_srgb,var(--g-accent)_22%,black)]'
+                        : 'border-white/10 bg-black hover:bg-white/[0.04]'
+                    ].join(' ')}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-black text-white">{label}</p>
+                      <span className="text-[10px] font-black uppercase tracking-[0.14em] text-white/70">{transferOptions[key] ? 'On' : 'Off'}</span>
+                    </div>
+                    <p className="mt-2 text-xs text-white/58">{description}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-between gap-3 border-t border-white/10 pt-5">
+              <button onClick={() => setTransferOptions(DEFAULT_INSTANCE_TRANSFER_OPTIONS)} className="inline-flex h-10 items-center rounded-xl border border-white/10 bg-black px-4 text-[10px] font-black uppercase tracking-[0.12em] text-white/78 transition hover:bg-white/[0.04] hover:text-white">
+                Reset Defaults
+              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setTransferPanelOpen(false)} className="inline-flex h-10 items-center rounded-xl border border-white/10 bg-black px-4 text-[10px] font-black uppercase tracking-[0.12em] text-white/78 transition hover:bg-white/[0.04] hover:text-white">
+                  Cancel
+                </button>
+                <button
+                  onClick={() => { void handleTransferFiles(); }}
+                  disabled={!transferSourceInstanceId || (!transferOptions.includeOptions && !transferOptions.includeServerData && !transferOptions.includeConfig && !transferOptions.includeResourcepacks && !transferOptions.includeShaderpacks)}
+                  className="g-btn-accent h-10 px-5 text-[10px] font-black uppercase tracking-[0.12em] inline-flex items-center gap-2 disabled:opacity-45"
+                >
+                  <Copy size={13} /> Import Here
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {exportPanelOpen && (
         <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/65 px-4">
           <div className="w-full max-w-3xl rounded-[28px] border border-white/12 bg-[#0f0d12] p-6 shadow-[0_28px_90px_rgba(0,0,0,0.45)]">
@@ -976,7 +1098,7 @@ export function InstanceEditor() {
           </div>
         </div>
       )}
-      <section className="g-panel-strong p-6">
+      <section className="g-panel-strong overflow-visible p-6">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3">
             <div
@@ -996,21 +1118,35 @@ export function InstanceEditor() {
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="relative" ref={actionsMenuRef}>
+            <div className="relative z-[80]" ref={actionsMenuRef}>
               <button onClick={() => setActionsMenuOpen((current) => !current)} className="g-btn h-11 w-11 inline-flex items-center justify-center">
                 <MoreHorizontal size={16} />
               </button>
               {actionsMenuOpen && (
-                <div className="absolute right-0 top-[calc(100%+8px)] z-30 min-w-[180px] rounded-2xl border border-white/12 bg-[#0e0c11] p-2 shadow-[0_18px_50px_rgba(0,0,0,0.38)]">
+                <div className="absolute right-0 top-[calc(100%+8px)] z-[140] min-w-[220px] overflow-hidden rounded-2xl border border-white/10 bg-black shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
+                  <div className="border-b border-white/8 px-3 py-2">
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/38">Instance Actions</p>
+                  </div>
+                  <div className="p-2">
+                  <button
+                    onClick={() => {
+                      setActionsMenuOpen(false);
+                      setTransferPanelOpen(true);
+                    }}
+                    className="flex h-11 w-full items-center gap-2 rounded-xl px-3 text-left text-xs font-black uppercase tracking-[0.12em] text-white/85 transition hover:bg-white/[0.06]"
+                  >
+                    <Copy size={13} /> Transfer Files
+                  </button>
                   <button
                     onClick={() => {
                       setActionsMenuOpen(false);
                       setExportPanelOpen(true);
                     }}
-                    className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-xs font-black uppercase tracking-[0.12em] text-white/85 transition hover:bg-white/[0.06]"
+                    className="mt-1 flex h-11 w-full items-center gap-2 rounded-xl px-3 text-left text-xs font-black uppercase tracking-[0.12em] text-white/85 transition hover:bg-white/[0.06]"
                   >
                     <Download size={13} /> Export
                   </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -1238,37 +1374,6 @@ export function InstanceEditor() {
                 </div>
               ) : (
                 <div className="space-y-5">
-                  <div className="rounded-xl border border-slate-300/80 dark:border-white/12 p-4 bg-white/70 dark:bg-white/[0.02]">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <p className="text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45">Options Transfer</p>
-                        <p className="mt-2 text-sm font-semibold text-slate-700 dark:text-white/76">
-                          Copy keybinds, video settings, music volume, sensitivity, FOV, and other common option files from one instance into another.
-                        </p>
-                        <p className="mt-2 text-xs font-semibold text-slate-500 dark:text-white/55">
-                          Source: {optionsClipboard ? optionsClipboard.instanceName : 'Nothing copied yet'}
-                        </p>
-                      </div>
-                      <div className="flex gap-2 flex-wrap">
-                        <button onClick={copyOptionsSetup} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5">
-                          <Copy size={13} /> Copy Options
-                        </button>
-                        <button
-                          onClick={() => { void pasteOptionsSetup(); }}
-                          disabled={!optionsClipboard || optionsClipboard.instanceId === instance.id || pastingOptions}
-                          className="g-btn-accent px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5 disabled:opacity-45"
-                        >
-                          <Save size={13} /> {pastingOptions ? 'Pasting...' : 'Paste Options'}
-                        </button>
-                      </div>
-                    </div>
-                    {optionsClipboard?.instanceId === instance.id && (
-                      <p className="mt-3 text-xs font-semibold text-amber-700 dark:text-amber-300">
-                        Open a different instance before pressing Paste Options.
-                      </p>
-                    )}
-                  </div>
-
                   <div className="grid gap-4 lg:grid-cols-2">
                     <div className="rounded-xl border border-slate-300/80 dark:border-white/12 p-4 bg-white/70 dark:bg-white/[0.02]">
                       <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Memory (MB)</label>

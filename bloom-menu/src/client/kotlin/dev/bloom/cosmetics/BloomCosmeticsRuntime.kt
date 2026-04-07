@@ -2,6 +2,7 @@ package dev.bloom.cosmetics
 
 import dev.bloom.cosmetics.auth.LauncherBridgeAuth
 import dev.bloom.cosmetics.cache.TextureCacheManager
+import dev.bloom.cosmetics.commands.FpsCommand
 import dev.bloom.cosmetics.cosmetics.cape.CapeManager
 import dev.bloom.cosmetics.cosmetics.cape.CapeStateService
 import dev.bloom.cosmetics.presence.PlayerIdentityResolver
@@ -20,6 +21,7 @@ object BloomCosmeticsRuntime {
 
     fun initialize() {
         remoteSyncService.initialize()
+        FpsCommand.register()
 
         ClientTickEvents.END_CLIENT_TICK.register { client ->
             remoteSyncService.tick(System.currentTimeMillis())

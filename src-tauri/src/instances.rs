@@ -9,6 +9,11 @@ use std::time::UNIX_EPOCH;
 use tauri::AppHandle;
 
 const DEFAULT_CURSEFORGE_RELAY_URL: &str = "https://sb.bloomclient.org/functions/v1/main/curseforge";
+const FEATURED_OVERDRIVE_ID: &str = "bloom-performance-overdrive";
+const FEATURED_OVERDRIVE_NAME: &str = "Bloom Preformance | Overdrive";
+const FEATURED_OVERDRIVE_MRPACK_NAME: &str = "bloom-performance-overdrive.mrpack";
+const FEATURED_OVERDRIVE_MRPACK_BYTES: &[u8] =
+    include_bytes!("../resources/modpacks/bloom-performance-overdrive.mrpack");
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -90,6 +95,16 @@ pub struct InstanceContentFile {
     pub display_name: String,
     pub size_bytes: u64,
     pub updated_at: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceTransferOptions {
+    pub include_options: bool,
+    pub include_server_data: bool,
+    pub include_config: bool,
+    pub include_resourcepacks: bool,
+    pub include_shaderpacks: bool,
 }
 
 #[derive(Serialize)]
@@ -692,6 +707,64 @@ async fn install_modrinth_mrpack_contents(
         downloaded_files,
         override_files,
     ))
+}
+
+async fn install_pack_bytes_as_instance(
+    paths_instances_dir: &Path,
+    client: &reqwest::Client,
+    source_mode: &str,
+    source_ref: &str,
+    pack_file_name: &str,
+    pack_bytes: &[u8],
+    title_name: String,
+    game_version: String,
+    loader_name: String,
+) -> Result<Instance, String> {
+    if !is_valid_pack_file(pack_bytes, pack_file_name) {
+        return Err("Downloaded modpack file is invalid or unsupported.".into());
+    }
+
+    let id = format!(
+        "pack-{}-{}",
+        chrono_now_millis(),
+        source_ref.chars().take(12).collect::<String>()
+    );
+    let mut instance = build_default_instance(id.clone(), title_name, game_version, loader_name);
+
+    let instance_dir = paths_instances_dir.join(&id);
+    fs::create_dir_all(instance_dir.join("mods")).map_err(|e| e.to_string())?;
+    fs::create_dir_all(instance_dir.join("resourcepacks")).map_err(|e| e.to_string())?;
+    fs::create_dir_all(instance_dir.join("shaderpacks")).map_err(|e| e.to_string())?;
+    fs::write(
+        instance_dir.join("modpack_source.txt"),
+        format!("source={}\nproject={}\nversion={}\n", source_mode, source_ref, instance.mc_version),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let lower_file_name = pack_file_name.to_ascii_lowercase();
+    let install_report = if lower_file_name.ends_with(".mrpack") {
+        let (fabric_loader, minecraft_version, downloaded_count, override_count) =
+            install_modrinth_mrpack_contents(&instance_dir, pack_bytes, client).await?;
+        if fabric_loader.is_some() {
+            instance.fabric_loader_version = fabric_loader;
+        }
+        if let Some(version) = minecraft_version {
+            instance.mc_version = version;
+        }
+        format!(
+            "mrpack install completed\ndownloaded_files={}\noverrides_extracted={}\n",
+            downloaded_count, override_count
+        )
+    } else {
+        "pack downloaded but not unpacked automatically for this source/format.\n".to_string()
+    };
+
+    fs::write(instance_dir.join(pack_file_name), pack_bytes).map_err(|e| e.to_string())?;
+    fs::write(instance_dir.join("modpack_install_report.txt"), install_report)
+        .map_err(|e| e.to_string())?;
+
+    write_instance_to_dir(&instance_dir, &instance)?;
+    Ok(instance)
 }
 
 fn build_import_instance_name(file_path: &Path, override_name: Option<String>) -> String {
@@ -1566,8 +1639,38 @@ pub fn instance_copy_game_options(
     source_instance_id: String,
     target_instance_id: String,
 ) -> Result<String, String> {
+    instance_transfer_files(
+        app,
+        source_instance_id,
+        target_instance_id,
+        InstanceTransferOptions {
+            include_options: true,
+            include_server_data: false,
+            include_config: false,
+            include_resourcepacks: false,
+            include_shaderpacks: false,
+        },
+    )
+}
+
+#[tauri::command]
+pub fn instance_transfer_files(
+    app: AppHandle,
+    source_instance_id: String,
+    target_instance_id: String,
+    options: InstanceTransferOptions,
+) -> Result<String, String> {
     if source_instance_id == target_instance_id {
-        return Err("Choose a different instance before pasting options.".into());
+        return Err("Choose a different source instance before importing files.".into());
+    }
+
+    if !options.include_options
+        && !options.include_server_data
+        && !options.include_config
+        && !options.include_resourcepacks
+        && !options.include_shaderpacks
+    {
+        return Err("Choose at least one file group to transfer.".into());
     }
 
     let paths = paths_get(app)?;
@@ -1582,31 +1685,127 @@ pub fn instance_copy_game_options(
     }
 
     let mut copied: Vec<String> = Vec::new();
-    for file_name in INSTANCE_OPTIONS_TRANSFER_FILES {
-        let source = source_dir.join(file_name);
-        if !source.exists() || !source.is_file() {
-            continue;
+
+    if options.include_options {
+        for file_name in INSTANCE_OPTIONS_TRANSFER_FILES {
+            let source = source_dir.join(file_name);
+            if !source.exists() || !source.is_file() {
+                continue;
+            }
+
+            let target = target_dir.join(file_name);
+            fs::copy(&source, &target).map_err(|e| {
+                format!(
+                    "Failed copying {} from {} to {}: {}",
+                    file_name, source_instance_id, target_instance_id, e
+                )
+            })?;
+            copied.push((*file_name).to_string());
+        }
+    }
+
+    if options.include_server_data {
+        let source_server_dat = source_dir.join("servers.dat");
+        if source_server_dat.is_file() {
+            let target_server_dat = target_dir.join("servers.dat");
+            fs::copy(&source_server_dat, &target_server_dat).map_err(|e| {
+                format!(
+                    "Failed copying servers.dat from {} to {}: {}",
+                    source_instance_id, target_instance_id, e
+                )
+            })?;
+            copied.push("servers.dat".to_string());
         }
 
-        let target = target_dir.join(file_name);
-        fs::copy(&source, &target).map_err(|e| {
-            format!(
-                "Failed copying {} from {} to {}: {}",
-                file_name,
-                source_instance_id,
-                target_instance_id,
-                e
-            )
-        })?;
-        copied.push((*file_name).to_string());
+        let mut server_files = Vec::new();
+        push_recursive_files(&source_dir, "servers", &mut server_files)?;
+        for rel in server_files {
+            let source = safe_join_relative(&source_dir, &rel)
+                .ok_or_else(|| format!("Blocked unsafe server data path: {}", rel))?;
+            let target = safe_join_relative(&target_dir, &rel)
+                .ok_or_else(|| format!("Blocked unsafe target server data path: {}", rel))?;
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::copy(&source, &target).map_err(|e| {
+                format!(
+                    "Failed copying {} from {} to {}: {}",
+                    rel, source_instance_id, target_instance_id, e
+                )
+            })?;
+            copied.push(rel);
+        }
+    }
+
+    if options.include_config {
+        let mut config_files = Vec::new();
+        push_recursive_files(&source_dir, "config", &mut config_files)?;
+        for rel in config_files {
+            let source = safe_join_relative(&source_dir, &rel)
+                .ok_or_else(|| format!("Blocked unsafe config path: {}", rel))?;
+            let target = safe_join_relative(&target_dir, &rel)
+                .ok_or_else(|| format!("Blocked unsafe target config path: {}", rel))?;
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::copy(&source, &target).map_err(|e| {
+                format!(
+                    "Failed copying {} from {} to {}: {}",
+                    rel, source_instance_id, target_instance_id, e
+                )
+            })?;
+            copied.push(rel);
+        }
+    }
+
+    if options.include_resourcepacks {
+        let mut resourcepack_files = Vec::new();
+        push_recursive_files(&source_dir, "resourcepacks", &mut resourcepack_files)?;
+        for rel in resourcepack_files {
+            let source = safe_join_relative(&source_dir, &rel)
+                .ok_or_else(|| format!("Blocked unsafe resource pack path: {}", rel))?;
+            let target = safe_join_relative(&target_dir, &rel)
+                .ok_or_else(|| format!("Blocked unsafe target resource pack path: {}", rel))?;
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::copy(&source, &target).map_err(|e| {
+                format!(
+                    "Failed copying {} from {} to {}: {}",
+                    rel, source_instance_id, target_instance_id, e
+                )
+            })?;
+            copied.push(rel);
+        }
+    }
+
+    if options.include_shaderpacks {
+        let mut shaderpack_files = Vec::new();
+        push_recursive_files(&source_dir, "shaderpacks", &mut shaderpack_files)?;
+        for rel in shaderpack_files {
+            let source = safe_join_relative(&source_dir, &rel)
+                .ok_or_else(|| format!("Blocked unsafe shader pack path: {}", rel))?;
+            let target = safe_join_relative(&target_dir, &rel)
+                .ok_or_else(|| format!("Blocked unsafe target shader pack path: {}", rel))?;
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::copy(&source, &target).map_err(|e| {
+                format!(
+                    "Failed copying {} from {} to {}: {}",
+                    rel, source_instance_id, target_instance_id, e
+                )
+            })?;
+            copied.push(rel);
+        }
     }
 
     if copied.is_empty() {
-        return Err("No supported options files were found in the source instance.".into());
+        return Err("No matching transfer files were found in the source instance.".into());
     }
 
     Ok(format!(
-        "Copied {} option file(s): {}",
+        "Transferred {} file(s): {}",
         copied.len(),
         copied.join(", ")
     ))
@@ -2073,62 +2272,44 @@ pub async fn marketplace_install_modpack_instance(
     } else {
         return Err("Unsupported source. Use modrinth or curseforge.".into());
     };
+    install_pack_bytes_as_instance(
+        &paths.instances,
+        &client,
+        &source_mode,
+        &project_id,
+        &pack_file_name,
+        &pack_bytes,
+        title_name,
+        game_version,
+        loader_name,
+    )
+    .await
+}
 
-    if !is_valid_pack_file(&pack_bytes, &pack_file_name) {
-        return Err("Downloaded modpack file is invalid or unsupported.".into());
+#[tauri::command]
+pub async fn featured_install_modpack(
+    app: AppHandle,
+    featured_id: String,
+) -> Result<Instance, String> {
+    let paths = paths_get(app)?;
+    let client = reqwest::Client::new();
+    match featured_id.as_str() {
+        FEATURED_OVERDRIVE_ID => {
+            install_pack_bytes_as_instance(
+                &paths.instances,
+                &client,
+                "bloom-featured",
+                FEATURED_OVERDRIVE_ID,
+                FEATURED_OVERDRIVE_MRPACK_NAME,
+                FEATURED_OVERDRIVE_MRPACK_BYTES,
+                FEATURED_OVERDRIVE_NAME.to_string(),
+                "1.21.11".to_string(),
+                "fabric".to_string(),
+            )
+            .await
+        }
+        _ => Err("Unknown featured modpack.".into()),
     }
-
-    let id = format!(
-        "pack-{}-{}",
-        chrono_now_millis(),
-        project_id.chars().take(6).collect::<String>()
-    );
-    let mut instance =
-        build_default_instance(id.clone(), title_name, game_version.clone(), loader_name);
-
-    let instance_dir = paths.instances.join(&id);
-    fs::create_dir_all(instance_dir.join("mods")).map_err(|e| e.to_string())?;
-    fs::create_dir_all(instance_dir.join("resourcepacks")).map_err(|e| e.to_string())?;
-    fs::create_dir_all(instance_dir.join("shaderpacks")).map_err(|e| e.to_string())?;
-    fs::write(
-        instance_dir.join("modpack_source.txt"),
-        format!(
-            "source={}\nproject={}\nversion={}\n",
-            source_mode, project_id, game_version
-        ),
-    )
-    .map_err(|e| e.to_string())?;
-
-    let lower_file_name = pack_file_name.to_ascii_lowercase();
-    let install_report = if source_mode == "modrinth" && lower_file_name.ends_with(".mrpack") {
-        let (fabric_loader, minecraft_version, downloaded_count, override_count) =
-            install_modrinth_mrpack_contents(&instance_dir, &pack_bytes, &client).await?;
-        if fabric_loader.is_some() {
-            instance.fabric_loader_version = fabric_loader;
-        }
-        if let Some(version) = minecraft_version {
-            instance.mc_version = version;
-        }
-        format!(
-            "mrpack install completed\ndownloaded_files={}\noverrides_extracted={}\n",
-            downloaded_count, override_count
-        )
-    } else {
-        "pack downloaded but not unpacked automatically for this source/format.\n".to_string()
-    };
-
-    fs::write(instance_dir.join(&pack_file_name), pack_bytes).map_err(|e| e.to_string())?;
-    fs::write(
-        instance_dir.join("modpack_install_report.txt"),
-        install_report,
-    )
-    .map_err(|e| e.to_string())?;
-
-    let instance_file = instance_dir.join("instance.json");
-    let content = serde_json::to_string_pretty(&instance).map_err(|e| e.to_string())?;
-    fs::write(&instance_file, content).map_err(|e| e.to_string())?;
-
-    Ok(instance)
 }
 
 #[tauri::command]

@@ -172,6 +172,14 @@ export interface BloomExportOptions {
     includeAllFiles: boolean;
 }
 
+export interface InstanceTransferOptions {
+    includeOptions: boolean;
+    includeServerData: boolean;
+    includeConfig: boolean;
+    includeResourcepacks: boolean;
+    includeShaderpacks: boolean;
+}
+
 export const TauriApi = {
     pathsGet: () => invoke<any>('paths_get'),
     startupOpenFileTake: () => invoke<string | null>('startup_open_file_take'),
@@ -209,6 +217,8 @@ export const TauriApi = {
         invoke<void>('instance_delete_shaderpack', { instanceId, fileName }),
     instanceCopyGameOptions: (sourceInstanceId: string, targetInstanceId: string) =>
         invoke<string>('instance_copy_game_options', { sourceInstanceId, targetInstanceId }),
+    instanceTransferFiles: (sourceInstanceId: string, targetInstanceId: string, options: InstanceTransferOptions) =>
+        invoke<string>('instance_transfer_files', { sourceInstanceId, targetInstanceId, options }),
     openShaderpacksFolder: (id: string) => invoke<void>('open_shaderpacks_folder', { id }),
     marketplaceSearchMods: (query: string, source?: 'all' | 'modrinth' | 'curseforge', loader?: string, gameVersion?: string) =>
         invoke<MarketplaceMod[]>('marketplace_search_mods', { query, source, loader, gameVersion }),
@@ -218,6 +228,8 @@ export const TauriApi = {
         invoke<MarketplacePack[]>('marketplace_search_modpacks', { query, source }),
     marketplaceInstallModpackInstance: (source: 'modrinth' | 'curseforge', projectId: string, gameVersion: string) =>
         invoke<Instance>('marketplace_install_modpack_instance', { source, projectId, gameVersion }),
+    featuredInstallModpack: (featuredId: string) =>
+        invoke<Instance>('featured_install_modpack', { featuredId }),
     importLocalModpackInstance: (filePath: string, gameVersion: string, instanceName?: string) =>
         invoke<Instance>('import_local_modpack_instance', { filePath, gameVersion, instanceName }),
     marketplaceSearchResourcepacks: (query: string, source?: 'all' | 'modrinth' | 'curseforge', gameVersion?: string) =>

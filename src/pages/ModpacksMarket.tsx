@@ -6,6 +6,14 @@ import { TauriApi, type MarketplacePack } from '../services/tauri';
 import { PageWidgets, type PageWidget } from '../components/PageWidgets';
 
 type SourceFilter = 'all' | 'modrinth' | 'curseforge';
+const BLOOM_FEATURED_PACK = {
+  id: 'bloom-performance-overdrive',
+  title: 'Bloom Preformance | Overdrive',
+  description:
+    'Bloom-curated Fabric 1.21.11 performance pack tuned around Sodium, Lithium, C2ME, ModernFix-mVUS, VMP, and supporting client fixes.',
+  minecraftVersion: '1.21.11',
+  modCount: 34
+} as const;
 
 function compactDownloads(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -107,6 +115,22 @@ export function ModpacksMarket() {
     }
   };
 
+  const installFeaturedPack = async () => {
+    const rowId = `featured:${BLOOM_FEATURED_PACK.id}`;
+    setInstallingId(rowId);
+    setStatus(`Installing ${BLOOM_FEATURED_PACK.title}...`);
+    try {
+      const instance = await TauriApi.featuredInstallModpack(BLOOM_FEATURED_PACK.id);
+      setStatus(`Created instance "${instance.name}". You can now customize name and icon.`);
+      navigate(`/instance-editor?id=${encodeURIComponent(instance.id)}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`Install failed: ${message}`);
+    } finally {
+      setInstallingId(null);
+    }
+  };
+
   const heroWidget = (
     <section className="g-panel-strong p-6">
         <p className="text-[10px] font-extrabold tracking-[0.2em] uppercase g-accent-text">Modpacks</p>
@@ -166,6 +190,25 @@ export function ModpacksMarket() {
     <section className="g-panel p-4 relative z-[10]">
         <p className="text-xs uppercase tracking-[0.14em] font-extrabold g-muted">Results</p>
         <div className="mt-3 space-y-2">
+          <article className="rounded-xl border border-[color-mix(in_srgb,var(--g-accent)_28%,transparent)] bg-[linear-gradient(135deg,color-mix(in_srgb,var(--g-soft)_82%,#07110d_18%),color-mix(in_srgb,var(--g-shell-strong)_94%,#000_6%))] p-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <div className="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_srgb,var(--g-success)_32%,transparent)] bg-[color-mix(in_srgb,var(--g-success)_14%,transparent)] px-3 py-1 text-[10px] font-black uppercase tracking-[0.24em] text-[color-mix(in_srgb,var(--g-success)_70%,#fff_30%)]">
+                  <Sparkles size={12} /> Bloom Featured
+                </div>
+                <h2 className="mt-3 text-2xl font-black text-white">{BLOOM_FEATURED_PACK.title}</h2>
+                <p className="mt-2 text-sm text-white/66">{BLOOM_FEATURED_PACK.description}</p>
+                <p className="mt-3 text-[10px] uppercase tracking-[0.16em] text-white/52">MC {BLOOM_FEATURED_PACK.minecraftVersion} | {BLOOM_FEATURED_PACK.modCount} mods</p>
+              </div>
+              <button
+                onClick={() => { void installFeaturedPack(); }}
+                disabled={installingId === `featured:${BLOOM_FEATURED_PACK.id}`}
+                className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-45"
+              >
+                {installingId === `featured:${BLOOM_FEATURED_PACK.id}` ? 'Installing...' : 'Install Featured'}
+              </button>
+            </div>
+          </article>
           {results.map((pack) => {
             const rowId = `${pack.source}:${pack.id}`;
             const loaderText = pack.supportedLoaders.length > 0 ? pack.supportedLoaders.join(', ') : 'loader unknown';

@@ -58,7 +58,7 @@ import { requestCosmeticsModMenuOpen } from '../constants/cosmeticsModMenu';
 const Particles = lazy(() => import('./Particles').then((module) => ({ default: module.Particles })));
 
 type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
-type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'rainbow';
+type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'custom';
 type BackgroundMode = 'none' | 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula' | 'custom';
 type DensityMode = 'compact' | 'cozy' | 'spacious';
 type FontPackMode = 'manrope' | 'space-grotesk' | 'sora';
@@ -87,6 +87,7 @@ const THEME_STORAGE_KEY = 'bloom_theme_mode';
 const THEME_CHANGE_EVENT = 'bloom-theme-change';
 const ACCENT_STORAGE_KEY = 'bloom_accent_mode';
 const ACCENT_CHANGE_EVENT = 'bloom-accent-change';
+const ACCENT_CUSTOM_COLOR_KEY = 'bloom_accent_custom_color';
 const BACKGROUND_STORAGE_KEY = 'bloom_background_mode';
 const BACKGROUND_CHANGE_EVENT = 'bloom-background-change';
 const BACKGROUND_VISUAL_OPACITY_KEY = 'bloom_background_visual_opacity';
@@ -191,8 +192,38 @@ const ACCENT_MAP: Record<AccentMode, { accent: string; soft: string; gradient: s
   emerald: { accent: '#3adf8f', soft: 'rgba(58, 223, 143, 0.24)', gradient: 'linear-gradient(90deg, #28cf7d 0%, #89f4bd 100%)' },
   amber: { accent: '#ffbe4a', soft: 'rgba(255, 190, 74, 0.25)', gradient: 'linear-gradient(90deg, #ffad2f 0%, #ffd57f 100%)' },
   rose: { accent: '#ff6e9a', soft: 'rgba(255, 110, 154, 0.24)', gradient: 'linear-gradient(90deg, #ff5c89 0%, #ff9cb7 100%)' },
-  rainbow: { accent: '#ff76d7', soft: 'rgba(255, 118, 215, 0.24)', gradient: 'linear-gradient(90deg, #ff5f6d 0%, #ffc371 24%, #47e0ff 50%, #60ff9f 74%, #b57bff 100%)' }
+  custom: { accent: '#ff76d7', soft: 'rgba(255, 118, 215, 0.24)', gradient: 'linear-gradient(90deg, #ff76d7 0%, #ffb4e8 100%)' }
 };
+
+function normalizeAccentColor(value: string | null | undefined) {
+  const clean = (value ?? '').trim();
+  return /^#[0-9a-fA-F]{6}$/.test(clean) ? clean.toLowerCase() : '#ff76d7';
+}
+
+function hexToRgb(value: string) {
+  const clean = normalizeAccentColor(value).replace('#', '');
+  const num = Number.parseInt(clean, 16);
+  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+}
+
+function mixChannel(a: number, b: number, amount: number) {
+  return Math.round(a + (b - a) * amount);
+}
+
+function deriveCustomAccent(color: string) {
+  const base = hexToRgb(color);
+  const bright = {
+    r: mixChannel(base.r, 255, 0.42),
+    g: mixChannel(base.g, 255, 0.42),
+    b: mixChannel(base.b, 255, 0.42)
+  };
+  const brightHex = `#${[bright.r, bright.g, bright.b].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
+  return {
+    accent: normalizeAccentColor(color),
+    soft: `rgba(${base.r}, ${base.g}, ${base.b}, 0.24)`,
+    gradient: `linear-gradient(90deg, ${normalizeAccentColor(color)} 0%, ${brightHex} 100%)`
+  };
+}
 
 const DENSITY_MAP: Record<DensityMode, { fontScale: string; headerHeight: number; mainPadding: string }> = {
   compact: { fontScale: '0.93', headerHeight: 62, mainPadding: '12px' },
@@ -225,7 +256,7 @@ const ONBOARDING_ACCENT_OPTIONS: { id: AccentMode; label: string; swatch: string
   { id: 'emerald', label: 'Emerald', swatch: 'linear-gradient(90deg,#28cf7d,#89f4bd)' },
   { id: 'amber', label: 'Amber', swatch: 'linear-gradient(90deg,#ffad2f,#ffd57f)' },
   { id: 'rose', label: 'Rose', swatch: 'linear-gradient(90deg,#ff5c89,#ff9cb7)' },
-  { id: 'rainbow', label: 'Rainbow', swatch: 'linear-gradient(90deg,#ff5f6d,#ffc371,#47e0ff,#60ff9f,#b57bff)' }
+  { id: 'custom', label: 'Custom', swatch: 'linear-gradient(90deg,#ff76d7,#ffb4e8)' }
 ];
 
 function clampPercent(value: number) {
@@ -263,10 +294,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
   });
   const [accentMode, setAccentMode] = useState<AccentMode>(() => {
     const stored = localStorage.getItem(ACCENT_STORAGE_KEY);
-    return stored === 'purple' || stored === 'cyan' || stored === 'emerald' || stored === 'amber' || stored === 'rose' || stored === 'rainbow'
+    return stored === 'purple' || stored === 'cyan' || stored === 'emerald' || stored === 'amber' || stored === 'rose' || stored === 'custom'
       ? stored
       : 'purple';
   });
+  const [accentCustomColor, setAccentCustomColor] = useState<string>(() => normalizeAccentColor(localStorage.getItem(ACCENT_CUSTOM_COLOR_KEY)));
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>(() => {
     const stored = localStorage.getItem(BACKGROUND_STORAGE_KEY);
     return stored === 'none' || stored === 'plus' || stored === 'particles' || stored === 'aurora' || stored === 'scanlines' || stored === 'nebula' || stored === 'custom'
@@ -587,12 +619,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, [dropdownOpacity]);
 
   useEffect(() => {
-    const accent = ACCENT_MAP[accentMode] || ACCENT_MAP.purple;
+    const accent = accentMode === 'custom' ? deriveCustomAccent(accentCustomColor) : (ACCENT_MAP[accentMode] || ACCENT_MAP.purple);
     document.documentElement.style.setProperty('--g-accent', accent.accent);
     document.documentElement.style.setProperty('--g-accent-soft', accent.soft);
     document.documentElement.style.setProperty('--g-accent-gradient', accent.gradient);
     localStorage.setItem(ACCENT_STORAGE_KEY, accentMode);
-  }, [accentMode]);
+    localStorage.setItem(ACCENT_CUSTOM_COLOR_KEY, accentCustomColor);
+  }, [accentMode, accentCustomColor]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-background', backgroundMode);
@@ -791,10 +824,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const onAccentChange = (event: Event) => {
-      const custom = event as CustomEvent<{ accent?: AccentMode }>;
+      const custom = event as CustomEvent<{ accent?: AccentMode; customColor?: string }>;
       const requestedAccent = custom.detail?.accent;
-      if (requestedAccent === 'purple' || requestedAccent === 'cyan' || requestedAccent === 'emerald' || requestedAccent === 'amber' || requestedAccent === 'rose' || requestedAccent === 'rainbow') {
+      const requestedCustomColor = custom.detail?.customColor;
+      if (requestedAccent === 'purple' || requestedAccent === 'cyan' || requestedAccent === 'emerald' || requestedAccent === 'amber' || requestedAccent === 'rose' || requestedAccent === 'custom') {
         setAccentMode(requestedAccent);
+      }
+      if (typeof requestedCustomColor === 'string') {
+        setAccentCustomColor(normalizeAccentColor(requestedCustomColor));
       }
     };
 

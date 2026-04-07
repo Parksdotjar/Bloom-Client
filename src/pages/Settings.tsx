@@ -31,7 +31,7 @@ import {
 } from '../services/updater';
 
 type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
-type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'rainbow';
+type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'custom';
 type BackgroundMode = 'none' | 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula' | 'custom';
 type DensityMode = 'compact' | 'cozy' | 'spacious';
 type FontPackMode = 'manrope' | 'space-grotesk' | 'sora';
@@ -129,6 +129,7 @@ const THEME_STORAGE_KEY = 'bloom_theme_mode';
 const THEME_CHANGE_EVENT = 'bloom-theme-change';
 const ACCENT_STORAGE_KEY = 'bloom_accent_mode';
 const ACCENT_CHANGE_EVENT = 'bloom-accent-change';
+const ACCENT_CUSTOM_COLOR_KEY = 'bloom_accent_custom_color';
 const BACKGROUND_STORAGE_KEY = 'bloom_background_mode';
 const BACKGROUND_CHANGE_EVENT = 'bloom-background-change';
 const BACKGROUND_VISUAL_OPACITY_KEY = 'bloom_background_visual_opacity';
@@ -727,8 +728,13 @@ const ACCENTS: { id: AccentMode; label: string; swatch: string }[] = [
   { id: 'emerald', label: 'Emerald', swatch: 'linear-gradient(90deg,#28cf7d,#89f4bd)' },
   { id: 'amber', label: 'Amber', swatch: 'linear-gradient(90deg,#ffad2f,#ffd57f)' },
   { id: 'rose', label: 'Rose', swatch: 'linear-gradient(90deg,#ff5c89,#ff9cb7)' },
-  { id: 'rainbow', label: 'Rainbow', swatch: 'linear-gradient(90deg,#ff5f6d,#ffc371,#47e0ff,#60ff9f,#b57bff)' }
+  { id: 'custom', label: 'Custom', swatch: 'linear-gradient(90deg,#ff76d7,#ffb4e8)' }
 ];
+
+function normalizeAccentColor(value: string | null | undefined) {
+  const clean = (value ?? '').trim();
+  return /^#[0-9a-fA-F]{6}$/.test(clean) ? clean.toLowerCase() : '#ff76d7';
+}
 
 const EASING_PRESETS: { id: MotionEasingPreset; label: string; description: string }[] = [
   { id: 'out-quad', label: 'Out Quad', description: 'Default launcher feel.' },
@@ -889,10 +895,11 @@ export function Settings() {
   });
   const [accentMode, setAccentMode] = useState<AccentMode>(() => {
     const stored = localStorage.getItem(ACCENT_STORAGE_KEY);
-    return stored === 'purple' || stored === 'cyan' || stored === 'emerald' || stored === 'amber' || stored === 'rose' || stored === 'rainbow'
+    return stored === 'purple' || stored === 'cyan' || stored === 'emerald' || stored === 'amber' || stored === 'rose' || stored === 'custom'
       ? stored
       : 'purple';
   });
+  const [accentCustomColor, setAccentCustomColor] = useState<string>(() => normalizeAccentColor(localStorage.getItem(ACCENT_CUSTOM_COLOR_KEY)));
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>(() => {
     const stored = localStorage.getItem(BACKGROUND_STORAGE_KEY);
     return stored === 'none' || stored === 'plus' || stored === 'particles' || stored === 'aurora' || stored === 'scanlines' || stored === 'nebula' || stored === 'custom'
@@ -1628,7 +1635,17 @@ export function Settings() {
   const applyAccent = (next: AccentMode) => {
     setAccentMode(next);
     localStorage.setItem(ACCENT_STORAGE_KEY, next);
-    window.dispatchEvent(new CustomEvent(ACCENT_CHANGE_EVENT, { detail: { accent: next } }));
+    localStorage.setItem(ACCENT_CUSTOM_COLOR_KEY, accentCustomColor);
+    window.dispatchEvent(new CustomEvent(ACCENT_CHANGE_EVENT, { detail: { accent: next, customColor: accentCustomColor } }));
+  };
+
+  const applyCustomAccentColor = (next: string) => {
+    const normalized = normalizeAccentColor(next);
+    setAccentCustomColor(normalized);
+    setAccentMode('custom');
+    localStorage.setItem(ACCENT_CUSTOM_COLOR_KEY, normalized);
+    localStorage.setItem(ACCENT_STORAGE_KEY, 'custom');
+    window.dispatchEvent(new CustomEvent(ACCENT_CHANGE_EVENT, { detail: { accent: 'custom', customColor: normalized } }));
   };
 
   const applyBackground = (next: BackgroundMode) => {
@@ -2014,6 +2031,45 @@ export function Settings() {
 
               {appearanceSection === 'style' && (
                 <>
+          <AppearanceDropdown title="Accent Color" description="Global accent applied to controls and highlights.">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {ACCENTS.map((accent) => (
+                <button
+                  key={accent.id}
+                  onClick={() => applyAccent(accent.id)}
+                  className={clsx('rounded-xl border p-3 text-left', accentMode === accent.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}
+                >
+                  <div className="h-6 rounded-md border border-white/15" style={{ background: accent.id === 'custom' ? `linear-gradient(90deg, ${accentCustomColor}, color-mix(in srgb, ${accentCustomColor} 58%, white))` : accent.swatch }} />
+                  <p className="mt-2 text-sm font-extrabold text-white">{accent.label}</p>
+                </button>
+              ))}
+            </div>
+            {accentMode === 'custom' && (
+              <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="color"
+                      value={accentCustomColor}
+                      onChange={(event) => applyCustomAccentColor(event.target.value)}
+                      className="h-11 w-14 rounded-lg border border-white/15 bg-transparent p-1"
+                    />
+                    <div>
+                      <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-white/58">Custom Accent</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{accentCustomColor}</p>
+                    </div>
+                  </div>
+                  <input
+                    value={accentCustomColor}
+                    onChange={(event) => applyCustomAccentColor(event.target.value)}
+                    className="h-11 flex-1 rounded-lg border border-white/10 bg-white/[0.03] px-3 text-sm font-semibold text-white outline-none"
+                    placeholder="#ff76d7"
+                  />
+                </div>
+              </div>
+            )}
+          </AppearanceDropdown>
+
           <AppearanceDropdown title="Theme Mode" description="Pick the overall visual theme for the launcher.">
             <div className="flex justify-center">
               <button
@@ -2145,20 +2201,6 @@ export function Settings() {
             </div>
           </AppearanceDropdown>
 
-          <AppearanceDropdown title="Accent Color" description="Global accent applied to controls and highlights.">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {ACCENTS.map((accent) => (
-                <button
-                  key={accent.id}
-                  onClick={() => applyAccent(accent.id)}
-                  className={clsx('rounded-xl border p-3 text-left', accentMode === accent.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}
-                >
-                  <div className="h-6 rounded-md border border-white/15" style={{ background: accent.swatch }} />
-                  <p className="mt-2 text-sm font-extrabold text-white">{accent.label}</p>
-                </button>
-              ))}
-            </div>
-          </AppearanceDropdown>
                 </>
               )}
 

@@ -16,6 +16,15 @@ const FEATURED_QUERIES: Record<MarketTab, string[]> = {
   resourcepacks: ['Faithful', 'Fresh Animations', 'Complementary'],
   shaders: ['Complementary', 'BSL', 'Photon']
 };
+const BLOOM_FEATURED_PACK = {
+  id: 'bloom-performance-overdrive',
+  title: 'Bloom Preformance | Overdrive',
+  description:
+    'Bloom-curated Fabric 1.21.11 performance pack tuned around Sodium, Lithium, C2ME, ModernFix-mVUS, VMP, and supporting client fixes.',
+  minecraftVersion: '1.21.11',
+  modCount: 34,
+  tags: ['Featured', 'Fabric', 'Performance', 'Bloom']
+} as const;
 
 function compactDownloads(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -208,6 +217,25 @@ export function Marketplace() {
     }
   };
 
+  const installFeaturedModpack = async () => {
+    const rowId = `featured:${BLOOM_FEATURED_PACK.id}`;
+    setInstallingId(rowId);
+    setBlockingTitle('Installing featured modpack...');
+    setStatus(`Installing ${BLOOM_FEATURED_PACK.title}...`);
+    try {
+      const instance = await TauriApi.featuredInstallModpack(BLOOM_FEATURED_PACK.id);
+      await loadInstances();
+      setStatus(`Created instance "${instance.name}".`);
+      navigate(`/instance-editor?id=${encodeURIComponent(instance.id)}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`Install failed: ${message}`);
+    } finally {
+      setInstallingId(null);
+      setBlockingTitle(null);
+    }
+  };
+
   const currentResults = resultsByTab[activeTab];
   const currentQuery = queryByTab[activeTab];
 
@@ -327,6 +355,42 @@ export function Marketplace() {
                   {status && <p className="text-xs text-white/55">{status}</p>}
 
                   <div className="space-y-3">
+                    {activeTab === 'modpacks' && (
+                      <article
+                        className="border px-5 py-5 shadow-[0_24px_80px_rgba(0,0,0,0.28)]"
+                        style={{
+                          borderRadius: 'calc(24px * var(--g-roundness-mult))',
+                          borderColor: 'color-mix(in srgb, var(--g-accent) 28%, var(--g-border))',
+                          background: 'linear-gradient(135deg, color-mix(in srgb, var(--g-soft) 82%, #07110d 18%), color-mix(in srgb, var(--g-shell-strong) 94%, #000 6%))'
+                        }}
+                      >
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                          <div className="min-w-0">
+                            <div className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.24em]" style={{ borderColor: 'color-mix(in srgb, var(--g-success) 32%, transparent)', background: 'color-mix(in srgb, var(--g-success) 14%, transparent)', color: 'color-mix(in srgb, var(--g-success) 70%, #fff 30%)' }}>
+                              <Sparkles size={12} />
+                              Bloom Featured
+                            </div>
+                            <h2 className="mt-3 text-[28px] font-black tracking-[-0.04em] text-white">{BLOOM_FEATURED_PACK.title}</h2>
+                            <p className="mt-2 max-w-3xl text-sm leading-6 text-white/66">{BLOOM_FEATURED_PACK.description}</p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {BLOOM_FEATURED_PACK.tags.map((tag) => (
+                                <span key={tag} className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-white/72">{tag}</span>
+                              ))}
+                              <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-white/72">MC {BLOOM_FEATURED_PACK.minecraftVersion}</span>
+                              <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-white/72">{BLOOM_FEATURED_PACK.modCount} mods</span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => { void installFeaturedModpack(); }}
+                            disabled={installingId === `featured:${BLOOM_FEATURED_PACK.id}`}
+                            className="h-12 min-w-[220px] px-5 text-xs font-black uppercase tracking-[0.18em] text-white disabled:opacity-50"
+                            style={{ borderRadius: 'calc(16px * var(--g-roundness-mult))', background: 'var(--g-accent-gradient)', boxShadow: '0 10px 24px color-mix(in srgb, var(--g-accent) 34%, transparent)' }}
+                          >
+                            {installingId === `featured:${BLOOM_FEATURED_PACK.id}` ? 'Installing...' : 'Install Featured Pack'}
+                          </button>
+                        </div>
+                      </article>
+                    )}
                     {currentResults.map((item) => {
                       const rowId = `${item.source}:${item.id}`;
                       const versionCount = 'availableVersions' in item ? item.availableVersions.length : 0;
@@ -347,7 +411,6 @@ export function Marketplace() {
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
                               <h2 className="truncate text-xl font-black text-white">{item.title}</h2>
-                              {item.title.toLowerCase().includes('fabulously optimized') && <span className="rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.16em]" style={{ borderColor: 'color-mix(in srgb, var(--g-success) 42%, transparent)', background: 'color-mix(in srgb, var(--g-success) 18%, transparent)', color: 'var(--g-text)' }}>Extra Featured</span>}
                             </div>
                             <p className="mt-1 line-clamp-2 text-sm text-white/62">{item.description || 'No description provided.'}</p>
                             <div className="mt-3 flex flex-wrap gap-2">
