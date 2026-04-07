@@ -483,7 +483,15 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     let v_json_str = fs::read_to_string(&version_json_path).map_err(|e| e.to_string())?;
     let v_data: serde_json::Value = serde_json::from_str(&v_json_str).map_err(|e| e.to_string())?;
 
-    fn is_allowed_on_windows(lib: &serde_json::Value) -> bool {
+    fn is_allowed_on_current_os(lib: &serde_json::Value) -> bool {
+        let current_os = if cfg!(target_os = "windows") {
+            "windows"
+        } else if cfg!(target_os = "macos") {
+            "osx"
+        } else {
+            "linux"
+        };
+
         if let Some(rules) = lib["rules"].as_array() {
             // Mojang rule behavior: when rules exist, default disallow;
             // matching rules apply in order.
@@ -493,9 +501,12 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                 let os_name = rule
                     .get("os")
                     .and_then(|o| o.get("name"))
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("windows");
-                if os_name.eq_ignore_ascii_case("windows") {
+                    .and_then(|n| n.as_str());
+                let os_matches = match os_name {
+                    Some(name) => name.eq_ignore_ascii_case(current_os),
+                    None => true,
+                };
+                if os_matches {
                     allowed = action == "allow";
                 }
             }
@@ -559,7 +570,7 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     let libraries_dir = paths.runtimes.join("libraries");
     if let Some(libs) = v_data["libraries"].as_array() {
         for lib in libs {
-            let allow = is_allowed_on_windows(lib);
+            let allow = is_allowed_on_current_os(lib);
 
             if allow {
                 if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
@@ -653,7 +664,8 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     merged_libs.sort();
     cp_entries.extend(merged_libs);
 
-    let classpath = cp_entries.join(";"); // Windows separator
+    let classpath_separator = if cfg!(target_os = "windows") { ";" } else { ":" };
+    let classpath = cp_entries.join(classpath_separator);
 
     // 4. Setup natives
     let natives_root_dir = paths.instances.join(&config.instance_id).join("natives");
@@ -720,7 +732,7 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
 
     if let Some(libs) = v_data["libraries"].as_array() {
         for lib in libs {
-            if !is_allowed_on_windows(lib) {
+            if !is_allowed_on_current_os(lib) {
                 continue;
             }
             // Mojang metadata can represent natives in two ways:
