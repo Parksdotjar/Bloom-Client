@@ -961,6 +961,10 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     let mut args = Vec::new();
 
     // JVM Args
+    if cfg!(target_os = "macos") {
+        // Required by GLFW on macOS so the window can initialize on the main thread.
+        args.push("-XstartOnFirstThread".to_string());
+    }
     args.push(format!("-Xmx{}M", config.max_memory_mb));
     args.push(format!(
         "-Djava.library.path={}",
