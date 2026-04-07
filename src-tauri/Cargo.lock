@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "bloom-client"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "axum",
  "base64 0.22.1",

@@ -733,22 +733,35 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     };
     fn classifier_matches_host(classifier: &str, native_prefix: &str) -> bool {
         let c = classifier.to_ascii_lowercase();
-        let is_64 = cfg!(target_pointer_width = "64");
         if !c.starts_with(native_prefix) {
             return false;
         }
-        if is_64 {
-            // Reject explicit 32-bit and ARM64 natives on x64 hosts.
-            if c.contains("x86") && !c.contains("x86_64") {
+        if cfg!(target_arch = "aarch64") {
+            if c.ends_with("-32") || (c.contains("x86") && !c.contains("x86_64")) {
                 return false;
             }
-            if c.ends_with("-32") || c.contains("arm64") {
+            if c.contains("x86_64") {
+                return false;
+            }
+            return c.contains("arm64")
+                || c.contains("aarch64")
+                || c.contains("aarch_64")
+                || c == native_prefix;
+        }
+        if cfg!(target_arch = "x86_64") {
+            if c.ends_with("-32") || (c.contains("x86") && !c.contains("x86_64")) {
+                return false;
+            }
+            if c.contains("arm64") || c.contains("aarch64") || c.contains("aarch_64") {
                 return false;
             }
             return true;
         }
-        // 32-bit host: allow generic/32-bit x86 classifiers only.
-        !c.contains("x86_64") && !c.ends_with("-64") && !c.contains("arm64")
+        !c.contains("x86_64")
+            && !c.ends_with("-64")
+            && !c.contains("arm64")
+            && !c.contains("aarch64")
+            && !c.contains("aarch_64")
     }
 
     if let Some(libs) = v_data["libraries"].as_array() {
@@ -821,6 +834,18 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                     && classifier_matches_host(&format!("{native_prefix}-64"), native_prefix)
                 {
                     Some(format!("{native_prefix}-64"))
+                } else if classifiers.get(&format!("{native_prefix}-arm64")).is_some()
+                    && classifier_matches_host(&format!("{native_prefix}-arm64"), native_prefix)
+                {
+                    Some(format!("{native_prefix}-arm64"))
+                } else if classifiers.get(&format!("{native_prefix}-aarch64")).is_some()
+                    && classifier_matches_host(&format!("{native_prefix}-aarch64"), native_prefix)
+                {
+                    Some(format!("{native_prefix}-aarch64"))
+                } else if classifiers.get(&format!("{native_prefix}-aarch_64")).is_some()
+                    && classifier_matches_host(&format!("{native_prefix}-aarch_64"), native_prefix)
+                {
+                    Some(format!("{native_prefix}-aarch_64"))
                 } else if classifiers.get(&format!("{native_prefix}-x86_64")).is_some()
                     && classifier_matches_host(&format!("{native_prefix}-x86_64"), native_prefix)
                 {
