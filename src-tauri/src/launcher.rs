@@ -710,10 +710,31 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
 
     // Extract Windows native libraries (LWJGL/OpenAL/etc.) from native classifier jars.
     let mut native_jars: Vec<(std::path::PathBuf, Option<String>)> = Vec::new();
-    fn classifier_matches_host(classifier: &str) -> bool {
+    let native_prefix = if cfg!(target_os = "windows") {
+        "natives-windows"
+    } else if cfg!(target_os = "macos") {
+        "natives-macos"
+    } else {
+        "natives-linux"
+    };
+    let native_ext = if cfg!(target_os = "windows") {
+        ".dll"
+    } else if cfg!(target_os = "macos") {
+        ".dylib"
+    } else {
+        ".so"
+    };
+    let required_lwjgl_native = if cfg!(target_os = "windows") {
+        "lwjgl.dll"
+    } else if cfg!(target_os = "macos") {
+        "liblwjgl.dylib"
+    } else {
+        "liblwjgl.so"
+    };
+    fn classifier_matches_host(classifier: &str, native_prefix: &str) -> bool {
         let c = classifier.to_ascii_lowercase();
         let is_64 = cfg!(target_pointer_width = "64");
-        if !c.starts_with("natives-windows") {
+        if !c.starts_with(native_prefix) {
             return false;
         }
         if is_64 {
@@ -743,7 +764,7 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                 let parts: Vec<&str> = name.split(':').collect();
                 if parts.len() >= 4 {
                     let classifier = parts[3];
-                    let is_windows_native = classifier_matches_host(classifier);
+                    let is_windows_native = classifier_matches_host(classifier, native_prefix);
                     if is_windows_native {
                         if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact"))
                         {
@@ -772,36 +793,46 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                 };
                 let preferred_key = lib
                     .get("natives")
-                    .and_then(|n| n.get("windows"))
+                    .and_then(|n| {
+                        if cfg!(target_os = "windows") {
+                            n.get("windows")
+                        } else if cfg!(target_os = "macos") {
+                            n.get("osx")
+                        } else {
+                            n.get("linux")
+                        }
+                    })
                     .and_then(|w| w.as_str())
                     .map(|k| k.replace("${arch}", arch_token));
 
                 let native_key = if let Some(key) = preferred_key {
-                    if classifiers.get(&key).is_some() && classifier_matches_host(&key) {
+                    if classifiers.get(&key).is_some()
+                        && classifier_matches_host(&key, native_prefix)
+                    {
                         Some(key)
                     } else {
                         None
                     }
-                } else if classifiers.get("natives-windows").is_some()
-                    && classifier_matches_host("natives-windows")
+                } else if classifiers.get(native_prefix).is_some()
+                    && classifier_matches_host(native_prefix, native_prefix)
                 {
-                    Some("natives-windows".to_string())
-                } else if classifiers.get("natives-windows-64").is_some()
-                    && classifier_matches_host("natives-windows-64")
+                    Some(native_prefix.to_string())
+                } else if classifiers.get(&format!("{native_prefix}-64")).is_some()
+                    && classifier_matches_host(&format!("{native_prefix}-64"), native_prefix)
                 {
-                    Some("natives-windows-64".to_string())
-                } else if classifiers.get("natives-windows-x86_64").is_some()
-                    && classifier_matches_host("natives-windows-x86_64")
+                    Some(format!("{native_prefix}-64"))
+                } else if classifiers.get(&format!("{native_prefix}-x86_64")).is_some()
+                    && classifier_matches_host(&format!("{native_prefix}-x86_64"), native_prefix)
                 {
-                    Some("natives-windows-x86_64".to_string())
-                } else if classifiers.get("natives-windows-32").is_some()
-                    && classifier_matches_host("natives-windows-32")
+                    Some(format!("{native_prefix}-x86_64"))
+                } else if classifiers.get(&format!("{native_prefix}-32")).is_some()
+                    && classifier_matches_host(&format!("{native_prefix}-32"), native_prefix)
                 {
-                    Some("natives-windows-32".to_string())
-                } else if classifiers.get("natives-windows-x86").is_some()
-                    && classifier_matches_host("natives-windows-x86")
+                    Some(format!("{native_prefix}-32"))
+                } else if classifiers.get(&format!("{native_prefix}-x86")).is_some()
+                    && classifier_matches_host(&format!("{native_prefix}-x86"), native_prefix)
                 {
-                    Some("natives-windows-x86".to_string())
+                    Some(format!("{native_prefix}-x86"))
                 } else {
                     None
                 };
@@ -866,7 +897,7 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
             if entry.is_dir() || name.starts_with("META-INF/") {
                 continue;
             }
-            if !name.to_ascii_lowercase().ends_with(".dll") {
+            if !name.to_ascii_lowercase().ends_with(native_ext) {
                 continue;
             }
 
@@ -891,11 +922,12 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
         }
     }
 
-    let lwjgl_dll = natives_dir.join("lwjgl.dll");
-    if !lwjgl_dll.exists() {
+    let lwjgl_native = natives_dir.join(required_lwjgl_native);
+    if !lwjgl_native.exists() {
         return Err(format!(
-            "Missing native library lwjgl.dll after native extraction. Try Install again. Natives dir: {}",
-            natives_dir.display()
+            "Missing native library {} after native extraction. Try Install again. Natives dir: {}",
+            required_lwjgl_native,
+            natives_dir.display(),
         ));
     }
 
