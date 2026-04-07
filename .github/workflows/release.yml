@@ -15,7 +15,9 @@ jobs:
       matrix:
         include:
           - platform: windows-latest
-            args: ""
+            args: "--ci"
+          - platform: macos-latest
+            args: "--bundles dmg --no-sign --ci"
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout

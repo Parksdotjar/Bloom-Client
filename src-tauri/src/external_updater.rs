@@ -57,10 +57,19 @@ fn compare_versions(current: &str, latest: &str) -> std::cmp::Ordering {
     Ordering::Equal
 }
 
+#[cfg(target_os = "windows")]
 fn find_windows_installer(assets: &[GitHubAsset]) -> Option<&GitHubAsset> {
     assets.iter().find(|asset| {
         let name = asset.name.to_ascii_lowercase();
         name.ends_with("-setup.exe") || name.ends_with(".msi")
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn find_macos_installer(assets: &[GitHubAsset]) -> Option<&GitHubAsset> {
+    assets.iter().find(|asset| {
+        let name = asset.name.to_ascii_lowercase();
+        name.ends_with(".dmg")
     })
 }
 
@@ -92,8 +101,25 @@ pub async fn external_update_check(app: AppHandle) -> Result<Option<ExternalUpda
         return Ok(None);
     }
 
-    let installer = find_windows_installer(&release.assets)
-        .ok_or_else(|| "No Windows installer asset found in latest release".to_string())?;
+    let installer = {
+        #[cfg(target_os = "windows")]
+        {
+            find_windows_installer(&release.assets)
+                .ok_or_else(|| "No Windows installer asset found in latest release".to_string())?
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            find_macos_installer(&release.assets).ok_or_else(|| {
+                "No macOS installer asset (.dmg) found in latest release".to_string()
+            })?
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            return Err("External installer updates are only supported on Windows and macOS".to_string());
+        }
+    };
 
     Ok(Some(ExternalUpdateInfo {
         version: latest_version,
@@ -108,14 +134,12 @@ pub async fn external_update_install(
     installer_url: String,
     version: String,
 ) -> Result<(), String> {
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = app;
         let _ = installer_url;
         let _ = version;
-        return Err(
-            "External installer updates are currently implemented for Windows only".to_string(),
-        );
+        return Err("External installer updates are implemented for Windows and macOS only".to_string());
     }
 
     #[cfg(target_os = "windows")]
@@ -166,6 +190,69 @@ pub async fn external_update_install(
             .arg(relaunch_script_path.as_os_str())
             .spawn()
             .map_err(|e| format!("Failed to start updater script: {e}"))?;
+
+        app.exit(0);
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let response = reqwest::Client::new()
+            .get(&installer_url)
+            .header(reqwest::header::USER_AGENT, "BloomClientUpdater/1.0")
+            .send()
+            .await
+            .map_err(|e| format!("Failed to download installer: {e}"))?;
+
+        if !response.status().is_success() {
+            return Err(format!(
+                "Installer download returned HTTP {}",
+                response.status()
+            ));
+        }
+
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read installer bytes: {e}"))?;
+
+        let temp_dir = std::env::temp_dir().join("bloom-client-updater");
+        fs::create_dir_all(&temp_dir)
+            .map_err(|e| format!("Failed to create updater temp directory: {e}"))?;
+
+        let safe_version = normalize_version(&version).replace(['\\', '/', ':', ' '], "_");
+        let dmg_path = temp_dir.join(format!("BloomClient-{safe_version}.dmg"));
+        fs::write(&dmg_path, bytes).map_err(|e| format!("Failed to write installer file: {e}"))?;
+
+        let mount_point = temp_dir.join(format!("BloomClient-{safe_version}-mount"));
+        if mount_point.exists() {
+            let _ = fs::remove_dir_all(&mount_point);
+        }
+        fs::create_dir_all(&mount_point)
+            .map_err(|e| format!("Failed to create DMG mount directory: {e}"))?;
+
+        let attach_output = Command::new("hdiutil")
+            .arg("attach")
+            .arg(&dmg_path)
+            .arg("-nobrowse")
+            .arg("-readonly")
+            .arg("-quiet")
+            .arg("-mountpoint")
+            .arg(&mount_point)
+            .output()
+            .map_err(|e| format!("Failed to mount DMG: {e}"))?;
+
+        if !attach_output.status.success() {
+            return Err(format!(
+                "Failed to mount DMG (hdiutil exited with status {:?})",
+                attach_output.status.code()
+            ));
+        }
+
+        Command::new("open")
+            .arg(&mount_point)
+            .spawn()
+            .map_err(|e| format!("Failed to open mounted DMG: {e}"))?;
 
         app.exit(0);
         Ok(())

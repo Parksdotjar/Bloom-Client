@@ -2834,7 +2834,7 @@ export function Settings() {
               <div>
                 <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Launcher Version</p>
                 <p className="text-2xl font-extrabold text-white mt-1">{APP_VERSION}</p>
-                <p className="text-xs g-muted mt-1">Bloom checks GitHub Releases for the newest Windows installer.</p>
+                <p className="text-xs g-muted mt-1">Bloom checks GitHub Releases for the newest installer for your platform.</p>
               </div>
               <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 min-w-[220px]">
                 <p className="text-[11px] uppercase tracking-[0.12em] font-extrabold text-white/55">Status</p>
@@ -2867,7 +2867,7 @@ export function Settings() {
                 {installingUpdate ? 'Installing...' : availableUpdate ? `Install v${availableUpdate.version}` : 'No Update'}
               </button>
             </div>
-            <p className="text-[10px] g-muted">Release assets are pulled from the latest GitHub Release installer asset (`*-setup.exe` or `.msi`).</p>
+            <p className="text-[10px] g-muted">Release assets are pulled from the latest GitHub Release installer asset (`.dmg` on macOS, `*-setup.exe` or `.msi` on Windows).</p>
           </div>
 
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
