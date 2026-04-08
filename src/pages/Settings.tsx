@@ -45,8 +45,6 @@ type MotionEasingPreset = 'out-quad' | 'out-cubic' | 'in-out-cubic' | 'out-back'
 type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
 type StartupSceneTheme = 'nova' | 'horizon' | 'matrix';
 type StartupSceneSoundProfile = 'off' | 'shimmer' | 'impact';
-type InstanceInstallLoadingStyle = 'orbit' | 'bars' | 'prism' | 'pulse';
-
 type AppearancePresetPayload = {
   themeMode: LauncherTheme;
   accentMode: AccentMode;
@@ -189,6 +187,7 @@ const GLASS_AMOUNT_CHANGE_EVENT = 'bloom-glass-amount-change';
 const SHORTCUT_SEARCH_KEY = 'bloom_shortcut_search';
 const SHORTCUT_CREATE_INSTANCE_KEY = 'bloom_shortcut_create_instance';
 const SHORTCUT_SETTINGS_KEY = 'bloom_shortcut_settings';
+const SHORTCUT_INSTANCE_LAUNCHER_KEY = 'bloom_shortcut_instance_launcher';
 const SHORTCUT_REPLAY_STARTUP_SCENE_KEY = 'bloom_shortcut_replay_startup_scene';
 const SHORTCUTS_CHANGE_EVENT = 'bloom-shortcuts-change';
 const EXTRA_KEYBINDS_STORAGE_KEY = 'bloom_extra_keybinds';
@@ -197,7 +196,6 @@ const STARTUP_SCENE_THEME_KEY = 'bloom_startup_scene_theme';
 const STARTUP_SCENE_SOUND_PROFILE_KEY = 'bloom_startup_scene_sound_profile';
 const STARTUP_SCENE_CHANGE_EVENT = 'bloom-startup-scene-change';
 const ROUTE_TAB_ANIMATIONS_KEY = 'bloom_route_tab_animations_enabled';
-const INSTANCE_INSTALL_LOADING_STYLE_KEY = 'bloom_instance_install_loading_style';
 const APPEARANCE_PRESETS_KEY = 'bloom_appearance_presets';
 
 const THEMES: { id: LauncherTheme; label: string; description: string }[] = [
@@ -255,18 +253,12 @@ const STARTUP_SCENE_THEMES: { id: StartupSceneTheme; label: string; description:
   { id: 'matrix', label: 'Matrix', description: 'Grid pulse style.' }
 ];
 
-const INSTANCE_INSTALL_LOADING_STYLES: { id: InstanceInstallLoadingStyle; label: string; description: string }[] = [
-  { id: 'orbit', label: 'Orbit', description: 'Single orbit ring around a center core.' },
-  { id: 'bars', label: 'Bars', description: 'Quiet vertical bars with staggered motion.' },
-  { id: 'prism', label: 'Prism', description: 'Rotating diamond frame with a bright core.' },
-  { id: 'pulse', label: 'Pulse', description: 'Soft expanding rings with a minimal center.' }
-];
-
 const KEYBIND_GROUPS = [
   {
     title: 'Global',
     bindings: [
       { id: 'search', label: 'Open Search', description: 'Focus the launcher search overlay.', defaultValue: 'Ctrl+K', wired: true },
+      { id: 'instance-launcher', label: 'Open Instance Launcher', description: 'Open the global instance spotlight and launch from anywhere.', defaultValue: 'Ctrl+Shift+K', wired: true },
       { id: 'create', label: 'Create Instance', description: 'Jump straight into the instance create flow.', defaultValue: 'Ctrl+N', wired: true },
       { id: 'settings', label: 'Open Settings', description: 'Open the main settings page.', defaultValue: 'Ctrl+,', wired: true },
       { id: 'console', label: 'Open Console', description: 'Toggle the Bloom developer console overlay.', defaultValue: CONSOLE_HOTKEY_DEFAULT, wired: true },
@@ -681,47 +673,6 @@ function ShopColorField(props: { label: string; value: string; onChange: (next: 
   );
 }
 
-function LoadingScreenPreviewGlyph({ style }: { style: InstanceInstallLoadingStyle }) {
-  if (style === 'bars') {
-    return (
-      <div className="flex h-16 items-end justify-center gap-1.5">
-        {[0, 1, 2, 3].map((index) => (
-          <span
-            key={index}
-            className="w-2 rounded-full bg-white/85"
-            style={{ height: `${20 + index * 7}px`, opacity: 0.45 + index * 0.12 }}
-          />
-        ))}
-      </div>
-    );
-  }
-  if (style === 'prism') {
-    return (
-      <div className="relative h-16 w-16">
-        <div className="absolute inset-0 rotate-45 rounded-[18px] border border-white/70" />
-        <div className="absolute inset-[18px] rotate-45 rounded-[8px] bg-white/90" />
-      </div>
-    );
-  }
-  if (style === 'pulse') {
-    return (
-      <div className="relative h-16 w-16">
-        <div className="absolute inset-2 rounded-full border border-white/30" />
-        <div className="absolute inset-5 rounded-full border border-white/60" />
-        <div className="absolute inset-[26px] rounded-full bg-white/92" />
-      </div>
-    );
-  }
-  return (
-    <div className="relative h-16 w-16">
-      <div className="absolute inset-1 rounded-full border border-white/22" />
-      <div className="absolute inset-4 rounded-full border border-white/70" />
-      <div className="absolute left-1/2 top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/92" />
-      <div className="absolute left-1/2 top-2 h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-white/78" />
-    </div>
-  );
-}
-
 const ACCENTS: { id: AccentMode; label: string; swatch: string }[] = [
   { id: 'purple', label: 'Purple', swatch: 'linear-gradient(90deg,#8f58ff,#ba96ff)' },
   { id: 'cyan', label: 'Cyan', swatch: 'linear-gradient(90deg,#3bc8ff,#90e9ff)' },
@@ -833,11 +784,13 @@ export function Settings() {
     return 70;
   });
   const [shortcutSearch, setShortcutSearch] = useState<string>(() => localStorage.getItem(SHORTCUT_SEARCH_KEY) || 'Ctrl+K');
+  const [shortcutInstanceLauncher, setShortcutInstanceLauncher] = useState<string>(() => localStorage.getItem(SHORTCUT_INSTANCE_LAUNCHER_KEY) || 'Ctrl+Shift+K');
   const [shortcutCreateInstance, setShortcutCreateInstance] = useState<string>(() => localStorage.getItem(SHORTCUT_CREATE_INSTANCE_KEY) || 'Ctrl+N');
   const [shortcutSettings, setShortcutSettings] = useState<string>(() => localStorage.getItem(SHORTCUT_SETTINGS_KEY) || 'Ctrl+,');
   const [shortcutConsole, setShortcutConsole] = useState<string>(() => localStorage.getItem(SHORTCUT_CONSOLE_KEY) || CONSOLE_HOTKEY_DEFAULT);
   const [shortcutReplayStartupScene, setShortcutReplayStartupScene] = useState<string>(() => localStorage.getItem(SHORTCUT_REPLAY_STARTUP_SCENE_KEY) || 'Ctrl+Shift+J');
   const [draftShortcutSearch, setDraftShortcutSearch] = useState<string>(() => localStorage.getItem(SHORTCUT_SEARCH_KEY) || 'Ctrl+K');
+  const [draftShortcutInstanceLauncher, setDraftShortcutInstanceLauncher] = useState<string>(() => localStorage.getItem(SHORTCUT_INSTANCE_LAUNCHER_KEY) || 'Ctrl+Shift+K');
   const [draftShortcutCreateInstance, setDraftShortcutCreateInstance] = useState<string>(() => localStorage.getItem(SHORTCUT_CREATE_INSTANCE_KEY) || 'Ctrl+N');
   const [draftShortcutSettings, setDraftShortcutSettings] = useState<string>(() => localStorage.getItem(SHORTCUT_SETTINGS_KEY) || 'Ctrl+,');
   const [draftShortcutConsole, setDraftShortcutConsole] = useState<string>(() => localStorage.getItem(SHORTCUT_CONSOLE_KEY) || CONSOLE_HOTKEY_DEFAULT);
@@ -874,10 +827,6 @@ export function Settings() {
   const [startupSceneSoundProfile, setStartupSceneSoundProfile] = useState<StartupSceneSoundProfile>(() => {
     const stored = localStorage.getItem(STARTUP_SCENE_SOUND_PROFILE_KEY);
     return stored === 'off' || stored === 'shimmer' || stored === 'impact' ? stored : 'shimmer';
-  });
-  const [instanceInstallLoadingStyle, setInstanceInstallLoadingStyle] = useState<InstanceInstallLoadingStyle>(() => {
-    const stored = localStorage.getItem(INSTANCE_INSTALL_LOADING_STYLE_KEY);
-    return stored === 'orbit' || stored === 'bars' || stored === 'prism' || stored === 'pulse' ? stored : 'orbit';
   });
   const [availableUpdate, setAvailableUpdate] = useState<ExternalUpdate | null>(null);
   const [updaterStatus, setUpdaterStatus] = useState<string>('No update check run yet.');
@@ -1032,6 +981,7 @@ export function Settings() {
   });
   const keybindsDirty =
     draftShortcutSearch !== shortcutSearch
+    || draftShortcutInstanceLauncher !== shortcutInstanceLauncher
     || draftShortcutCreateInstance !== shortcutCreateInstance
     || draftShortcutSettings !== shortcutSettings
     || draftShortcutConsole !== shortcutConsole
@@ -1083,8 +1033,9 @@ export function Settings() {
     window.dispatchEvent(new CustomEvent(GLASS_AMOUNT_CHANGE_EVENT, { detail: { amount: clamped } }));
   };
 
-  const applyShortcuts = (partial: { search?: string; create?: string; settings?: string; console?: string; replayStartupScene?: string }) => {
+  const applyShortcuts = (partial: { search?: string; instanceLauncher?: string; create?: string; settings?: string; console?: string; replayStartupScene?: string }) => {
     setDraftShortcutSearch(partial.search ?? draftShortcutSearch);
+    setDraftShortcutInstanceLauncher(partial.instanceLauncher ?? draftShortcutInstanceLauncher);
     setDraftShortcutCreateInstance(partial.create ?? draftShortcutCreateInstance);
     setDraftShortcutSettings(partial.settings ?? draftShortcutSettings);
     setDraftShortcutConsole(partial.console ?? draftShortcutConsole);
@@ -1099,6 +1050,7 @@ export function Settings() {
 
   const clearShortcut = (id: string) => {
     if (id === 'search') applyShortcuts({ search: '' });
+    else if (id === 'instance-launcher') applyShortcuts({ instanceLauncher: '' });
     else if (id === 'create') applyShortcuts({ create: '' });
     else if (id === 'settings') applyShortcuts({ settings: '' });
     else if (id === 'console') applyShortcuts({ console: '' });
@@ -1109,12 +1061,14 @@ export function Settings() {
   const saveKeybinds = () => {
     setSavingOverlayOpen(true);
     setShortcutSearch(draftShortcutSearch);
+    setShortcutInstanceLauncher(draftShortcutInstanceLauncher);
     setShortcutCreateInstance(draftShortcutCreateInstance);
     setShortcutSettings(draftShortcutSettings);
     setShortcutConsole(draftShortcutConsole);
     setShortcutReplayStartupScene(draftShortcutReplayStartupScene);
     setExtraKeybinds(draftExtraKeybinds);
     localStorage.setItem(SHORTCUT_SEARCH_KEY, draftShortcutSearch);
+    localStorage.setItem(SHORTCUT_INSTANCE_LAUNCHER_KEY, draftShortcutInstanceLauncher);
     localStorage.setItem(SHORTCUT_CREATE_INSTANCE_KEY, draftShortcutCreateInstance);
     localStorage.setItem(SHORTCUT_SETTINGS_KEY, draftShortcutSettings);
     localStorage.setItem(SHORTCUT_CONSOLE_KEY, draftShortcutConsole);
@@ -1123,6 +1077,7 @@ export function Settings() {
     window.dispatchEvent(new CustomEvent(SHORTCUTS_CHANGE_EVENT, {
       detail: {
         search: draftShortcutSearch,
+        instanceLauncher: draftShortcutInstanceLauncher,
         create: draftShortcutCreateInstance,
         settings: draftShortcutSettings,
         console: draftShortcutConsole,
@@ -1168,11 +1123,6 @@ export function Settings() {
     localStorage.setItem(STARTUP_SCENE_THEME_KEY, nextTheme);
     localStorage.setItem(STARTUP_SCENE_SOUND_PROFILE_KEY, nextSound);
     window.dispatchEvent(new CustomEvent(STARTUP_SCENE_CHANGE_EVENT, { detail: { enabled: nextEnabled, theme: nextTheme, soundProfile: nextSound } }));
-  };
-
-  const applyInstanceInstallLoadingStyle = (value: InstanceInstallLoadingStyle) => {
-    setInstanceInstallLoadingStyle(value);
-    localStorage.setItem(INSTANCE_INSTALL_LOADING_STYLE_KEY, value);
   };
 
   const applyUpdatePreferences = (partial: { autoCheck?: boolean; notifications?: boolean }) => {
@@ -1540,6 +1490,7 @@ export function Settings() {
       const shortcut = eventToDisplayShortcut(event);
       if (!shortcut) return;
       if (capturingShortcut === 'search') applyShortcuts({ search: shortcut });
+      else if (capturingShortcut === 'instance-launcher') applyShortcuts({ instanceLauncher: shortcut });
       else if (capturingShortcut === 'create') applyShortcuts({ create: shortcut });
       else if (capturingShortcut === 'settings') applyShortcuts({ settings: shortcut });
       else if (capturingShortcut === 'console') applyShortcuts({ console: shortcut });
@@ -1549,7 +1500,7 @@ export function Settings() {
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [capturingShortcut, shortcutSearch, shortcutCreateInstance, shortcutSettings, shortcutConsole, shortcutReplayStartupScene, extraKeybinds]);
+  }, [capturingShortcut, shortcutSearch, shortcutInstanceLauncher, shortcutCreateInstance, shortcutSettings, shortcutConsole, shortcutReplayStartupScene, extraKeybinds]);
 
   useEffect(() => {
     const handleSettingsTabOpen = (event: Event) => {
@@ -2483,27 +2434,6 @@ export function Settings() {
             </div>
           </AppearanceDropdown>
 
-          <AppearanceDropdown title="Universal Loading Screen" description="Pick the minimal loading screen Bloom uses for installs, saves, imports, and launch actions.">
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-              {INSTANCE_INSTALL_LOADING_STYLES.map((style) => (
-                <button
-                  key={style.id}
-                  onClick={() => applyInstanceInstallLoadingStyle(style.id)}
-                  className={clsx(
-                    'rounded-xl border p-3 text-left transition',
-                    instanceInstallLoadingStyle === style.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]'
-                  )}
-                >
-                  <div className="flex h-24 items-center justify-center rounded-xl border border-white/10 bg-black/30">
-                    <LoadingScreenPreviewGlyph style={style.id} />
-                  </div>
-                  <p className="mt-3 text-sm font-extrabold text-white">{style.label}</p>
-                  <p className="mt-1 text-[11px] g-muted">{style.description}</p>
-                </button>
-              ))}
-            </div>
-          </AppearanceDropdown>
-
           <AppearanceDropdown title="Animation FPS" description="Controls anime.js update rate for launcher motion.">
             <div className="mt-3 flex items-center gap-3">
               <input
@@ -2730,6 +2660,8 @@ export function Settings() {
                   const currentValue =
                     binding.id === 'search'
                       ? draftShortcutSearch
+                      : binding.id === 'instance-launcher'
+                        ? draftShortcutInstanceLauncher
                       : binding.id === 'create'
                         ? draftShortcutCreateInstance
                         : binding.id === 'settings'

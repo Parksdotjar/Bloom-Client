@@ -1588,9 +1588,127 @@ html[data-dropdown-opacity='100'] .g-context-menu {
   100% { opacity: 1; filter: blur(0px); }
 }
 
+.simple-install-card {
+  isolation: isolate;
+}
+
+.simple-install-card__content,
+.simple-install-card__button {
+  position: relative;
+  z-index: 1;
+  transition:
+    filter 220ms ease,
+    opacity 220ms ease,
+    transform 220ms ease,
+    background-color 220ms ease,
+    border-color 220ms ease,
+    color 220ms ease;
+}
+
+.simple-install-card.is-installing .simple-install-card__content,
+.simple-install-card.is-installing .simple-install-card__button {
+  filter: blur(2.6px);
+  opacity: 0.45;
+}
+
+.simple-install-card.is-installing .simple-install-card__button {
+  transform: scale(0.985);
+}
+
+.simple-install-card.is-installed .simple-install-card__content,
+.simple-install-card.is-installed .simple-install-card__button {
+  opacity: 0.24;
+  filter: grayscale(1) saturate(0.15);
+}
+
+.simple-install-card.is-installed:hover .simple-install-card__content {
+  opacity: 1;
+  filter: none;
+}
+
+.simple-install-card.is-installed:hover .simple-install-card__button {
+  opacity: 1;
+  filter: none;
+}
+
+.simple-install-card__veil {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.14), rgba(0, 0, 0, 0.32));
+  backdrop-filter: blur(2px);
+}
+
+.simple-install-card__loader {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.simple-install-card__text,
+.simple-install-card__installed {
+  position: relative;
+  z-index: 4;
+  text-align: center;
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.simple-install-card__text {
+  max-width: calc(100% - 44px);
+  padding: 0 10px;
+  animation: simple-install-text-enter 220ms ease-out both;
+}
+
+.simple-install-card__text.is-done {
+  color: rgba(255, 255, 255, 0.98);
+}
+
+.simple-install-card__installed {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 4;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.34), rgba(0, 0, 0, 0.42));
+  backdrop-filter: blur(1.5px) grayscale(0.2);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.45);
+}
+
+.simple-install-card.is-installed:hover .simple-install-card__installed {
+  opacity: 0;
+}
+
+@keyframes simple-install-text-enter {
+  0% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .particle-orb {
     animation: none;
     transform: translate3d(0, 0, 0) scale(0.96);
+  }
+
+  .simple-install-card__veil,
+  .simple-install-card__text {
+    animation: none;
   }
 }

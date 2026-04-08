@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Bell, Camera, Gift, Layers, Maximize2, Minus, Move, Palette, Search, Send, Sparkles, User, Waves, X } from 'lucide-react';
+import { Bell, Camera, Gift, Layers, Maximize2, Minus, Move, Palette, Play, Search, Send, Sparkles, User, Waves, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import { animate, engine, remove, set } from 'animejs';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -128,6 +128,7 @@ const GLASS_AMOUNT_CHANGE_EVENT = 'bloom-glass-amount-change';
 const SHORTCUT_SEARCH_KEY = 'bloom_shortcut_search';
 const SHORTCUT_CREATE_INSTANCE_KEY = 'bloom_shortcut_create_instance';
 const SHORTCUT_SETTINGS_KEY = 'bloom_shortcut_settings';
+const SHORTCUT_INSTANCE_LAUNCHER_KEY = 'bloom_shortcut_instance_launcher';
 const SHORTCUT_REPLAY_STARTUP_SCENE_KEY = 'bloom_shortcut_replay_startup_scene';
 const EXTRA_KEYBINDS_STORAGE_KEY = 'bloom_extra_keybinds';
 const KEYBIND_ACTION_EVENT = 'bloom-keybind-action';
@@ -276,6 +277,7 @@ function readConsoleBool(key: string, fallback: boolean) {
   return raw !== 'false';
 }
 
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -378,6 +380,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [routeTabAnimationsEnabled, setRouteTabAnimationsEnabled] = useState<boolean>(() => localStorage.getItem(ROUTE_TAB_ANIMATIONS_KEY) === 'true');
   const [showGamesSection, setShowGamesSection] = useState<boolean>(() => localStorage.getItem(SHOW_GAMES_SECTION_KEY) === 'true');
   const [sidebarTabsVisibility, setSidebarTabsVisibility] = useState<SidebarTabsVisibility>(() => readSidebarTabsVisibility());
+  const [draggingSidebarPath, setDraggingSidebarPath] = useState<string | null>(null);
+  const [workspaceActivePane, setWorkspaceActivePane] = useState<'left' | 'right'>('left');
+  const [splitRightPath, setSplitRightPath] = useState<string | null>(null);
+  const [splitRatio, setSplitRatio] = useState(0.5);
+  const [workspaceDropSide, setWorkspaceDropSide] = useState<'left' | 'right' | null>(null);
+  const [workspacePaneMenu, setWorkspacePaneMenu] = useState<{ x: number; y: number } | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
   const [iconPack, setIconPack] = useState<IconPackMode>(() => {
     const stored = localStorage.getItem(ICON_PACK_KEY);
@@ -420,6 +428,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [instanceLauncherQuery, setInstanceLauncherQuery] = useState('');
+  const [instanceLauncherOpen, setInstanceLauncherOpen] = useState(false);
+  const [instanceLauncherSelectedIndex, setInstanceLauncherSelectedIndex] = useState(0);
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [showInternalConsoleCommands, setShowInternalConsoleCommands] = useState<boolean>(() => readConsoleBool(CONSOLE_SHOW_DEV_COMMANDS_KEY, false));
   const [hostServersUnlocked, setHostServersUnlocked] = useState<boolean>(() => readHostServersUnlocked());
@@ -447,12 +458,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const searchRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const instanceLauncherRef = useRef<HTMLDivElement | null>(null);
+  const instanceLauncherInputRef = useRef<HTMLInputElement | null>(null);
   const notifRef = useRef<HTMLDivElement | null>(null);
   const accountRef = useRef<HTMLDivElement | null>(null);
   const profileUploadRef = useRef<HTMLInputElement | null>(null);
   const onboardingProfileUploadRef = useRef<HTMLInputElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
+  const splitResizeRef = useRef<{ pointerId: number; startX: number; startRatio: number } | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const lastHoverSoundAtRef = useRef<number>(0);
   const appRevealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -475,7 +489,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     clearProfileAvatar
   } = useAuth();
   const { instances, loadInstances, createInstance, updateInstance, deleteInstance } = useInstances();
-  const { startDownload } = useDownloader();
+  const { startDownload, activeDownloads } = useDownloader();
 
   const entries: SearchEntry[] = useMemo(() => {
     const base: SearchEntry[] = [];
@@ -500,6 +514,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
     if (!q) return entries;
     return entries.filter((entry) => `${entry.label} ${entry.description}`.toLowerCase().includes(q));
   }, [searchQuery, entries]);
+  const filteredInstances = useMemo(() => {
+    const q = instanceLauncherQuery.trim().toLowerCase();
+    if (!q) return instances;
+    return instances.filter((instance) => `${instance.name} ${instance.loader} ${instance.mcVersion}`.toLowerCase().includes(q));
+  }, [instanceLauncherQuery, instances]);
 
   const authCode = deviceCode?.userCode || authDebug.activeUserCode;
   const authLink = deviceCode?.verificationUriComplete || deviceCode?.verificationUri || 'https://www.microsoft.com/link';
@@ -1132,9 +1151,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, [avatarContextMenu]);
 
   useEffect(() => {
+    if (!instanceLauncherOpen) return;
+    const focusTimer = window.setTimeout(() => instanceLauncherInputRef.current?.focus(), 10);
+    return () => window.clearTimeout(focusTimer);
+  }, [instanceLauncherOpen]);
+
+  useEffect(() => {
+    setInstanceLauncherSelectedIndex(0);
+  }, [instanceLauncherQuery, instanceLauncherOpen]);
+
+  useEffect(() => {
     const onMouseDown = (event: MouseEvent) => {
       const node = event.target as Node;
       if (searchRef.current && !searchRef.current.contains(node)) setSearchOpen(false);
+      if (instanceLauncherRef.current && !instanceLauncherRef.current.contains(node)) setInstanceLauncherOpen(false);
       if (notifRef.current && !notifRef.current.contains(node)) setNotificationsOpen(false);
       if (accountRef.current && !accountRef.current.contains(node)) setAccountOpen(false);
     };
@@ -1151,6 +1181,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       const searchShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_SEARCH_KEY) || 'Ctrl+K');
       const createShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_CREATE_INSTANCE_KEY) || 'Ctrl+N');
       const settingsShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_SETTINGS_KEY) || 'Ctrl+,');
+      const instanceLauncherShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_INSTANCE_LAUNCHER_KEY) || 'Ctrl+Shift+K');
       const consoleShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_CONSOLE_KEY) || CONSOLE_HOTKEY_DEFAULT);
       const replayStartupSceneShortcut = normalizeShortcut(localStorage.getItem(SHORTCUT_REPLAY_STARTUP_SCENE_KEY) || 'Ctrl+Shift+J');
       const extraBindings = (() => {
@@ -1212,6 +1243,33 @@ export function Layout({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      if (instanceLauncherOpen) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setInstanceLauncherOpen(false);
+          return;
+        }
+        if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          setInstanceLauncherSelectedIndex((current) => filteredInstances.length === 0 ? 0 : Math.min(filteredInstances.length - 1, current + 1));
+          return;
+        }
+        if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          setInstanceLauncherSelectedIndex((current) => filteredInstances.length === 0 ? 0 : Math.max(0, current - 1));
+          return;
+        }
+        if (event.key === 'Enter') {
+          const target = filteredInstances[instanceLauncherSelectedIndex];
+          if (!target) return;
+          event.preventDefault();
+          void startDownload(target, authState);
+          setInstanceLauncherOpen(false);
+          setInstanceLauncherQuery('');
+          return;
+        }
+      }
+
       if (isTypingTarget(event.target)) return;
 
       if (consoleOpen) return;
@@ -1230,6 +1288,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
       if (activeShortcut && activeShortcut === settingsShortcut) {
         event.preventDefault();
         navigate('/settings');
+        return;
+      }
+      if (activeShortcut && activeShortcut === instanceLauncherShortcut) {
+        event.preventDefault();
+        setInstanceLauncherOpen(true);
+        setInstanceLauncherQuery('');
         return;
       }
       if (activeShortcut && activeShortcut === replayStartupSceneShortcut) {
@@ -1282,6 +1346,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       if (event.key === 'Escape') {
         setConsoleOpen(false);
         setSearchOpen(false);
+        setInstanceLauncherOpen(false);
         setNotificationsOpen(false);
         setAccountOpen(false);
       }
@@ -1293,7 +1358,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       window.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('keydown', onKeyDown, true);
     };
-  }, [navigate, startupSceneSoundProfile, authState, onboardingOpen, onboardingCompleted, consoleOpen]);
+  }, [navigate, startupSceneSoundProfile, authState, onboardingOpen, onboardingCompleted, consoleOpen, instanceLauncherOpen, filteredInstances, instanceLauncherSelectedIndex, startDownload]);
 
   useEffect(() => {
     const onExtraChange = (event: Event) => {
@@ -1369,6 +1434,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
       navigate('/settings', { replace: true });
     }
   }, [location.pathname, navigate, hostServersUnlocked, showGamesSection, sidebarTabsVisibility]);
+
+  useEffect(() => {
+    if (!workspacePaneMenu) return;
+    const close = () => setWorkspacePaneMenu(null);
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close();
+    };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', onEscape);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('keydown', onEscape);
+      window.removeEventListener('resize', close);
+    };
+  }, [workspacePaneMenu]);
 
   useEffect(() => {
     if (!authState || !onboardingCompleted) {
@@ -1614,6 +1695,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
     void startDownload(quickLaunchInstance, authState);
   };
 
+  const launchFromInstanceLauncher = useCallback(async (instance: Instance) => {
+    if (activeDownloads[instance.id] && activeDownloads[instance.id].status !== 'Complete') return;
+    await startDownload(instance, authState);
+    setInstanceLauncherOpen(false);
+    setInstanceLauncherQuery('');
+  }, [activeDownloads, authState, startDownload]);
+
   const runOpenLogs = () => {
     navigate('/importer');
   };
@@ -1630,6 +1718,56 @@ export function Layout({ children }: { children: React.ReactNode }) {
     setAccountOpen(false);
     setAvatarContextMenu(null);
     logout();
+  };
+
+  const closeSplitPane = () => {
+    setSplitRightPath(null);
+    setWorkspaceActivePane('left');
+    setWorkspacePaneMenu(null);
+  };
+
+  const closeLeftPaneKeepRight = () => {
+    if (splitRightPath) {
+      navigate(splitRightPath);
+    }
+    setSplitRightPath(null);
+    setWorkspaceActivePane('left');
+    setWorkspacePaneMenu(null);
+  };
+
+  const resolveWorkspaceDropSide = useCallback((point: { x: number; y: number }) => {
+    const main = mainRef.current;
+    if (!main) return null;
+    const rect = main.getBoundingClientRect();
+    if (point.x < rect.left || point.x > rect.right || point.y < rect.top || point.y > rect.bottom) {
+      return null;
+    }
+    return point.x < rect.left + rect.width / 2 ? 'left' : 'right';
+  }, []);
+
+  const applySidebarSplitDrop = useCallback((point: { x: number; y: number } | null, draggedPath: string | null) => {
+    const sourcePath = draggedPath ?? draggingSidebarPath;
+    if (!sourcePath || !point) {
+      setDraggingSidebarPath(null);
+      setWorkspaceDropSide(null);
+      return;
+    }
+    const side = resolveWorkspaceDropSide(point) ?? workspaceDropSide;
+    if (side === 'left') {
+      navigate(sourcePath);
+      setWorkspaceActivePane('left');
+    } else if (side === 'right') {
+      setSplitRightPath(sourcePath);
+      setWorkspaceActivePane('right');
+    }
+    setDraggingSidebarPath(null);
+    setWorkspaceDropSide(null);
+  }, [draggingSidebarPath, navigate, resolveWorkspaceDropSide, workspaceDropSide]);
+
+  const buildEmbeddedPath = (path: string) => {
+    const url = new URL(path, window.location.origin);
+    url.searchParams.set('splitEmbed', '1');
+    return `${url.pathname}${url.search}${url.hash}`;
   };
 
   const setThemeFromConsole = useCallback((themeId: string) => {
@@ -2076,11 +2214,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
     setAvatarContextMenu({ x: event.clientX, y: event.clientY });
   };
   const iconStrokeWidth = iconPack === 'bold' ? 2.6 : iconPack === 'pixel' ? 2.2 : iconPack === 'rounded' ? 1.9 : 2;
+  const splitEmbedMode = (() => {
+    if (new URLSearchParams(location.search).get('splitEmbed') === '1') return true;
+    const hash = location.hash || '';
+    const queryIndex = hash.indexOf('?');
+    if (queryIndex === -1) return false;
+    const hashQuery = hash.slice(queryIndex + 1);
+    return new URLSearchParams(hashQuery).get('splitEmbed') === '1';
+  })();
   const density = DENSITY_MAP[densityMode] || DENSITY_MAP.cozy;
   const isHorizontalSidebar = sidebarPosition === 'top' || sidebarPosition === 'bottom';
   const isRightSidebar = sidebarPosition === 'right';
-  const showClientShell = Boolean(authState && onboardingCompleted);
-  const showOnboardingGate = onboardingOpen || !showClientShell;
+  const showClientShell = Boolean(authState && onboardingCompleted) && !splitEmbedMode;
+  const showOnboardingGate = !splitEmbedMode && (onboardingOpen || !showClientShell);
   const onboardingStepTitle =
     onboardingStep === 0 ? 'Sign in with Microsoft'
       : onboardingStep === 1 ? `Hi, ${authState?.profile.name ?? 'there'}`
@@ -2112,6 +2258,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
       onQuickLaunch={runQuickLaunchLastInstance}
       onOpenLogs={runOpenLogs}
       onRefreshMods={runRefreshMods}
+      onTabDragStart={(path, point) => {
+        setDraggingSidebarPath(path);
+        setWorkspaceDropSide(resolveWorkspaceDropSide(point));
+      }}
+      onTabDragMove={(point) => {
+        setWorkspaceDropSide(resolveWorkspaceDropSide(point));
+      }}
+      onTabDragEnd={(point, path) => {
+        applySidebarSplitDrop(point, path);
+      }}
     />
   );
 
@@ -2372,6 +2528,89 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
+        {instanceLauncherOpen && (
+          <div className="absolute inset-0 z-[280] flex items-start justify-center bg-black/58 px-4 pt-20 app-region-no-drag">
+            <div ref={instanceLauncherRef} className="w-full max-w-[860px] rounded-[18px] border border-white/10 bg-[#0c0c0d]/96 p-4 shadow-[0_28px_90px_rgba(0,0,0,0.55)] backdrop-blur-xl">
+              <div className="flex items-center gap-3 border border-white/10 bg-[#141415] px-4 py-3 [border-radius:8px]">
+                <Search size={16} className="text-white/48" />
+                <input
+                  ref={instanceLauncherInputRef}
+                  value={instanceLauncherQuery}
+                  onChange={(event) => setInstanceLauncherQuery(event.target.value)}
+                  placeholder="Search instances..."
+                  className="w-full bg-transparent text-sm font-bold text-white outline-none placeholder:text-white/35"
+                />
+                <span className="border border-white/10 px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/45 [border-radius:4px]">Launch</span>
+              </div>
+
+              <div className="mt-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-3xl font-extrabold text-white">Instances</h2>
+                  <span className="text-xs font-extrabold uppercase tracking-[0.12em] text-white/50">{filteredInstances.length} total</span>
+                </div>
+                <div className="mt-4 max-h-[520px] space-y-2 overflow-y-auto pr-1">
+                  {filteredInstances.map((instance, index) => {
+                    const launching = !!activeDownloads[instance.id] && activeDownloads[instance.id].status !== 'Complete';
+                    const active = index === instanceLauncherSelectedIndex;
+                    return (
+                      <article
+                        key={instance.id}
+                        onMouseEnter={() => setInstanceLauncherSelectedIndex(index)}
+                        onClick={() => {
+                          void launchFromInstanceLauncher(instance);
+                        }}
+                        className={clsx(
+                          'group block w-full cursor-pointer border bg-white/[0.03] p-3 text-left transition',
+                          active ? 'border-[var(--g-accent)]/45 bg-white/[0.06]' : 'border-white/10 hover:bg-white/[0.06]'
+                        )}
+                        style={{ borderRadius: 'calc(14px * var(--g-roundness-mult))' }}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div
+                              className={
+                                instance.iconFrame === 'diamond'
+                                  ? 'rotate-45 rounded-lg'
+                                  : instance.iconFrame === 'square'
+                                    ? 'rounded-md'
+                                    : 'rounded-xl'
+                              }
+                              style={{ border: `1px solid ${instance.colorTag || 'rgba(255,255,255,0.15)'}`, width: 40, height: 40, overflow: 'hidden' }}
+                            >
+                              {instance.iconDataUrl ? <img src={instance.iconDataUrl} className="h-full w-full object-cover" /> : <div className="h-full w-full bg-white/10" />}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate text-lg font-extrabold text-white">{instance.name}</p>
+                              <p className="mt-1 text-xs text-white/52">{instance.loader.toUpperCase()} {instance.mcVersion}</p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              void launchFromInstanceLauncher(instance);
+                            }}
+                            disabled={launching}
+                            className="g-btn-accent h-9 shrink-0 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] inline-flex items-center gap-1 disabled:opacity-45"
+                          >
+                            <Play size={12} /> {launching ? 'Running' : 'Launch'}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                  {filteredInstances.length === 0 && (
+                    <div className="border border-white/10 bg-white/[0.03] p-5 text-center text-sm font-semibold text-white/55 [border-radius:12px]">
+                      No instances match this search.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {availableLauncherUpdate && updateNoticeVisible && (
           <div className="absolute right-5 z-[210] w-[360px] app-region-no-drag" style={{ top: `${density.headerHeight + 14}px` }}>
             <div className="rounded-2xl border border-white/12 bg-[var(--g-panel)]/95 p-4 shadow-[0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl">
@@ -2402,8 +2641,92 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         )}
 
-        <main ref={mainRef} className="flex-1 min-h-0 overflow-y-auto app-region-no-drag" style={{ padding: density.mainPadding }}>
-          <div className="min-h-full">{children}</div>
+        <main
+          ref={mainRef}
+          className={clsx('flex-1 min-h-0 app-region-no-drag', splitRightPath ? 'overflow-hidden' : 'overflow-y-auto')}
+          style={{ padding: splitRightPath ? 0 : density.mainPadding }}
+        >
+          <div className={clsx('relative min-h-full', splitRightPath && 'h-full')}>
+            {draggingSidebarPath && (
+              <>
+                <div
+                  className={clsx(
+                    'pointer-events-none absolute inset-y-0 left-0 z-20 w-1/2 rounded-l-2xl border border-dashed transition',
+                    workspaceDropSide === 'left' ? 'border-[var(--g-accent)] bg-[var(--g-accent-soft)]/35' : 'border-white/18 bg-black/20'
+                  )}
+                />
+                <div
+                  className={clsx(
+                    'pointer-events-none absolute inset-y-0 right-0 z-20 w-1/2 rounded-r-2xl border border-dashed transition',
+                    workspaceDropSide === 'right' ? 'border-[var(--g-accent)] bg-[var(--g-accent-soft)]/35' : 'border-white/18 bg-black/20'
+                  )}
+                />
+              </>
+            )}
+
+            {!splitRightPath ? (
+              <div className="min-h-full" onClick={() => setWorkspaceActivePane('left')}>
+                {children}
+              </div>
+            ) : (
+              <div className="relative flex h-full min-h-0 gap-2">
+                <button
+                  type="button"
+                  onClick={closeLeftPaneKeepRight}
+                  className="absolute right-2 top-2 z-30 h-8 min-w-8 rounded-lg border border-white/20 bg-black/75 px-2 text-[10px] font-extrabold uppercase tracking-[0.12em] text-white/90 hover:border-white/35 hover:bg-black/90"
+                  title="Close left pane"
+                >
+                  X
+                </button>
+                <section
+                  className={clsx('h-full min-h-0 rounded-2xl border border-white/10 bg-black/35 p-1', workspaceActivePane === 'left' && 'border-[var(--g-accent)]/45')}
+                  style={{ width: `${Math.max(28, Math.min(72, splitRatio * 100))}%` }}
+                  onClick={() => setWorkspaceActivePane('left')}
+                >
+                  <div className="h-full min-h-0 overflow-auto rounded-xl">{children}</div>
+                </section>
+                <button
+                  type="button"
+                  className="w-2 shrink-0 cursor-col-resize rounded-full bg-white/12 hover:bg-white/24"
+                  onPointerDown={(event) => {
+                    const container = event.currentTarget.parentElement;
+                    if (!container) return;
+                    splitResizeRef.current = { pointerId: event.pointerId, startX: event.clientX, startRatio: splitRatio };
+                    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+                    const onMove = (moveEvent: PointerEvent) => {
+                      if (!splitResizeRef.current) return;
+                      const deltaPx = moveEvent.clientX - splitResizeRef.current.startX;
+                      const next = splitResizeRef.current.startRatio + (deltaPx / container.clientWidth);
+                      setSplitRatio(Math.max(0.28, Math.min(0.72, next)));
+                    };
+                    const onUp = (upEvent: PointerEvent) => {
+                      if (splitResizeRef.current?.pointerId !== upEvent.pointerId) return;
+                      splitResizeRef.current = null;
+                      window.removeEventListener('pointermove', onMove);
+                      window.removeEventListener('pointerup', onUp);
+                    };
+                    window.addEventListener('pointermove', onMove);
+                    window.addEventListener('pointerup', onUp);
+                  }}
+                />
+                <section
+                  className={clsx('relative h-full min-h-0 rounded-2xl border border-white/10 bg-black/35 p-1', workspaceActivePane === 'right' && 'border-[var(--g-accent)]/45')}
+                  style={{ width: `${100 - Math.max(28, Math.min(72, splitRatio * 100))}%` }}
+                  onClick={() => setWorkspaceActivePane('right')}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setWorkspacePaneMenu({ x: event.clientX, y: event.clientY });
+                  }}
+                >
+                  <iframe
+                    title={`Split pane ${splitRightPath}`}
+                    src={buildEmbeddedPath(splitRightPath)}
+                    className={clsx('h-full min-h-0 w-full rounded-xl border border-white/8 bg-black', draggingSidebarPath && 'pointer-events-none')}
+                  />
+                </section>
+              </div>
+            )}
+          </div>
         </main>
 
         <BloomConsole
@@ -2414,6 +2737,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
           onClose={() => setConsoleOpen(false)}
         />
       </div>
+      )}
+
+      {splitEmbedMode && (
+        <div className="flex-1 min-w-0 min-h-0 app-region-no-drag">
+          <div className="h-full min-h-0 overflow-auto">{children}</div>
+        </div>
       )}
 
       {showClientShell && isRightSidebar && sidebarRail}
@@ -2718,6 +3047,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
             className="g-context-item w-full rounded-lg px-3 py-2 text-left text-xs font-extrabold uppercase tracking-[0.12em]"
           >
             Refresh Mods
+          </button>
+        </div>
+      )}
+
+      {workspacePaneMenu && (
+        <div
+          className="g-context-menu fixed z-[2147483001] min-w-[180px] rounded-xl p-1.5 shadow-2xl"
+          style={{ left: `${workspacePaneMenu.x}px`, top: `${workspacePaneMenu.y}px` }}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <button
+            onClick={closeSplitPane}
+            className="g-context-item w-full rounded-lg px-3 py-2 text-left text-xs font-extrabold uppercase tracking-[0.12em]"
+          >
+            Close Split
           </button>
         </div>
       )}

@@ -1,20 +1,27 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEventHandler, type DragEventHandler, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ChevronDown, Copy, Download, FolderOpen, ImageIcon, MoreHorizontal, Package2, Play, RefreshCcw, Save, Search, ShieldPlus, Sparkles, Trash2, UploadCloud, X } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, ImageIcon, MoreHorizontal, Package2, Pencil, Play, RefreshCcw, Save, Search, Sparkles, Trash2, UploadCloud, X } from 'lucide-react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { useInstances } from '../hooks/useInstances';
 import { useAuth } from '../hooks/useAuth';
 import { useDownloader } from '../hooks/useDownloader';
-import { TauriApi, type BloomExportOptions, type InstanceContentFile, type InstanceModFile, type InstanceTransferOptions, type MarketplaceMod, type MarketplacePack, type ModInstallResult } from '../services/tauri';
+import { TauriApi, type BloomExportOptions, type InstanceContentFile, type InstanceExplorerEntry, type InstanceModFile, type InstanceTransferOptions, type MarketplaceMod, type MarketplacePack, type ModInstallResult } from '../services/tauri';
 import { UniversalLoadingOverlay } from '../components/UniversalLoadingOverlay';
 
-type EditorTab = 'mods' | 'resourcepacks' | 'shaders' | 'settings';
+type EditorTab = 'mods' | 'resourcepacks' | 'shaders' | 'files' | 'settings';
 type SettingsSubTab = 'profile' | 'launch';
 type SourceFilter = 'all' | 'modrinth' | 'curseforge';
 type LibraryView = 'installed' | 'install';
 type NativeFile = File & { path?: string };
+type MarketplaceInstallVisualState = {
+  phase: 'installing' | 'done';
+  label: string;
+  startedAt: number;
+};
 
 const KEYBIND_ACTION_EVENT = 'bloom-keybind-action';
+const MIN_CARD_INSTALL_ANIMATION_MS = 2000;
+const DONE_CARD_INSTALL_ANIMATION_MS = 1500;
 const DEFAULT_BLOOM_EXPORT_OPTIONS: BloomExportOptions = {
   includeMods: true,
   includeResourcepacks: true,
@@ -49,6 +56,17 @@ function cleanFileLabel(fileName: string) {
     .trim();
 }
 
+function normalizeMarketplaceLabel(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function dirname(path: string) {
+  if (!path) return '';
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '');
+  const idx = normalized.lastIndexOf('/');
+  return idx === -1 ? '' : normalized.slice(0, idx);
+}
+
 function buildInstalledDescription(title: string, row: InstanceContentFile | InstanceModFile) {
   const size = humanSize(row.sizeBytes);
   if ('enabled' in row) {
@@ -67,12 +85,21 @@ function EmptyState({ message }: { message: string }) {
   return <div className="p-6 text-center text-sm font-semibold text-slate-500 dark:text-white/55">{message}</div>;
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+const boxedControlClass = 'inline-flex items-center justify-center border bg-[#121212] text-white/82 transition hover:bg-[#181818] hover:text-white [border-radius:2px]';
+const boxedDangerControlClass = 'inline-flex items-center justify-center border bg-[#161112] text-red-100/90 transition hover:bg-[#221416] hover:text-red-50 [border-radius:2px]';
+
 export function InstanceEditor() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const instanceId = searchParams.get('id');
   const initialTab: EditorTab = searchParams.get('tab') === 'settings'
     ? 'settings'
+    : searchParams.get('tab') === 'files'
+      ? 'files'
     : searchParams.get('tab') === 'resourcepacks'
       ? 'resourcepacks'
       : searchParams.get('tab') === 'shaders'
@@ -118,7 +145,6 @@ export function InstanceEditor() {
   const [resourcepacksLoading, setResourcepacksLoading] = useState(false);
   const [shaderpacksLoading, setShaderpacksLoading] = useState(false);
   const [installingMods, setInstallingMods] = useState(false);
-  const [installingFabricApi, setInstallingFabricApi] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [lastInstallResult, setLastInstallResult] = useState<ModInstallResult | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -127,17 +153,30 @@ export function InstanceEditor() {
   const [modsSource, setModsSource] = useState<SourceFilter>('all');
   const [modsSearching, setModsSearching] = useState(false);
   const [modsResults, setModsResults] = useState<MarketplaceMod[]>([]);
-  const [modsInstallingId, setModsInstallingId] = useState<string | null>(null);
+  const [modInstallVisuals, setModInstallVisuals] = useState<Record<string, MarketplaceInstallVisualState>>({});
+  const [installedMarketplaceMods, setInstalledMarketplaceMods] = useState<Set<string>>(() => new Set());
   const [resourcepacksQuery, setResourcepacksQuery] = useState('');
   const [resourcepacksSource, setResourcepacksSource] = useState<SourceFilter>('all');
   const [resourcepacksSearching, setResourcepacksSearching] = useState(false);
   const [resourcepacksResults, setResourcepacksResults] = useState<MarketplacePack[]>([]);
-  const [resourcepacksInstallingId, setResourcepacksInstallingId] = useState<string | null>(null);
+  const [resourcepackInstallVisuals, setResourcepackInstallVisuals] = useState<Record<string, MarketplaceInstallVisualState>>({});
+  const [installedMarketplaceResourcepacks, setInstalledMarketplaceResourcepacks] = useState<Set<string>>(() => new Set());
   const [shadersQuery, setShadersQuery] = useState('');
   const [shadersSource, setShadersSource] = useState<SourceFilter>('all');
   const [shadersSearching, setShadersSearching] = useState(false);
   const [shadersResults, setShadersResults] = useState<MarketplacePack[]>([]);
-  const [shadersInstallingId, setShadersInstallingId] = useState<string | null>(null);
+  const [shaderInstallVisuals, setShaderInstallVisuals] = useState<Record<string, MarketplaceInstallVisualState>>({});
+  const [installedMarketplaceShaders, setInstalledMarketplaceShaders] = useState<Set<string>>(() => new Set());
+  const [filesTreeRows, setFilesTreeRows] = useState<InstanceExplorerEntry[]>([]);
+  const [filesTreeLoading, setFilesTreeLoading] = useState(false);
+  const [filesTreeQuery, setFilesTreeQuery] = useState('');
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+  const [selectedFileText, setSelectedFileText] = useState('');
+  const [selectedFileOriginalText, setSelectedFileOriginalText] = useState('');
+  const [selectedFileLoading, setSelectedFileLoading] = useState(false);
+  const [selectedFileSaving, setSelectedFileSaving] = useState(false);
+  const [selectedFileError, setSelectedFileError] = useState<string | null>(null);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [exportPanelOpen, setExportPanelOpen] = useState(false);
   const [exportOptions, setExportOptions] = useState<BloomExportOptions>(DEFAULT_BLOOM_EXPORT_OPTIONS);
@@ -150,7 +189,6 @@ export function InstanceEditor() {
     () => transferableInstances.find((item) => item.id === transferSourceInstanceId) || null,
     [transferSourceInstanceId, transferableInstances]
   );
-
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const iconInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
@@ -172,6 +210,13 @@ export function InstanceEditor() {
       setModsView('installed');
       setResourcepacksView('installed');
       setShadersView('installed');
+      setFilesTreeQuery('');
+      setFilesTreeRows([]);
+      setExpandedFolders(new Set());
+      setSelectedFilePath(null);
+      setSelectedFileText('');
+      setSelectedFileOriginalText('');
+      setSelectedFileError(null);
       setInstanceMediaLoaded(false);
     }
   }, [instance]);
@@ -227,6 +272,7 @@ export function InstanceEditor() {
     return () => window.removeEventListener('mousedown', onPointerDown);
   }, [transferSourceMenuOpen]);
 
+
   const goBack = () => navigate('/instances');
 
   const reloadMods = async () => {
@@ -273,6 +319,11 @@ export function InstanceEditor() {
     void reloadResourcepacks();
     void reloadShaderpacks();
   }, [instance?.id]);
+
+  useEffect(() => {
+    if (activeTab !== 'files') return;
+    void reloadFilesTree();
+  }, [activeTab, instance?.id]);
 
   useEffect(() => {
     if (!launchingInstanceId) return;
@@ -333,6 +384,42 @@ export function InstanceEditor() {
     }
   };
 
+  const reloadFilesTree = async (nextQuery?: string) => {
+    if (!instance) return;
+    const query = (nextQuery ?? filesTreeQuery).trim();
+    setFilesTreeLoading(true);
+    try {
+      const rows = await TauriApi.instanceFilesTree(instance.id, query || undefined);
+      setFilesTreeRows(rows);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Failed loading file tree: ${message}`);
+    } finally {
+      setFilesTreeLoading(false);
+    }
+  };
+
+  const loadSelectedFile = async (relativePath: string) => {
+    if (!instance) return;
+    setSelectedFileLoading(true);
+    setSelectedFileSaving(false);
+    setSelectedFileError(null);
+    try {
+      const result = await TauriApi.instanceFilesReadText(instance.id, relativePath);
+      setSelectedFilePath(result.relativePath);
+      setSelectedFileText(result.text);
+      setSelectedFileOriginalText(result.text);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSelectedFilePath(relativePath);
+      setSelectedFileText('');
+      setSelectedFileOriginalText('');
+      setSelectedFileError(message);
+    } finally {
+      setSelectedFileLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!instance) return;
     const onKeybindAction = (event: Event) => {
@@ -345,24 +432,24 @@ export function InstanceEditor() {
         return;
       }
       if (action === 'next-instance-tab') {
-        const tabs: EditorTab[] = ['mods', 'resourcepacks', 'shaders', 'settings'];
+        const tabs: EditorTab[] = ['mods', 'resourcepacks', 'shaders', 'files', 'settings'];
         const currentIndex = tabs.indexOf(activeTab);
         setActiveTab(tabs[(currentIndex + 1) % tabs.length]);
         return;
       }
       if (action === 'previous-instance-tab') {
-        const tabs: EditorTab[] = ['mods', 'resourcepacks', 'shaders', 'settings'];
+        const tabs: EditorTab[] = ['mods', 'resourcepacks', 'shaders', 'files', 'settings'];
         const currentIndex = tabs.indexOf(activeTab);
         setActiveTab(tabs[(currentIndex - 1 + tabs.length) % tabs.length]);
         return;
       }
-      if (action === 'switch-installed-view' && activeTab !== 'settings') {
+      if (action === 'switch-installed-view' && activeTab !== 'settings' && activeTab !== 'files') {
         if (activeTab === 'mods') setModsView('installed');
         if (activeTab === 'resourcepacks') setResourcepacksView('installed');
         if (activeTab === 'shaders') setShadersView('installed');
         return;
       }
-      if (action === 'switch-install-view' && activeTab !== 'settings') {
+      if (action === 'switch-install-view' && activeTab !== 'settings' && activeTab !== 'files') {
         if (activeTab === 'mods') setModsView('install');
         if (activeTab === 'resourcepacks') setResourcepacksView('install');
         if (activeTab === 'shaders') setShadersView('install');
@@ -372,6 +459,9 @@ export function InstanceEditor() {
         void reloadMods();
         void reloadResourcepacks();
         void reloadShaderpacks();
+        if (activeTab === 'files') {
+          void reloadFilesTree();
+        }
         return;
       }
       if (action === 'open-active-folder') {
@@ -385,12 +475,16 @@ export function InstanceEditor() {
         }
         if (activeTab === 'shaders') {
           void TauriApi.openShaderpacksFolder(instance.id);
+          return;
+        }
+        if (activeTab === 'files') {
+          void TauriApi.instanceFilesOpenPath(instance.id, selectedFilePath || undefined);
         }
       }
     };
     window.addEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
     return () => window.removeEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
-  }, [instance, activeTab, saveSettings]);
+  }, [instance, activeTab, selectedFilePath, saveSettings]);
 
   const launchStatus = launchingInstanceId ? activeDownloads[launchingInstanceId]?.status || 'Preparing launch...' : null;
 
@@ -615,24 +709,6 @@ export function InstanceEditor() {
     }
   };
 
-  const autoInstallFabricApi = async () => {
-    if (!instance || instance.loader !== 'fabric') return;
-    setInstallingFabricApi(true);
-    setBlockingTitle('Installing Fabric API...');
-    setStatusMessage('Installing Fabric API...');
-    try {
-      const fileName = await TauriApi.instanceInstallFabricApi(instance.id);
-      await reloadMods();
-      setStatusMessage(`Fabric API installed: ${fileName}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatusMessage(`Fabric API install failed: ${message}`);
-    } finally {
-      setInstallingFabricApi(false);
-      setBlockingTitle(null);
-    }
-  };
-
   const searchModsMarket = async () => {
     if (!instance || !modsQuery.trim()) return;
     setModsSearching(true);
@@ -681,58 +757,243 @@ export function InstanceEditor() {
   const installMarketplaceMod = async (mod: MarketplaceMod) => {
     if (!instance) return;
     const rowId = `${mod.source}:${mod.id}`;
-    setModsInstallingId(rowId);
-    setBlockingTitle('Installing mod...');
+    const startedAt = beginInstallVisual(setModInstallVisuals, rowId, `Installing ${mod.title}`);
     setStatusMessage(`Installing ${mod.title}...`);
     try {
       const file = await TauriApi.marketplaceInstallMod(instance.id, mod.source, mod.id);
       await reloadMods();
+      setInstalledMarketplaceMods((current) => new Set(current).add(rowId));
       setStatusMessage(`Installed ${file} into ${instance.name}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(`Install failed: ${message}`);
     } finally {
-      setModsInstallingId(null);
-      setBlockingTitle(null);
+      await endInstallVisual(setModInstallVisuals, rowId, startedAt);
     }
   };
 
   const installMarketplaceResourcePack = async (pack: MarketplacePack) => {
     if (!instance) return;
     const rowId = `${pack.source}:${pack.id}`;
-    setResourcepacksInstallingId(rowId);
-    setBlockingTitle('Installing resource pack...');
+    const startedAt = beginInstallVisual(setResourcepackInstallVisuals, rowId, `Installing ${pack.title}`);
     setStatusMessage(`Installing ${pack.title}...`);
     try {
       const file = await TauriApi.marketplaceInstallResourcepack(instance.id, pack.source, pack.id, instance.mcVersion);
       await reloadResourcepacks();
+      setInstalledMarketplaceResourcepacks((current) => new Set(current).add(rowId));
       setStatusMessage(`Installed ${file} into ${instance.name}/resourcepacks.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(`Install failed: ${message}`);
     } finally {
-      setResourcepacksInstallingId(null);
-      setBlockingTitle(null);
+      await endInstallVisual(setResourcepackInstallVisuals, rowId, startedAt);
     }
   };
 
   const installMarketplaceShader = async (pack: MarketplacePack) => {
     if (!instance) return;
     const rowId = `${pack.source}:${pack.id}`;
-    setShadersInstallingId(rowId);
-    setBlockingTitle('Installing shader pack...');
+    const startedAt = beginInstallVisual(setShaderInstallVisuals, rowId, `Installing ${pack.title}`);
     setStatusMessage(`Installing ${pack.title}...`);
     try {
       const file = await TauriApi.marketplaceInstallShaderpack(instance.id, pack.source, pack.id, instance.mcVersion);
       await reloadShaderpacks();
+      setInstalledMarketplaceShaders((current) => new Set(current).add(rowId));
       setStatusMessage(`Installed ${file} into ${instance.name}/shaderpacks.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(`Install failed: ${message}`);
     } finally {
-      setShadersInstallingId(null);
-      setBlockingTitle(null);
+      await endInstallVisual(setShaderInstallVisuals, rowId, startedAt);
     }
+  };
+
+  const beginInstallVisual = (
+    setVisuals: React.Dispatch<React.SetStateAction<Record<string, MarketplaceInstallVisualState>>>,
+    rowId: string,
+    label: string
+  ) => {
+    const startedAt = Date.now();
+    setVisuals((current) => ({
+      ...current,
+      [rowId]: {
+        phase: 'installing',
+        label,
+        startedAt
+      }
+    }));
+    return startedAt;
+  };
+
+  const endInstallVisual = async (
+    setVisuals: React.Dispatch<React.SetStateAction<Record<string, MarketplaceInstallVisualState>>>,
+    rowId: string,
+    startedAt: number
+  ) => {
+    const elapsed = Date.now() - startedAt;
+    const remaining = Math.max(0, MIN_CARD_INSTALL_ANIMATION_MS - elapsed);
+    if (remaining > 0) await wait(remaining);
+    setVisuals((current) => {
+      const next = { ...current };
+      const existing = next[rowId];
+      if (existing) {
+        next[rowId] = {
+          ...existing,
+          phase: 'done',
+          label: 'DONE'
+        };
+      }
+      return next;
+    });
+    await wait(DONE_CARD_INSTALL_ANIMATION_MS);
+    setVisuals((current) => {
+      const next = { ...current };
+      delete next[rowId];
+      return next;
+    });
+  };
+
+  const folderRows = useMemo(() => filesTreeRows.filter((row) => row.isDir), [filesTreeRows]);
+  const fileRows = useMemo(() => filesTreeRows.filter((row) => !row.isDir), [filesTreeRows]);
+  const installedModNames = useMemo(
+    () => new Set(
+      mods.flatMap((row) => [normalizeMarketplaceLabel(row.displayName), normalizeMarketplaceLabel(cleanFileLabel(row.fileName))]).filter(Boolean)
+    ),
+    [mods]
+  );
+  const installedResourcepackNames = useMemo(
+    () => new Set(
+      resourcepacks.flatMap((row) => [normalizeMarketplaceLabel(row.displayName), normalizeMarketplaceLabel(cleanFileLabel(row.fileName))]).filter(Boolean)
+    ),
+    [resourcepacks]
+  );
+  const installedShaderNames = useMemo(
+    () => new Set(
+      shaderpacks.flatMap((row) => [normalizeMarketplaceLabel(row.displayName), normalizeMarketplaceLabel(cleanFileLabel(row.fileName))]).filter(Boolean)
+    ),
+    [shaderpacks]
+  );
+
+  const treeByParent = useMemo(() => {
+    const map = new Map<string, InstanceExplorerEntry[]>();
+    for (const row of filesTreeRows) {
+      const parent = dirname(row.relativePath);
+      const bucket = map.get(parent) || [];
+      bucket.push(row);
+      map.set(parent, bucket);
+    }
+    for (const [, bucket] of map) {
+      bucket.sort((a, b) => {
+        if (a.isDir !== b.isDir) return Number(b.isDir) - Number(a.isDir);
+        return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+      });
+    }
+    return map;
+  }, [filesTreeRows]);
+
+  const selectedFileDirty = selectedFilePath !== null && selectedFileText !== selectedFileOriginalText;
+
+  const toggleFolderExpanded = (relativePath: string) => {
+    setExpandedFolders((current) => {
+      const next = new Set(current);
+      if (next.has(relativePath)) next.delete(relativePath);
+      else next.add(relativePath);
+      return next;
+    });
+  };
+
+  const createFolderAt = async (parentRelativePath?: string) => {
+    if (!instance) return;
+    const folderName = window.prompt('New folder name')?.trim();
+    if (!folderName) return;
+    try {
+      await TauriApi.instanceFilesCreateDirectory(instance.id, parentRelativePath, folderName);
+      setStatusMessage(`Created folder "${folderName}".`);
+      await reloadFilesTree();
+      if (parentRelativePath) {
+        setExpandedFolders((current) => {
+          const next = new Set(current);
+          next.add(parentRelativePath);
+          return next;
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Create folder failed: ${message}`);
+    }
+  };
+
+  const renameFilesRow = async (row: InstanceExplorerEntry) => {
+    if (!instance) return;
+    const nextName = window.prompt('Rename to:', row.name)?.trim();
+    if (!nextName || nextName === row.name) return;
+    try {
+      await TauriApi.instanceFilesRename(instance.id, row.relativePath, nextName);
+      const updatedPath = `${dirname(row.relativePath) ? `${dirname(row.relativePath)}/` : ''}${nextName}`;
+      if (selectedFilePath === row.relativePath) {
+        setSelectedFilePath(updatedPath);
+      }
+      setStatusMessage(`Renamed "${row.name}" to "${nextName}".`);
+      await reloadFilesTree();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Rename failed: ${message}`);
+    }
+  };
+
+  const deleteFilesRow = async (row: InstanceExplorerEntry) => {
+    if (!instance) return;
+    const confirmed = window.confirm(`Delete "${row.name}"? This cannot be undone.`);
+    if (!confirmed) return;
+    try {
+      await TauriApi.instanceFilesDelete(instance.id, row.relativePath);
+      if (selectedFilePath === row.relativePath) {
+        setSelectedFilePath(null);
+        setSelectedFileText('');
+        setSelectedFileOriginalText('');
+      }
+      setStatusMessage(`Deleted "${row.name}".`);
+      await reloadFilesTree();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Delete failed: ${message}`);
+    }
+  };
+
+  const openPathInSystem = async (relativePath?: string) => {
+    if (!instance) return;
+    try {
+      await TauriApi.instanceFilesOpenPath(instance.id, relativePath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Unable to open path: ${message}`);
+    }
+  };
+
+  const saveSelectedFile = async () => {
+    if (!instance || !selectedFilePath) return;
+    setSelectedFileSaving(true);
+    try {
+      await TauriApi.instanceFilesWriteText(instance.id, selectedFilePath, selectedFileText);
+      setSelectedFileOriginalText(selectedFileText);
+      setSelectedFileError(null);
+      setStatusMessage(`Saved ${selectedFilePath}.`);
+      await reloadFilesTree();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSelectedFileError(message);
+      setStatusMessage(`Save failed: ${message}`);
+    } finally {
+      setSelectedFileSaving(false);
+    }
+  };
+
+  const handleTreeRowClick = async (row: InstanceExplorerEntry) => {
+    if (row.isDir) {
+      toggleFolderExpanded(row.relativePath);
+      return;
+    }
+    await loadSelectedFile(row.relativePath);
   };
 
   const renderInstalledLibrary = (
@@ -743,17 +1004,15 @@ export function InstanceEditor() {
     onFolderOpen: () => void,
     onSwitch: () => void,
     onDelete: (row: InstanceContentFile | InstanceModFile) => void,
-    onToggle?: (row: InstanceModFile) => void,
-    extraAction?: ReactNode
+    onToggle?: (row: InstanceModFile) => void
   ) => (
     <section className="g-panel p-6 space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h2 className="text-lg font-black text-slate-900 dark:text-white">{title}</h2>
         <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={onRefresh} className="g-btn h-10 px-3 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5"><RefreshCcw size={13} /> Refresh</button>
-          {extraAction}
-          <button onClick={onFolderOpen} className="g-btn h-10 px-3 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5"><FolderOpen size={13} /> Folder</button>
           <button onClick={onSwitch} className="g-btn-accent h-10 px-3 text-xs font-black tracking-[0.14em] uppercase">Open Install View</button>
+          <button onClick={onRefresh} title="Refresh" className="g-btn h-10 w-10 inline-flex items-center justify-center"><RefreshCcw size={13} /></button>
+          <button onClick={onFolderOpen} title="Open Folder" className="g-btn h-10 w-10 inline-flex items-center justify-center"><FolderOpen size={13} /></button>
         </div>
       </div>
 
@@ -843,7 +1102,9 @@ export function InstanceEditor() {
     searchingState: boolean,
     onSearch: () => void,
     rows: MarketplacePack[] | MarketplaceMod[],
-    installingId: string | null,
+    installVisuals: Record<string, MarketplaceInstallVisualState>,
+    installedNames: Set<string>,
+    installedRowIds: Set<string>,
     onInstall: (row: MarketplacePack | MarketplaceMod) => void,
     placeholder: string,
     emptyMessage: string,
@@ -853,15 +1114,15 @@ export function InstanceEditor() {
     <section className="g-panel p-6 space-y-4">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <h2 className="text-lg font-black text-slate-900 dark:text-white">{title}</h2>
-          <button onClick={() => {
+        <button onClick={() => {
           if (title === 'Mods Marketplace') setModsView('installed');
           if (title === 'Resource Packs Marketplace') setResourcepacksView('installed');
           if (title === 'Shaders Marketplace') setShadersView('installed');
-        }} className="g-btn h-10 px-3 text-xs font-black tracking-[0.14em] uppercase">Back To Installed</button>
+        }} className={`h-10 px-3 text-xs font-black tracking-[0.14em] uppercase ${boxedControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 76%, transparent)' }}>Back To Installed</button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_120px] gap-2">
-        <div className="g-select-trigger h-11 px-3 flex items-center gap-2">
+        <div className="h-11 px-3 flex items-center gap-2 border bg-[#131313] [border-radius:2px]" style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }}>
           <Search size={14} className="text-slate-500 dark:text-white/60" />
           <input
             value={query}
@@ -873,12 +1134,12 @@ export function InstanceEditor() {
             className="w-full bg-transparent text-sm font-semibold outline-none text-slate-900 dark:text-white"
           />
         </div>
-        <select value={source} onChange={(event) => setSource(event.target.value as SourceFilter)} className="g-select-trigger h-11 px-3 text-sm font-bold text-slate-900 dark:text-white">
+        <select value={source} onChange={(event) => setSource(event.target.value as SourceFilter)} className="h-11 px-3 text-sm font-bold text-slate-900 dark:text-white border bg-[#131313] [border-radius:2px]" style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }}>
           <option value="all">All Sources</option>
           <option value="modrinth">Modrinth</option>
           <option value="curseforge">CurseForge</option>
         </select>
-        <button onClick={onSearch} disabled={searchingState} className={`rounded-xl border h-11 text-xs font-black tracking-[0.14em] uppercase disabled:opacity-45 ${accentClasses}`} style={{ background: 'var(--g-accent-gradient)' }}>
+        <button onClick={onSearch} disabled={searchingState} className={`border h-11 text-xs font-black tracking-[0.14em] uppercase disabled:opacity-45 [border-radius:2px] ${accentClasses}`} style={{ background: 'var(--g-accent-gradient)', borderColor: 'color-mix(in srgb, var(--g-border) 78%, transparent)', boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.18)' }}>
           {searchingState ? 'Searching...' : 'Search'}
         </button>
       </div>
@@ -889,26 +1150,55 @@ export function InstanceEditor() {
         ) : (
           rows.map((row) => {
             const rowId = `${row.source}:${row.id}`;
+            const installVisual = installVisuals[rowId] ?? null;
+            const isInstalling = !!installVisual;
+            const isInstalled = installedRowIds.has(rowId) || installedNames.has(normalizeMarketplaceLabel(row.title));
             return (
               <article
                 key={rowId}
-                className="grid grid-cols-[64px_1fr_auto] items-center gap-4 border px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                className={`simple-install-card relative grid grid-cols-[64px_1fr_auto] items-center gap-4 overflow-hidden border px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${isInstalling ? 'is-installing' : ''} ${isInstalled && !isInstalling ? 'is-installed' : ''}`}
                 style={{
                   borderRadius: 'calc(22px * var(--g-roundness-mult))',
                   borderColor: 'color-mix(in srgb, var(--g-border) 82%, transparent)',
                   background: 'linear-gradient(180deg, color-mix(in srgb, var(--g-surface-strong) 82%, transparent), color-mix(in srgb, var(--g-shell-strong) 88%, #000 12%))'
                 }}
               >
-                <div className="w-14 h-14 rounded-xl border border-slate-300 dark:border-white/15 bg-slate-200 dark:bg-white/10 overflow-hidden flex items-center justify-center">
+                <div className="simple-install-card__content w-14 h-14 border border-slate-300 dark:border-white/15 bg-slate-200 dark:bg-white/10 overflow-hidden flex items-center justify-center [border-radius:2px]">
                   {row.iconUrl ? <img src={row.iconUrl} alt={row.title} className="w-full h-full object-cover" /> : icon === 'mod' || icon === 'shader' ? <Sparkles size={14} className="text-slate-500 dark:text-white/55" /> : <ImageIcon size={14} className="text-slate-500 dark:text-white/55" />}
                 </div>
-                <div className="min-w-0 flex-1">
+                <div className="simple-install-card__content min-w-0 flex-1">
                   <p className="text-lg font-black text-slate-900 dark:text-white truncate">{row.title}</p>
                   <p className="mt-1 text-sm font-semibold text-slate-500 dark:text-white/55 truncate">{row.description}</p>
                 </div>
-                <button onClick={() => onInstall(row)} disabled={installingId === rowId} className={`rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5 disabled:opacity-45 ${accentClasses}`}>
-                  <Download size={12} /> {installingId === rowId ? 'Installing...' : 'Install'}
+                <button
+                  onClick={() => onInstall(row)}
+                  disabled={isInstalling || isInstalled}
+                  className={`simple-install-card__button border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5 transition-all duration-200 [border-radius:2px] ${
+                    isInstalling || isInstalled
+                      ? 'border-white/10 bg-white/[0.05] text-white/50'
+                      : accentClasses
+                  }`}
+                  style={isInstalling || isInstalled
+                    ? { borderColor: 'color-mix(in srgb, var(--g-border) 82%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 70%, transparent)' }
+                    : { boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.18)' }}
+                >
+                  <Download size={12} /> {isInstalled ? 'Installed' : isInstalling ? 'Installing...' : 'Install'}
                 </button>
+                {isInstalling ? (
+                  <>
+                    <div className="simple-install-card__veil" />
+                    <div className="simple-install-card__loader">
+                      <div className={`simple-install-card__text ${installVisual?.phase === 'done' ? 'is-done' : ''}`}>
+                        {installVisual?.label ?? 'Installing'}
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+                {isInstalled && !isInstalling ? (
+                  <div className="simple-install-card__installed">
+                    Installed
+                  </div>
+                ) : null}
               </article>
             );
           })
@@ -916,6 +1206,131 @@ export function InstanceEditor() {
       </div>
     </section>
   );
+
+  const renderFilesExplorer = () => {
+    if (!instance) return null;
+    const hasSearch = filesTreeQuery.trim().length > 0;
+    const renderTree = (parentPath: string, depth: number): ReactNode => {
+      const children = treeByParent.get(parentPath) || [];
+      return children.map((row) => {
+        const isExpanded = expandedFolders.has(row.relativePath);
+        const showChildren = row.isDir && (isExpanded || hasSearch);
+        const isSelectedFile = !row.isDir && selectedFilePath === row.relativePath;
+        return (
+          <div key={row.relativePath}>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => { void handleTreeRowClick(row); }}
+                className="group flex h-9 min-w-0 flex-1 items-center gap-2 border border-transparent px-2 text-left text-sm transition hover:border-white/10 hover:bg-white/[0.04] [border-radius:2px]"
+                style={{ paddingLeft: `${10 + (depth * 14)}px`, background: isSelectedFile ? 'color-mix(in srgb, var(--g-accent-soft) 58%, transparent)' : undefined }}
+              >
+                {row.isDir ? <ChevronDown size={12} className={`shrink-0 text-white/55 transition ${showChildren ? 'rotate-0' : '-rotate-90'}`} /> : <span className="w-3 shrink-0" />}
+                {row.isDir ? <Folder size={13} className="shrink-0 text-white/70" /> : <FileText size={13} className="shrink-0 text-white/45" />}
+                <span className="truncate font-semibold text-white/88">{row.name}</span>
+                {row.isDir && (
+                  <span className="ml-auto border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] font-black uppercase tracking-[0.12em] text-white/58 [border-radius:2px]">
+                    {row.childCount}
+                  </span>
+                )}
+              </button>
+              <button onClick={() => { void renameFilesRow(row); }} className={`hidden h-7 w-7 items-center justify-center md:inline-flex ${boxedControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }}><Pencil size={11} /></button>
+              <button onClick={() => { void deleteFilesRow(row); }} className={`hidden h-7 w-7 items-center justify-center md:inline-flex ${boxedDangerControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-danger) 28%, var(--g-border) 72%)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-danger) 20%, transparent)' }}><Trash2 size={11} /></button>
+            </div>
+            {showChildren ? <div>{renderTree(row.relativePath, depth + 1)}</div> : null}
+          </div>
+        );
+      });
+    };
+
+    return (
+      <section className="g-panel p-5 md:p-6">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-black text-slate-900 dark:text-white">Files</h2>
+            <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-white/55">Tree explorer with real in-instance file editing.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => void reloadFilesTree()} className={`h-10 w-10 ${boxedControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }} title="Refresh tree"><RefreshCcw size={13} /></button>
+            <button onClick={() => void createFolderAt()} className={`h-10 w-10 ${boxedControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }} title="New folder"><FolderPlus size={13} /></button>
+            <button onClick={() => void openPathInSystem()} className={`h-10 w-10 ${boxedControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }} title="Open instance folder"><FolderOpen size={13} /></button>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[360px_minmax(0,1fr)]">
+          <aside className="border border-white/10 bg-black/30 p-3 [border-radius:10px]">
+            <div className="mb-2 h-10 px-3 flex items-center gap-2 border bg-[#131313] [border-radius:2px]" style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }}>
+              <Search size={13} className="text-slate-500 dark:text-white/60" />
+              <input
+                value={filesTreeQuery}
+                onChange={(event) => setFilesTreeQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void reloadFilesTree(filesTreeQuery);
+                }}
+                placeholder="Search files or folders..."
+                className="w-full bg-transparent text-sm font-semibold outline-none text-slate-900 dark:text-white"
+              />
+            </div>
+            <div className="mb-3 grid grid-cols-2 gap-2">
+              <button className="border bg-[#151515] px-3 py-1.5 text-xs font-black uppercase tracking-[0.12em] text-white [border-radius:2px]" style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }}>Folders {folderRows.length}</button>
+              <button className="border bg-[#111111] px-3 py-1.5 text-xs font-black uppercase tracking-[0.12em] text-white/72 [border-radius:2px]" style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 66%, transparent)' }}>Files {fileRows.length}</button>
+            </div>
+            <div className="max-h-[620px] overflow-auto pr-1">
+              {filesTreeLoading ? (
+                <div className="p-4 text-center text-xs font-black uppercase tracking-[0.14em] text-white/55">Loading tree...</div>
+              ) : (
+                renderTree('', 0)
+              )}
+            </div>
+          </aside>
+
+          <section className="border border-white/10 bg-black/30 p-4 [border-radius:10px]">
+            {selectedFilePath ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-[10px] font-black uppercase tracking-[0.14em] text-white/55">{selectedFilePath}</p>
+                    <p className="mt-1 text-xs font-semibold text-white/55">Editing this file updates the real instance file.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => void openPathInSystem(selectedFilePath)} className={`h-9 w-9 ${boxedControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }} title="Open in system"><FolderOpen size={12} /></button>
+                    <button onClick={() => void loadSelectedFile(selectedFilePath)} className={`h-9 w-9 ${boxedControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }} title="Reload file"><RefreshCcw size={12} /></button>
+                    <button
+                      onClick={() => { void saveSelectedFile(); }}
+                      disabled={selectedFileSaving || !selectedFileDirty || selectedFileLoading || !!selectedFileError}
+                      className="g-btn-accent h-9 px-3 text-xs font-black uppercase tracking-[0.12em] disabled:opacity-45 inline-flex items-center gap-1.5 [border-radius:2px]"
+                      style={{ boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.18)' }}
+                    >
+                      <Save size={12} /> {selectedFileSaving ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+
+                {selectedFileLoading ? (
+                  <div className="border border-white/10 bg-black/35 p-4 text-center text-xs font-black uppercase tracking-[0.14em] text-white/55 [border-radius:2px]">Loading file...</div>
+                ) : selectedFileError ? (
+                  <div className="border border-red-500/35 bg-red-500/10 p-4 text-sm font-semibold text-red-100 [border-radius:2px]">{selectedFileError}</div>
+                ) : (
+                  <textarea
+                    value={selectedFileText}
+                    onChange={(event) => setSelectedFileText(event.target.value)}
+                    spellCheck={false}
+                    className="h-[620px] w-full resize-none border border-white/10 bg-black/45 p-3 font-mono text-[12px] leading-5 text-white outline-none [border-radius:2px]"
+                  />
+                )}
+              </div>
+            ) : (
+              <div className="flex h-[620px] items-center justify-center border border-white/10 bg-black/35 p-4 text-center [border-radius:2px]">
+                <div>
+                  <p className="text-lg font-black text-white">Select a file from the tree</p>
+                  <p className="mt-1 text-sm font-semibold text-white/58">Folders expand in the left panel. Click a file to view and edit.</p>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      </section>
+    );
+  };
 
   if (loading || (instance && !instanceMediaLoaded)) {
     return <div className="min-h-full p-8 flex items-center justify-center"><p className="text-sm font-black tracking-[0.16em] uppercase text-slate-500 dark:text-white/55">Loading instance...</p></div>;
@@ -1150,20 +1565,20 @@ export function InstanceEditor() {
                 </div>
               )}
             </div>
-            <button onClick={goBack} className="g-btn h-11 px-4 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-2">
-              <ArrowLeft size={14} /> Back
+            <button onClick={goBack} title="Back" className="g-btn h-11 w-11 inline-flex items-center justify-center">
+              <ArrowLeft size={14} />
             </button>
-            <button onClick={() => void handleLaunch()} disabled={!!activeDownloads[instance.id] && activeDownloads[instance.id].status !== 'Complete'} className="g-btn h-11 px-4 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-2 disabled:opacity-45">
-              <Play size={14} /> Launch
+            <button onClick={() => void handleLaunch()} title="Launch" disabled={!!activeDownloads[instance.id] && activeDownloads[instance.id].status !== 'Complete'} className="g-btn h-11 w-11 inline-flex items-center justify-center disabled:opacity-45">
+              <Play size={14} />
             </button>
-            <button onClick={saveSettings} disabled={saving} className="g-btn-accent h-11 px-5 text-xs font-black tracking-[0.14em] uppercase disabled:opacity-45 inline-flex items-center gap-2">
-              <Save size={14} /> {saving ? 'Saving...' : 'Save'}
+            <button onClick={saveSettings} title={saving ? 'Saving...' : 'Save'} disabled={saving} className="g-btn-accent h-11 w-11 inline-flex items-center justify-center disabled:opacity-45">
+              <Save size={14} />
             </button>
           </div>
         </div>
 
         <div
-          className="mt-4 inline-grid grid-cols-2 md:grid-cols-4 gap-2 border p-2"
+          className="mt-4 inline-grid grid-cols-2 md:grid-cols-5 gap-2 border p-2"
           style={{
             borderRadius: 'calc(22px * var(--g-roundness-mult))',
             borderColor: 'var(--g-border)',
@@ -1174,6 +1589,7 @@ export function InstanceEditor() {
             ['mods', 'Mods'],
             ['resourcepacks', 'Resource Packs'],
             ['shaders', 'Shaders'],
+            ['files', 'Files'],
             ['settings', 'Settings']
           ] as const).map(([tab, label]) => (
             <button
@@ -1192,7 +1608,7 @@ export function InstanceEditor() {
           ))}
         </div>
 
-        {activeTab !== 'settings' && (
+        {activeTab !== 'settings' && activeTab !== 'files' && (
           <div
             className="mt-4 inline-grid grid-cols-2 gap-2 border p-2"
             style={{
@@ -1421,11 +1837,10 @@ export function InstanceEditor() {
           () => { void TauriApi.openModsFolder(instance.id); },
           () => setModsView('install'),
           (row) => { void removeMod(row as InstanceModFile); },
-          (row) => { void toggleMod(row); },
-          <button onClick={autoInstallFabricApi} disabled={instance.loader !== 'fabric' || installingFabricApi} className="rounded-xl border border-emerald-500/50 bg-emerald-500/15 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1.5 disabled:opacity-45"><ShieldPlus size={13} /> {installingFabricApi ? 'Installing...' : 'Auto Fabric API'}</button>
+          (row) => { void toggleMod(row); }
         ) : (
           <div className="space-y-4">
-            {renderMarketplaceList('Mods Marketplace', modsQuery, setModsQuery, modsSource, setModsSource, modsSearching, () => { void searchModsMarket(); }, modsResults, modsInstallingId, (row) => { void installMarketplaceMod(row as MarketplaceMod); }, 'Search marketplace mods...', 'Search to load marketplace mods for this instance.', 'border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-200', 'mod')}
+            {renderMarketplaceList('Mods Marketplace', modsQuery, setModsQuery, modsSource, setModsSource, modsSearching, () => { void searchModsMarket(); }, modsResults, modInstallVisuals, installedModNames, installedMarketplaceMods, (row) => { void installMarketplaceMod(row as MarketplaceMod); }, 'Search marketplace mods...', 'Search to load marketplace mods for this instance.', 'border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-200', 'mod')}
             <section className="g-panel p-6">
               <div onDrop={handleDrop} onDragOver={handleDragOver} onDragLeave={handleDragLeave} className={['rounded-2xl border-2 border-dashed p-4 text-center transition-colors', isDragging ? 'border-[var(--g-accent)] bg-[var(--g-accent-soft)]' : 'border-slate-300/80 dark:border-white/20 bg-slate-100/40 dark:bg-white/[0.03]'].join(' ')}>
                 <p className="text-sm font-black text-slate-700 dark:text-white/75 inline-flex items-center gap-2"><UploadCloud size={15} /> Drop .jar files here</p>
@@ -1450,8 +1865,8 @@ export function InstanceEditor() {
             () => setResourcepacksView('install'),
             (row) => { void removeResourcepack(row as InstanceContentFile); }
           )
-          : renderMarketplaceList('Resource Packs Marketplace', resourcepacksQuery, setResourcepacksQuery, resourcepacksSource, setResourcepacksSource, resourcepacksSearching, () => { void searchResourcePacksMarket(); }, resourcepacksResults, resourcepacksInstallingId, (row) => { void installMarketplaceResourcePack(row as MarketplacePack); }, 'Search resource packs...', 'Search to load resource packs.', 'border-cyan-500/50 bg-cyan-500/15 text-cyan-700 dark:text-cyan-200', 'pack')
-      ) : (
+          : renderMarketplaceList('Resource Packs Marketplace', resourcepacksQuery, setResourcepacksQuery, resourcepacksSource, setResourcepacksSource, resourcepacksSearching, () => { void searchResourcePacksMarket(); }, resourcepacksResults, resourcepackInstallVisuals, installedResourcepackNames, installedMarketplaceResourcepacks, (row) => { void installMarketplaceResourcePack(row as MarketplacePack); }, 'Search resource packs...', 'Search to load resource packs.', 'border-cyan-500/50 bg-cyan-500/15 text-cyan-700 dark:text-cyan-200', 'pack')
+      ) : activeTab === 'shaders' ? (
         shadersView === 'installed'
           ? renderInstalledLibrary(
             'Shaders',
@@ -1462,7 +1877,9 @@ export function InstanceEditor() {
             () => setShadersView('install'),
             (row) => { void removeShaderpack(row as InstanceContentFile); }
           )
-          : renderMarketplaceList('Shaders Marketplace', shadersQuery, setShadersQuery, shadersSource, setShadersSource, shadersSearching, () => { void searchShadersMarket(); }, shadersResults, shadersInstallingId, (row) => { void installMarketplaceShader(row as MarketplacePack); }, 'Search shaders...', 'Search to load shader packs.', 'border-fuchsia-500/50 bg-fuchsia-500/15 text-fuchsia-700 dark:text-fuchsia-200', 'shader')
+          : renderMarketplaceList('Shaders Marketplace', shadersQuery, setShadersQuery, shadersSource, setShadersSource, shadersSearching, () => { void searchShadersMarket(); }, shadersResults, shaderInstallVisuals, installedShaderNames, installedMarketplaceShaders, (row) => { void installMarketplaceShader(row as MarketplacePack); }, 'Search shaders...', 'Search to load shader packs.', 'border-fuchsia-500/50 bg-fuchsia-500/15 text-fuchsia-700 dark:text-fuchsia-200', 'shader')
+      ) : (
+        renderFilesExplorer()
       )}
 
       {(statusMessage || lastInstallResult) && (

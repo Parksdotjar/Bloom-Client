@@ -20,9 +20,9 @@ const BLOOM_FEATURED_PACK = {
   id: 'bloom-performance-overdrive',
   title: 'Bloom Preformance | Overdrive',
   description:
-    'Bloom-curated Fabric 1.21.11 performance pack tuned around Sodium, Lithium, C2ME, ModernFix-mVUS, VMP, and supporting client fixes.',
+    'Bloom-curated Fabric 1.21.11 performance and utility pack with Sodium/Lithium/C2ME core optimizations plus Flashback, Essential, Simple Voice Chat, JourneyMap, Zoomify, Freecam, and other client QoL mods.',
   minecraftVersion: '1.21.11',
-  modCount: 34,
+  modCount: 51,
   tags: ['Featured', 'Fabric', 'Performance', 'Bloom']
 } as const;
 

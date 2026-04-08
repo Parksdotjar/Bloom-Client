@@ -97,6 +97,25 @@ pub struct InstanceContentFile {
     pub updated_at: i64,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceExplorerEntry {
+    pub name: String,
+    pub relative_path: String,
+    pub is_dir: bool,
+    pub size_bytes: u64,
+    pub child_count: u64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceFileTextReadResult {
+    pub relative_path: String,
+    pub text: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceTransferOptions {
@@ -402,6 +421,122 @@ fn safe_join_relative(base: &Path, rel: &str) -> Option<PathBuf> {
         }
     }
     Some(out)
+}
+
+fn normalize_relative_path(input: &str) -> Result<String, String> {
+    let trimmed = input.trim().replace('\\', "/");
+    if trimmed.is_empty() || trimmed == "." {
+        return Ok(String::new());
+    }
+    let rel = Path::new(&trimmed);
+    if rel.is_absolute() {
+        return Err("Absolute paths are not allowed.".into());
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    for component in rel.components() {
+        match component {
+            Component::Normal(part) => {
+                let name = part
+                    .to_str()
+                    .ok_or("Invalid UTF-8 path segment.")?
+                    .trim()
+                    .to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                out.push(name);
+            }
+            Component::CurDir => {}
+            _ => return Err("Unsafe relative path.".into()),
+        }
+    }
+    Ok(out.join("/"))
+}
+
+fn metadata_unix_seconds(meta: &fs::Metadata) -> (i64, i64) {
+    let created_at = meta
+        .created()
+        .ok()
+        .and_then(|v| v.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let updated_at = meta
+        .modified()
+        .ok()
+        .and_then(|v| v.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    (created_at, updated_at)
+}
+
+fn count_direct_children(path: &Path) -> u64 {
+    fs::read_dir(path)
+        .ok()
+        .map(|iter| iter.filter_map(Result::ok).count() as u64)
+        .unwrap_or(0)
+}
+
+fn push_instance_tree_entries(
+    base_dir: &Path,
+    current_relative: &str,
+    query_lower: &str,
+    out: &mut Vec<InstanceExplorerEntry>,
+) -> Result<(), String> {
+    let current_dir = if current_relative.is_empty() {
+        base_dir.to_path_buf()
+    } else {
+        safe_join_relative(base_dir, current_relative).ok_or("Invalid path.")?
+    };
+    if !current_dir.exists() || !current_dir.is_dir() {
+        return Ok(());
+    }
+
+    let mut rows: Vec<(String, PathBuf, fs::Metadata)> = Vec::new();
+    for row in fs::read_dir(&current_dir).map_err(|e| e.to_string())? {
+        let row = row.map_err(|e| e.to_string())?;
+        let path = row.path();
+        let name = row
+            .file_name()
+            .to_str()
+            .ok_or("Invalid UTF-8 path.")?
+            .to_string();
+        let meta = fs::metadata(&path).map_err(|e| e.to_string())?;
+        rows.push((name, path, meta));
+    }
+
+    rows.sort_by(|a, b| {
+        if a.2.is_dir() != b.2.is_dir() {
+            return b.2.is_dir().cmp(&a.2.is_dir());
+        }
+        a.0.to_ascii_lowercase().cmp(&b.0.to_ascii_lowercase())
+    });
+
+    for (name, path, meta) in rows {
+        let rel = if current_relative.is_empty() {
+            name.clone()
+        } else {
+            format!("{}/{}", current_relative, name)
+        };
+        let name_matches = query_lower.is_empty() || name.to_ascii_lowercase().contains(query_lower);
+        let is_dir = meta.is_dir();
+        let (created_at, updated_at) = metadata_unix_seconds(&meta);
+        if name_matches {
+            out.push(InstanceExplorerEntry {
+                name: name.clone(),
+                relative_path: rel.clone(),
+                is_dir,
+                size_bytes: if is_dir { 0 } else { meta.len() },
+                child_count: if is_dir { count_direct_children(&path) } else { 0 },
+                created_at,
+                updated_at,
+            });
+        }
+        if is_dir {
+            push_instance_tree_entries(base_dir, &rel, query_lower, out)?;
+        }
+    }
+    Ok(())
 }
 
 fn mrpack_client_enabled(env: &Option<MrpackEnv>) -> bool {
@@ -953,6 +1088,289 @@ pub async fn open_shaderpacks_folder(app: tauri::AppHandle, id: String) -> Resul
             .map_err(|e| e.to_string())?;
     }
 
+    Ok(())
+}
+
+#[tauri::command]
+pub fn instance_files_list(
+    app: AppHandle,
+    instance_id: String,
+    relative_path: Option<String>,
+    query: Option<String>,
+) -> Result<Vec<InstanceExplorerEntry>, String> {
+    let paths = paths_get(app)?;
+    let instance_root = paths.instances.join(&instance_id);
+    if !instance_root.exists() {
+        return Err("Instance not found".into());
+    }
+
+    let normalized_rel = normalize_relative_path(relative_path.as_deref().unwrap_or_default())?;
+    let target_dir = if normalized_rel.is_empty() {
+        instance_root.clone()
+    } else {
+        safe_join_relative(&instance_root, &normalized_rel).ok_or("Invalid path.")?
+    };
+    if !target_dir.exists() || !target_dir.is_dir() {
+        return Err("Folder not found.".into());
+    }
+
+    let query_lower = query.unwrap_or_default().trim().to_ascii_lowercase();
+    let mut entries = Vec::new();
+    let rows = fs::read_dir(&target_dir).map_err(|e| e.to_string())?;
+    for row in rows {
+        let row = row.map_err(|e| e.to_string())?;
+        let path = row.path();
+        let name = row
+            .file_name()
+            .to_str()
+            .ok_or("Invalid UTF-8 path.")?
+            .to_string();
+        if !query_lower.is_empty() && !name.to_ascii_lowercase().contains(&query_lower) {
+            continue;
+        }
+        let meta = fs::metadata(&path).map_err(|e| e.to_string())?;
+        let is_dir = meta.is_dir();
+        let (created_at, updated_at) = metadata_unix_seconds(&meta);
+        let rel = if normalized_rel.is_empty() {
+            name.clone()
+        } else {
+            format!("{}/{}", normalized_rel, name)
+        };
+        entries.push(InstanceExplorerEntry {
+            name,
+            relative_path: rel,
+            is_dir,
+            size_bytes: if is_dir { 0 } else { meta.len() },
+            child_count: if is_dir { count_direct_children(&path) } else { 0 },
+            created_at,
+            updated_at,
+        });
+    }
+
+    entries.sort_by(|a, b| {
+        if a.is_dir != b.is_dir {
+            return b.is_dir.cmp(&a.is_dir);
+        }
+        a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase())
+    });
+    Ok(entries)
+}
+
+#[tauri::command]
+pub fn instance_files_tree(
+    app: AppHandle,
+    instance_id: String,
+    query: Option<String>,
+) -> Result<Vec<InstanceExplorerEntry>, String> {
+    let paths = paths_get(app)?;
+    let instance_root = paths.instances.join(&instance_id);
+    if !instance_root.exists() {
+        return Err("Instance not found".into());
+    }
+    let query_lower = query.unwrap_or_default().trim().to_ascii_lowercase();
+    let mut out = Vec::new();
+    push_instance_tree_entries(&instance_root, "", &query_lower, &mut out)?;
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn instance_files_open_path(
+    app: AppHandle,
+    instance_id: String,
+    relative_path: Option<String>,
+) -> Result<(), String> {
+    use std::process::Command;
+    let paths = paths_get(app)?;
+    let instance_root = paths.instances.join(&instance_id);
+    if !instance_root.exists() {
+        return Err("Instance not found".into());
+    }
+    let normalized_rel = normalize_relative_path(relative_path.as_deref().unwrap_or_default())?;
+    let target = if normalized_rel.is_empty() {
+        instance_root
+    } else {
+        safe_join_relative(&instance_root, &normalized_rel).ok_or("Invalid path.")?
+    };
+    if !target.exists() {
+        return Err("Target path not found.".into());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn instance_files_create_directory(
+    app: AppHandle,
+    instance_id: String,
+    parent_relative_path: Option<String>,
+    name: String,
+) -> Result<(), String> {
+    let paths = paths_get(app)?;
+    let instance_root = paths.instances.join(&instance_id);
+    if !instance_root.exists() {
+        return Err("Instance not found".into());
+    }
+    let folder_name = name.trim();
+    if folder_name.is_empty()
+        || folder_name == "."
+        || folder_name == ".."
+        || folder_name.contains('/')
+        || folder_name.contains('\\')
+    {
+        return Err("Invalid folder name.".into());
+    }
+    let parent_rel = normalize_relative_path(parent_relative_path.as_deref().unwrap_or_default())?;
+    let parent = if parent_rel.is_empty() {
+        instance_root
+    } else {
+        safe_join_relative(&instance_root, &parent_rel).ok_or("Invalid parent path.")?
+    };
+    if !parent.exists() || !parent.is_dir() {
+        return Err("Parent folder not found.".into());
+    }
+    let target = parent.join(folder_name);
+    fs::create_dir_all(target).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn instance_files_delete(
+    app: AppHandle,
+    instance_id: String,
+    relative_path: String,
+) -> Result<(), String> {
+    let paths = paths_get(app)?;
+    let instance_root = paths.instances.join(&instance_id);
+    if !instance_root.exists() {
+        return Err("Instance not found".into());
+    }
+    let rel = normalize_relative_path(&relative_path)?;
+    if rel.is_empty() {
+        return Err("Cannot delete instance root.".into());
+    }
+    let target = safe_join_relative(&instance_root, &rel).ok_or("Invalid path.")?;
+    if !target.exists() {
+        return Err("Path not found.".into());
+    }
+    if target.is_dir() {
+        fs::remove_dir_all(&target).map_err(|e| e.to_string())?;
+    } else {
+        fs::remove_file(&target).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn instance_files_rename(
+    app: AppHandle,
+    instance_id: String,
+    relative_path: String,
+    new_name: String,
+) -> Result<(), String> {
+    let paths = paths_get(app)?;
+    let instance_root = paths.instances.join(&instance_id);
+    if !instance_root.exists() {
+        return Err("Instance not found".into());
+    }
+    let rel = normalize_relative_path(&relative_path)?;
+    if rel.is_empty() {
+        return Err("Cannot rename instance root.".into());
+    }
+    let clean_name = new_name.trim();
+    if clean_name.is_empty()
+        || clean_name == "."
+        || clean_name == ".."
+        || clean_name.contains('/')
+        || clean_name.contains('\\')
+    {
+        return Err("Invalid target name.".into());
+    }
+    let source = safe_join_relative(&instance_root, &rel).ok_or("Invalid path.")?;
+    if !source.exists() {
+        return Err("Path not found.".into());
+    }
+    let parent = source.parent().ok_or("Parent path unavailable.")?;
+    let target = parent.join(clean_name);
+    fs::rename(source, target).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn instance_files_read_text(
+    app: AppHandle,
+    instance_id: String,
+    relative_path: String,
+) -> Result<InstanceFileTextReadResult, String> {
+    let paths = paths_get(app)?;
+    let instance_root = paths.instances.join(&instance_id);
+    if !instance_root.exists() {
+        return Err("Instance not found".into());
+    }
+    let rel = normalize_relative_path(&relative_path)?;
+    if rel.is_empty() {
+        return Err("Select a file.".into());
+    }
+    let target = safe_join_relative(&instance_root, &rel).ok_or("Invalid path.")?;
+    if !target.exists() || !target.is_file() {
+        return Err("File not found.".into());
+    }
+    let bytes = fs::read(&target).map_err(|e| e.to_string())?;
+    if bytes.len() > 2 * 1024 * 1024 {
+        return Err("File is too large to edit in-app (max 2 MB).".into());
+    }
+    let text = String::from_utf8(bytes)
+        .map_err(|_| "File is not UTF-8 text. Use Open In System for binary files.".to_string())?;
+    Ok(InstanceFileTextReadResult {
+        relative_path: rel,
+        text,
+    })
+}
+
+#[tauri::command]
+pub fn instance_files_write_text(
+    app: AppHandle,
+    instance_id: String,
+    relative_path: String,
+    text: String,
+) -> Result<(), String> {
+    let paths = paths_get(app)?;
+    let instance_root = paths.instances.join(&instance_id);
+    if !instance_root.exists() {
+        return Err("Instance not found".into());
+    }
+    let rel = normalize_relative_path(&relative_path)?;
+    if rel.is_empty() {
+        return Err("Select a file.".into());
+    }
+    let target = safe_join_relative(&instance_root, &rel).ok_or("Invalid path.")?;
+    if !target.exists() || !target.is_file() {
+        return Err("File not found.".into());
+    }
+    if text.as_bytes().len() > 2 * 1024 * 1024 {
+        return Err("Edited file is too large (max 2 MB).".into());
+    }
+    fs::write(target, text.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
 

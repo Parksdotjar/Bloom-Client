@@ -94,10 +94,13 @@ interface SidebarProps {
   onQuickLaunch?: () => void;
   onOpenLogs?: () => void;
   onRefreshMods?: () => void;
+  onTabDragStart?: (path: string, point: { x: number; y: number }) => void;
+  onTabDragMove?: (point: { x: number; y: number }) => void;
+  onTabDragEnd?: (point: { x: number; y: number } | null, path: string | null) => void;
 }
 
 export function SidebarRail(props: SidebarProps) {
-  const { className, themeMode, sidebarMode, sidebarPosition, surfaceOpacity, showHostServer, sidebarTabsVisibility, onQuickLaunch, onOpenLogs, onRefreshMods } = props;
+  const { className, themeMode, sidebarMode, sidebarPosition, surfaceOpacity, showHostServer, sidebarTabsVisibility, onQuickLaunch, onOpenLogs, onRefreshMods, onTabDragStart, onTabDragMove, onTabDragEnd } = props;
   const navigate = useNavigate();
   const location = useLocation();
   const railRef = useRef<HTMLDivElement | null>(null);
@@ -155,6 +158,17 @@ export function SidebarRail(props: SidebarProps) {
   const sidebarHeight = sidebarMode === 'expanded' ? 98 : sidebarMode === 'rail' ? 78 : 88;
   const iconStrokeWidth = iconPack === 'bold' ? 2.6 : iconPack === 'pixel' ? 2.2 : iconPack === 'rounded' ? 1.9 : 2;
   const activeTabVisibility = sidebarTabsVisibility ?? localSidebarTabsVisibility;
+  const pointerDragRef = useRef<{
+    path: string;
+    startX: number;
+    startY: number;
+    lastX: number;
+    lastY: number;
+    active: boolean;
+    holdReady: boolean;
+    timer: number | null;
+  } | null>(null);
+  const suppressNextClickRef = useRef(false);
   const navItems = [
     ...(activeTabVisibility.home ? [{ icon: User, path: '/', label: 'Account' }] : []),
     ...(activeTabVisibility.instances ? [{ icon: Gamepad2, path: '/instances', label: 'Play' }] : []),
@@ -326,6 +340,80 @@ export function SidebarRail(props: SidebarProps) {
     }
   }, []);
 
+  useEffect(() => () => {
+    const current = pointerDragRef.current;
+    if (current?.timer !== null && current?.timer !== undefined) {
+      window.clearTimeout(current.timer);
+    }
+    document.body.style.removeProperty('cursor');
+  }, []);
+
+  const clearPointerDragListeners = useRef<(() => void) | null>(null);
+  const beginTabPointerDrag = (path: string, event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    const state = {
+      path,
+      startX: event.clientX,
+      startY: event.clientY,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      active: false,
+      holdReady: false,
+      timer: window.setTimeout(() => {
+        const current = pointerDragRef.current;
+        if (!current || current.path !== path || current.active) return;
+        current.holdReady = true;
+        current.active = true;
+        document.body.style.cursor = 'grabbing';
+        onTabDragStart?.(path, { x: current.lastX, y: current.lastY });
+        onTabDragMove?.({ x: current.lastX, y: current.lastY });
+      }, 600)
+    };
+    pointerDragRef.current = state;
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const current = pointerDragRef.current;
+      if (!current) return;
+      current.lastX = moveEvent.clientX;
+      current.lastY = moveEvent.clientY;
+      if (current.active) {
+        onTabDragMove?.({ x: moveEvent.clientX, y: moveEvent.clientY });
+      }
+    };
+
+    const finish = (point: { x: number; y: number } | null) => {
+      const current = pointerDragRef.current;
+      if (!current) return;
+      if (current.timer !== null) {
+        window.clearTimeout(current.timer);
+      }
+      const wasActive = current.active;
+      pointerDragRef.current = null;
+      document.body.style.removeProperty('cursor');
+      if (clearPointerDragListeners.current) {
+        clearPointerDragListeners.current();
+        clearPointerDragListeners.current = null;
+      }
+      if (wasActive) {
+        suppressNextClickRef.current = true;
+      }
+      const dropDistance = point ? Math.hypot(point.x - current.startX, point.y - current.startY) : 0;
+      const shouldCommitDrop = wasActive && dropDistance >= 6;
+      onTabDragEnd?.(shouldCommitDrop ? point : null, shouldCommitDrop ? current.path : null);
+    };
+
+    const onPointerUp = (upEvent: PointerEvent) => finish({ x: upEvent.clientX, y: upEvent.clientY });
+    const onPointerCancel = () => finish(null);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp, { once: true });
+    window.addEventListener('pointercancel', onPointerCancel, { once: true });
+    clearPointerDragListeners.current = () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerCancel);
+    };
+  };
+
   const getDockStyle = (index: number) => {
     const baseHalfGap = sidebarTabGap / 2;
     const transformTransition = `transform ${sidebarDockGrowSpeed}ms cubic-bezier(0.22, 1, 0.36, 1)`;
@@ -464,6 +552,18 @@ export function SidebarRail(props: SidebarProps) {
           <NavLink
             key={item.label}
             to={item.path}
+            draggable={false}
+            onDragStart={(event) => {
+              event.preventDefault();
+            }}
+            onPointerDown={(event) => beginTabPointerDrag(item.path, event)}
+            onClick={(event) => {
+              if (suppressNextClickRef.current) {
+                event.preventDefault();
+                event.stopPropagation();
+                suppressNextClickRef.current = false;
+              }
+            }}
             ref={(element) => {
               tabRefs.current[index] = element;
             }}
