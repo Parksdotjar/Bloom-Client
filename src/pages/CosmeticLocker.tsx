@@ -1300,12 +1300,18 @@ export function CosmeticLocker() {
     setErrorMessage(null);
     try {
       await setCapeLoadout(selectedCape.slug);
-      const authoritative = await loadCurrentLoadout();
-      const equippedId = authoritative?.equipped_cape_id ?? null;
-      setEquippedCapeId(equippedId);
+      let authoritative = await loadCurrentLoadout();
+      let equippedId = authoritative?.equipped_cape_id ?? null;
       if (equippedId !== selectedCape.id) {
-        throw new Error('Equip did not persist on server. Check set_cape_loadout SQL function.');
+        // Some backend rows (notably animated/live cape paths) require a clear before re-equip.
+        // Do it automatically so users can swap capes in one click.
+        await setCapeLoadout(null);
+        await setCapeLoadout(selectedCape.slug);
+        authoritative = await loadCurrentLoadout();
+        equippedId = authoritative?.equipped_cape_id ?? null;
       }
+      setEquippedCapeId(equippedId);
+      if (equippedId !== selectedCape.id) throw new Error('Equip did not persist on server. Check set_cape_loadout SQL function.');
       setStatusMessage(`${selectedCape.name} equipped.`);
     } catch (error) {
       setErrorMessage(formatUiError(error));
