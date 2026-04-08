@@ -2,7 +2,12 @@ import { useEffect, useRef, useState, type ChangeEvent, type PointerEventHandler
 import { clsx } from 'clsx';
 import { APP_VERSION } from '../constants/version';
 import { TauriApi } from '../services/tauri';
-import { UniversalLoadingOverlay } from '../components/UniversalLoadingOverlay';
+import {
+  UniversalLoadingOverlay,
+  UNIVERSAL_LOADING_STYLE_KEY,
+  readUniversalLoadingStyle,
+  type UniversalLoadingStyle
+} from '../components/UniversalLoadingOverlay';
 import {
   getDefaultShopRarityCustomColors,
   readShopRarityThemeSettings,
@@ -296,6 +301,13 @@ const STARTUP_SCENE_SOUND_PROFILES: { id: StartupSceneSoundProfile; label: strin
   { id: 'off', label: 'Off', description: 'Silent startup.' },
   { id: 'shimmer', label: 'Shimmer', description: 'Light rising tone.' },
   { id: 'impact', label: 'Impact', description: 'Punchier digital hit.' }
+];
+
+const UNIVERSAL_LOADING_STYLES: { id: UniversalLoadingStyle; label: string; description: string }[] = [
+  { id: 'orbit', label: 'Orbit', description: 'Single orbit ring around a center core.' },
+  { id: 'bars', label: 'Bars', description: 'Quiet vertical bars with staggered motion.' },
+  { id: 'prism', label: 'Prism', description: 'Rotating diamond frame with a bright core.' },
+  { id: 'pulse', label: 'Pulse', description: 'Soft expanding rings with a minimal center.' }
 ];
 
 const SHOP_RARITY_LABELS: Record<ShopRarityKey, string> = {
@@ -738,6 +750,8 @@ function serializeKeybindMap(map: Record<string, string>) {
 export function Settings() {
   const [tab, setTab] = useState<SettingsTab>('general');
   const [appearanceSection, setAppearanceSection] = useState<AppearanceSection>('animation');
+  const [universalLoadingStyle, setUniversalLoadingStyle] = useState<UniversalLoadingStyle>(() => readUniversalLoadingStyle());
+  const [showUniversalLoadingPreview, setShowUniversalLoadingPreview] = useState(false);
   const [showWidgetDocker, setShowWidgetDocker] = useState<boolean>(() => localStorage.getItem(SHOW_WIDGET_DOCKER_KEY) === 'true');
   const [hideEmptyWidgetSlots, setHideEmptyWidgetSlots] = useState<boolean>(() => localStorage.getItem(HIDE_EMPTY_WIDGET_SLOTS_KEY) === 'true');
   const [showGamesSection, setShowGamesSection] = useState<boolean>(() => localStorage.getItem(SHOW_GAMES_SECTION_KEY) === 'true');
@@ -1839,6 +1853,17 @@ export function Settings() {
     dispatchExtraChange({ sidebarTabsVisibility: next });
   };
 
+  const applyUniversalLoadingStyle = (next: UniversalLoadingStyle) => {
+    setUniversalLoadingStyle(next);
+    localStorage.setItem(UNIVERSAL_LOADING_STYLE_KEY, next);
+  };
+
+  useEffect(() => {
+    if (!showUniversalLoadingPreview) return;
+    const timer = window.setTimeout(() => setShowUniversalLoadingPreview(false), 1300);
+    return () => window.clearTimeout(timer);
+  }, [showUniversalLoadingPreview]);
+
   const curvePath = `M 0 100 C ${motionEasingX1 * 100} ${100 - motionEasingY1 * 100}, ${motionEasingX2 * 100} ${100 - motionEasingY2 * 100}, 100 0`;
   const curveCss = `cubic-bezier(${motionEasingX1}, ${motionEasingY1}, ${motionEasingX2}, ${motionEasingY2})`;
   const activeAppearanceSection = APPEARANCE_SECTIONS.find((section) => section.id === appearanceSection) ?? APPEARANCE_SECTIONS[0];
@@ -1851,6 +1876,13 @@ export function Settings() {
         eyebrow="Saving"
         title="Saving keybinds..."
         description="Bloom is applying your shortcut changes."
+      />
+      <UniversalLoadingOverlay
+        open={showUniversalLoadingPreview}
+        fixed
+        eyebrow="Preview"
+        title="Universal Loading Screen"
+        description="This style will be used for launch, install, import, and export actions."
       />
       <section className="g-panel-strong p-6">
         <p className="text-[10px] uppercase tracking-[0.2em] font-extrabold g-accent-text">Settings</p>
@@ -2197,6 +2229,41 @@ export function Settings() {
                 <input type="range" min={0} max={100} step={1} value={taskbarSurfaceOpacity} onChange={(event) => applyTaskbarSurfaceOpacity(Number(event.target.value))} className="mt-3 w-full g-range" />
               </div>
 
+            </div>
+
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Universal Loading Screen</p>
+                  <p className="text-xs g-muted mt-1">Pick the loading style Bloom uses for launch, install, import, and export actions.</p>
+                </div>
+                <button
+                  onClick={() => setShowUniversalLoadingPreview(true)}
+                  className="g-btn h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]"
+                >
+                  Preview
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                {UNIVERSAL_LOADING_STYLES.map((style) => (
+                  <button
+                    key={style.id}
+                    onClick={() => {
+                      applyUniversalLoadingStyle(style.id);
+                      setShowUniversalLoadingPreview(true);
+                    }}
+                    className={clsx(
+                      'rounded-lg border p-3 text-left transition',
+                      universalLoadingStyle === style.id
+                        ? 'border-[var(--g-accent)] bg-white/[0.06] shadow-[0_0_0_1px_var(--g-accent-soft)]'
+                        : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.04]'
+                    )}
+                  >
+                    <p className="text-sm font-extrabold text-white">{style.label}</p>
+                    <p className="mt-1 text-xs g-muted">{style.description}</p>
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
