@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { IdleAnimation, SkinViewer } from 'skinview3d';
+import { FlyingAnimation, IdleAnimation, SkinViewer } from 'skinview3d';
 import { BufferAttribute, Mesh } from 'three';
 import { Pause, Play } from 'lucide-react';
 import { capeTextureLoader, type CapeTextureAsset } from '../../services/capeTextures';
@@ -23,6 +23,7 @@ type MinecraftPlayerPreviewProps = {
     camera_light_intensity: number;
     global_light_intensity: number;
   };
+  backEquipment?: 'cape' | 'elytra';
   className?: string;
 };
 
@@ -79,6 +80,7 @@ export function MinecraftPlayerPreview({
   capeTextureUrl,
   capeTextureObjectUrl,
   appearance,
+  backEquipment = 'cape',
   className
 }: MinecraftPlayerPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -251,9 +253,8 @@ export function MinecraftPlayerPreview({
       viewer.autoRotateSpeed = DEFAULT_APPEARANCE.turn_rate;
       viewer.animation = new IdleAnimation();
       viewer.animation.speed = 0.75;
-      viewer.playerObject.backEquipment = 'cape';
+      viewer.playerObject.backEquipment = backEquipment;
       viewer.playerObject.skin.visible = true;
-      viewer.playerObject.cape.visible = true;
       applyMinecraftCapeUvs(viewer);
       viewer.controls.enableZoom = false;
       viewer.controls.enablePan = false;
@@ -332,6 +333,15 @@ export function MinecraftPlayerPreview({
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
+    viewer.playerObject.backEquipment = backEquipment;
+    const nextAnimation = backEquipment === 'elytra' ? new FlyingAnimation() : new IdleAnimation();
+    nextAnimation.speed = backEquipment === 'elytra' ? 0.58 : 0.75;
+    viewer.animation = nextAnimation;
+  }, [backEquipment]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
     if (skinSources.length === 0) return;
     let cancelled = false;
     const run = async () => {
@@ -372,17 +382,17 @@ export function MinecraftPlayerPreview({
       })();
       const frameIndex = animatedFrameIndexes[animatedFrameCursor % animatedFrameIndexes.length] ?? 0;
       const frameUrl = `${base}/functions/v1/main/gif-cape/capes/${encodeURIComponent(capeId)}/frames/${frameIndex}`;
-      void viewer.loadCape(frameUrl, { backEquipment: 'cape' }).catch(() => {
+      void viewer.loadCape(frameUrl, { backEquipment }).catch(() => {
         setCapeFailed(true);
       });
       return;
     }
     if (!asset) return;
     applyMinecraftCapeUvs(viewer, asset.width, asset.height);
-    void viewer.loadCape(asset.objectUrl, { backEquipment: 'cape' }).catch(() => {
+    void viewer.loadCape(asset.objectUrl, { backEquipment }).catch(() => {
       setCapeFailed(true);
     });
-  }, [animatedFrameCursor, animatedFrameIndexes, asset, capeId]);
+  }, [animatedFrameCursor, animatedFrameIndexes, asset, backEquipment, capeId]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

@@ -12,6 +12,14 @@ export type CapeTemplate = {
   right: AtlasRegion;
   top: AtlasRegion;
   bottom: AtlasRegion;
+  elytra: {
+    front: AtlasRegion;
+    back: AtlasRegion;
+    left: AtlasRegion;
+    right: AtlasRegion;
+    top: AtlasRegion;
+    bottom: AtlasRegion;
+  };
 };
 
 type UvPoint = {
@@ -25,6 +33,9 @@ export const MINECRAFT_CAPE_TEXTURE_LEGACY_HEIGHT = 32;
 export const MINECRAFT_CAPE_BOX_WIDTH = 10;
 export const MINECRAFT_CAPE_BOX_HEIGHT = 16;
 export const MINECRAFT_CAPE_BOX_DEPTH = 1;
+export const MINECRAFT_ELYTRA_BOX_WIDTH = 10;
+export const MINECRAFT_ELYTRA_BOX_HEIGHT = 20;
+export const MINECRAFT_ELYTRA_BOX_DEPTH = 2;
 
 function toFaceVertices(
   x1: number,
@@ -51,6 +62,11 @@ export function resolveMinecraftCapeTemplate(textureWidth: number, textureHeight
   const height = MINECRAFT_CAPE_BOX_HEIGHT * unitY;
   const depthX = MINECRAFT_CAPE_BOX_DEPTH * unitX;
   const depthY = MINECRAFT_CAPE_BOX_DEPTH * unitY;
+  const elytraWidth = MINECRAFT_ELYTRA_BOX_WIDTH * unitX;
+  const elytraHeight = MINECRAFT_ELYTRA_BOX_HEIGHT * unitY;
+  const elytraDepthX = MINECRAFT_ELYTRA_BOX_DEPTH * unitX;
+  const elytraDepthY = MINECRAFT_ELYTRA_BOX_DEPTH * unitY;
+  const elytraStartX = (MINECRAFT_CAPE_BOX_DEPTH + MINECRAFT_CAPE_BOX_WIDTH + MINECRAFT_CAPE_BOX_WIDTH + MINECRAFT_CAPE_BOX_DEPTH) * unitX;
 
   return {
     top: { x: depthX, y: 0, width, height: depthY },
@@ -58,7 +74,15 @@ export function resolveMinecraftCapeTemplate(textureWidth: number, textureHeight
     left: { x: 0, y: depthY, width: depthX, height },
     front: { x: depthX, y: depthY, width, height },
     right: { x: width + depthX, y: depthY, width: depthX, height },
-    back: { x: width + depthX * 2, y: depthY, width, height }
+    back: { x: width + depthX * 2, y: depthY, width, height },
+    elytra: {
+      top: { x: elytraStartX + elytraDepthX, y: 0, width: elytraWidth, height: elytraDepthY },
+      bottom: { x: elytraStartX + elytraDepthX + elytraWidth, y: 0, width: elytraWidth, height: elytraDepthY },
+      left: { x: elytraStartX, y: elytraDepthY, width: elytraDepthX, height: elytraHeight },
+      front: { x: elytraStartX + elytraDepthX, y: elytraDepthY, width: elytraWidth, height: elytraHeight },
+      right: { x: elytraStartX + elytraDepthX + elytraWidth, y: elytraDepthY, width: elytraDepthX, height: elytraHeight },
+      back: { x: elytraStartX + elytraDepthX * 2 + elytraWidth, y: elytraDepthY, width: elytraWidth, height: elytraHeight }
+    }
   };
 }
 

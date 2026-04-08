@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { clsx } from 'clsx';
 import { AlertTriangle, ChevronDown, Coins, Search, Trash2 } from 'lucide-react';
@@ -201,6 +201,7 @@ const PREVIEW_APPEARANCE_SLIDERS: Array<{
 
 const OWNER_MOD_MENU_PASSPHRASE = 'flowers cant bloom without a bee';
 const TAG_PRESETS_STORAGE_KEY = 'bloom_cosmetic_tag_presets_v1';
+const CUSTOM_CAPE_TOS_ACCEPTED_STORAGE_KEY = 'bloom_custom_cape_tos_accepted_v1';
 const DEFAULT_OWNER_CAPE_SQL_DRAFT: OwnerCapeSqlDraft = {
   slug: '',
   name: '',
@@ -697,6 +698,22 @@ export function CosmeticLocker() {
   const sectionRefs = useRef(new Map<CapeSectionKey, HTMLDivElement | null>());
   const [activeVisibleSection, setActiveVisibleSection] = useState<CapeSectionKey | null>(null);
   const [dialogState, setDialogState] = useState<BloomDialogState | null>(null);
+  const [customCapeTosAccepted, setCustomCapeTosAccepted] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(CUSTOM_CAPE_TOS_ACCEPTED_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [customCapeTosOpen, setCustomCapeTosOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CUSTOM_CAPE_TOS_ACCEPTED_STORAGE_KEY, customCapeTosAccepted ? 'true' : 'false');
+    } catch {
+      // no-op
+    }
+  }, [customCapeTosAccepted]);
 
   useEffect(() => {
     const onShopRarityThemeChange = (event: Event) => {
@@ -973,7 +990,7 @@ export function CosmeticLocker() {
       if (!rarity || byRarity.has(rarity)) continue;
       byRarity.set(rarity, {
         id: `rarity:${rarity}`,
-        name: `Rarity • ${normalizeRarityDisplay(cape.rarity_label || cape.rarity)}`,
+        name: `Rarity â€¢ ${normalizeRarityDisplay(cape.rarity_label || cape.rarity)}`,
         rarity,
         rarity_label: (cape.rarity_label || normalizeRarityDisplay(cape.rarity)).trim(),
         rarity_color_start: (cape.rarity_color_start || '#a979ff').trim(),
@@ -1270,6 +1287,10 @@ export function CosmeticLocker() {
 
   const handleBuy = async () => {
     if (!selectedCape || selectedCape.owned) return;
+    if (!customCapeTosAccepted) {
+      setErrorMessage('You must agree to the custom cape TOS before purchasing.');
+      return;
+    }
     setActionBusy(true);
     setErrorMessage(null);
     try {
@@ -1809,7 +1830,7 @@ export function CosmeticLocker() {
                     <div key={pack.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                       <p className="text-[11px] uppercase tracking-[0.13em] font-extrabold text-white/62">{pack.name}</p>
                       <p className="text-xl font-extrabold text-white mt-1">{pack.total_bb.toLocaleString()} BB</p>
-                      <p className="text-xs text-white/55 mt-1">${Number(pack.price_usd).toFixed(2)} • base {pack.base_bb.toLocaleString()} + bonus {pack.bonus_bb.toLocaleString()}</p>
+                      <p className="text-xs text-white/55 mt-1">${Number(pack.price_usd).toFixed(2)} â€¢ base {pack.base_bb.toLocaleString()} + bonus {pack.bonus_bb.toLocaleString()}</p>
                       {ready ? (
                         <p className="mt-2 text-[11px] text-emerald-200 font-bold">Approved email: {approved.email}</p>
                       ) : (
@@ -2180,7 +2201,7 @@ export function CosmeticLocker() {
               {selectedCape ? (
                 <>
                   <p className="text-sm font-extrabold text-white">{selectedCape.name}</p>
-                  <p className="text-[11px] text-white/58 mt-1">{pickRarityLabel(selectedCape)} • {selectedCape.slug}</p>
+                  <p className="text-[11px] text-white/58 mt-1">{pickRarityLabel(selectedCape)} â€¢ {selectedCape.slug}</p>
                   <p className="text-xs text-white/65 mt-2">{selectedCape.description || 'No description.'}</p>
                   <div className="mt-3 flex gap-2">
                     {selectedOwned ? (
@@ -2205,15 +2226,36 @@ export function CosmeticLocker() {
                         </button>
                       </>
                     ) : (
-                      <button
-                        onClick={() => {
-                          void handleBuy();
-                        }}
-                        disabled={actionBusy}
-                        className="g-btn-accent h-10 w-full text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-55"
-                      >
-                        Buy • {selectedCape.price_bb.toLocaleString()} BB
-                      </button>
+                      <div className="w-full space-y-2.5">
+                        <label className="flex items-start gap-2 rounded-lg border border-white/12 bg-black/25 px-2.5 py-2 text-[11px] text-white/78">
+                          <input
+                            type="checkbox"
+                            checked={customCapeTosAccepted}
+                            onChange={(event) => setCustomCapeTosAccepted(event.target.checked)}
+                            className="mt-0.5"
+                          />
+                          <span>
+                            I agree to the{' '}
+                            <button
+                              type="button"
+                              onClick={() => setCustomCapeTosOpen(true)}
+                              className="font-extrabold underline underline-offset-2 text-white hover:text-[var(--g-accent)]"
+                            >
+                              custom cape TOS
+                            </button>
+                            .
+                          </span>
+                        </label>
+                        <button
+                          onClick={() => {
+                            void handleBuy();
+                          }}
+                          disabled={actionBusy || !customCapeTosAccepted}
+                          className="g-btn-accent h-10 w-full text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-55"
+                        >
+                          Buy • {selectedCape.price_bb.toLocaleString()} BB
+                        </button>
+                      </div>
                     )}
                   </div>
                 </>
@@ -2223,6 +2265,48 @@ export function CosmeticLocker() {
             </div>
           </aside>
         </section>
+      )}
+
+      {customCapeTosOpen && (
+        <div className="fixed inset-0 z-[560] flex items-center justify-center p-4 app-region-no-drag">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={() => setCustomCapeTosOpen(false)} />
+          <div className="relative w-full max-w-[980px] rounded-2xl border border-white/20 bg-[#09090a] p-5 shadow-[0_34px_80px_rgba(0,0,0,0.72)]">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.16em] font-black text-white/45">Policy</p>
+                <h3 className="text-2xl font-extrabold text-white mt-1">Custom Cape TOS</h3>
+              </div>
+              <button
+                onClick={() => setCustomCapeTosOpen(false)}
+                className="h-9 px-3 rounded-lg border border-white/20 bg-white/[0.03] text-[10px] font-extrabold uppercase tracking-[0.12em] text-white/85 hover:bg-white/[0.1]"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4 max-h-[68vh] overflow-y-auto rounded-xl border border-white/12 bg-black/35 p-4 text-sm text-white/80 space-y-3">
+              <p>Bloom Client does not take responsibility for public reactions or opinions formed from your cape content.</p>
+              <p>
+                We discourage using images from Google, Pinterest, or other third-party sources without permission. Bloom does not claim ownership of custom cape assets. Uploaded custom cape assets remain the user&apos;s property.
+              </p>
+              <p>Staff can see every cape and which user uploaded it, so abuse is fast to investigate and enforce.</p>
+              <p className="font-extrabold text-red-200">
+                Any inappropriate or NSFW cape content will be removed, and the user will be permanently banned from using Bloom Client.
+              </p>
+              <p>By checking the agreement box and purchasing/equipping, you confirm you understand and accept this policy.</p>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => {
+                  setCustomCapeTosAccepted(true);
+                  setCustomCapeTosOpen(false);
+                }}
+                className="g-btn-accent h-10 px-4 text-[11px] font-extrabold uppercase tracking-[0.12em]"
+              >
+                Agree And Continue
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {isOwner && ownerContextMenu && (
@@ -2285,7 +2369,7 @@ export function CosmeticLocker() {
             <div className="mt-3 rounded-xl border border-white/15 bg-white/[0.02] p-4">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/72">Lighting + Camera</p>
-                <p className="text-xs text-white/55">{previewAppearanceSaving ? 'Syncing…' : 'Synced live'}</p>
+                <p className="text-xs text-white/55">{previewAppearanceSaving ? 'Syncingâ€¦' : 'Synced live'}</p>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[64vh] overflow-y-auto pr-1">
                 {PREVIEW_APPEARANCE_SLIDERS.map((slider) => {
@@ -3017,7 +3101,7 @@ export function CosmeticLocker() {
                   className="h-10 w-10 rounded-full border border-white/18 bg-white/[0.04] text-white/75 hover:bg-white/[0.08] disabled:opacity-40"
                   disabled={actionBusy}
                 >
-                  ×
+                  Ã—
                 </button>
               </div>
 
@@ -3077,3 +3161,4 @@ export function CosmeticLocker() {
     </div>
   );
 }
+

@@ -34,6 +34,7 @@ type CropBox = {
 
 const EXPORT_PRICE_BB = 800;
 const WATERMARK_TEXT = 'Preview Only';
+const CUSTOM_CAPE_TOS_ACCEPTED_STORAGE_KEY = 'bloom_custom_cape_tos_accepted_v1';
 const ACCEPTED_FILE_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
 const VISIBLE_FACE_HEIGHT_TO_WIDTH_RATIO = 2;
 const MIN_VALID_CROP_FRACTION = 0.02;
@@ -139,12 +140,29 @@ export function CustomCape() {
   const [ownerListingDescription, setOwnerListingDescription] = useState('');
   const [publishingToShop, setPublishingToShop] = useState(false);
   const [staticStudioEpoch, setStaticStudioEpoch] = useState(0);
+  const [previewBackEquipment, setPreviewBackEquipment] = useState<'cape' | 'elytra'>('cape');
+  const [customCapeTosAccepted, setCustomCapeTosAccepted] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(CUSTOM_CAPE_TOS_ACCEPTED_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [customCapeTosOpen, setCustomCapeTosOpen] = useState(false);
 
   useEffect(() => {
     if (studioTab === 'static') {
       setStaticStudioEpoch((current) => current + 1);
     }
   }, [studioTab]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CUSTOM_CAPE_TOS_ACCEPTED_STORAGE_KEY, customCapeTosAccepted ? 'true' : 'false');
+    } catch {
+      // no-op
+    }
+  }, [customCapeTosAccepted]);
 
   const fileInfo = useMemo(
     () => ({
@@ -586,6 +604,9 @@ export function CustomCape() {
       );
 
       if (!purchased) {
+        if (!customCapeTosAccepted) {
+          throw new Error('You must agree to the custom cape TOS before purchasing.');
+        }
         if (walletBalance < EXPORT_PRICE_BB) {
           throw new Error('insufficient_balance');
         }
@@ -794,11 +815,32 @@ export function CustomCape() {
             <p className="text-xs text-white/55 mt-1">
               Upload and preview are free. Exporting to Locker charges once and removes watermark from live preview.
             </p>
+            {!purchased && (
+              <label className="mt-3 flex items-start gap-2 rounded-lg border border-white/12 bg-black/25 px-2.5 py-2 text-[11px] text-white/78">
+                <input
+                  type="checkbox"
+                  checked={customCapeTosAccepted}
+                  onChange={(event) => setCustomCapeTosAccepted(event.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  I agree to the{' '}
+                  <button
+                    type="button"
+                    onClick={() => setCustomCapeTosOpen(true)}
+                    className="font-extrabold underline underline-offset-2 text-white hover:text-[var(--g-accent)]"
+                  >
+                    custom cape TOS
+                  </button>
+                  .
+                </span>
+              </label>
+            )}
             <button
               onClick={() => {
                 void handleExport();
               }}
-              disabled={!sourceImageElement || loading || exporting || savingDraft}
+              disabled={!sourceImageElement || loading || exporting || savingDraft || (!purchased && !customCapeTosAccepted)}
               className="g-btn-accent mt-3 h-10 w-full text-[11px] font-extrabold uppercase tracking-[0.12em] inline-flex items-center justify-center gap-2 disabled:opacity-45"
             >
               <Download size={14} />
@@ -1006,7 +1048,35 @@ export function CustomCape() {
         </div>
 
         <aside className="g-panel p-4 min-h-0 flex flex-col">
-          <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Live Preview</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Live Preview</p>
+            <div className="inline-flex items-center rounded-lg border border-white/15 bg-white/[0.03] p-0.5 gap-0.5">
+              <button
+                type="button"
+                onClick={() => setPreviewBackEquipment('cape')}
+                className={clsx(
+                  'h-7 px-2.5 rounded-md border text-[9px] font-extrabold uppercase tracking-[0.12em]',
+                  previewBackEquipment === 'cape'
+                    ? 'border-[var(--g-accent)] bg-white/[0.1] text-white'
+                    : 'border-transparent bg-transparent text-white/62 hover:bg-white/[0.07]'
+                )}
+              >
+                Cape
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewBackEquipment('elytra')}
+                className={clsx(
+                  'h-7 px-2.5 rounded-md border text-[9px] font-extrabold uppercase tracking-[0.12em]',
+                  previewBackEquipment === 'elytra'
+                    ? 'border-[var(--g-accent)] bg-white/[0.1] text-white'
+                    : 'border-transparent bg-transparent text-white/62 hover:bg-white/[0.07]'
+                )}
+              >
+                Elytra
+              </button>
+            </div>
+          </div>
           <div className="relative mt-3 border border-white/10 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.1),transparent_60%),rgba(0,0,0,0.35)] p-3 select-none">
             <div className="h-[310px]">
               {sourceImageElement && previewTextureObjectUrl ? (
@@ -1018,6 +1088,7 @@ export function CustomCape() {
                   capeSlug={`custom-preview-${designId ?? 'draft'}`}
                   capeTextureUrl={previewTextureObjectUrl}
                   capeTextureObjectUrl={previewTextureObjectUrl}
+                  backEquipment={previewBackEquipment}
                   className="h-full w-full"
                 />
               ) : (
@@ -1049,6 +1120,47 @@ export function CustomCape() {
           playerName={authState.profile.name}
           playerSkinUrl={authState.profile.skinUrl ?? null}
         />
+      )}
+      {customCapeTosOpen && (
+        <div className="fixed inset-0 z-[560] flex items-center justify-center p-4 app-region-no-drag">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={() => setCustomCapeTosOpen(false)} />
+          <div className="relative w-full max-w-[980px] rounded-2xl border border-white/20 bg-[#09090a] p-5 shadow-[0_34px_80px_rgba(0,0,0,0.72)]">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.16em] font-black text-white/45">Policy</p>
+                <h3 className="text-2xl font-extrabold text-white mt-1">Custom Cape TOS</h3>
+              </div>
+              <button
+                onClick={() => setCustomCapeTosOpen(false)}
+                className="h-9 px-3 rounded-lg border border-white/20 bg-white/[0.03] text-[10px] font-extrabold uppercase tracking-[0.12em] text-white/85 hover:bg-white/[0.1]"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4 max-h-[68vh] overflow-y-auto rounded-xl border border-white/12 bg-black/35 p-4 text-sm text-white/80 space-y-3">
+              <p>Bloom Client does not take responsibility for public reactions or opinions formed from your cape content.</p>
+              <p>
+                We discourage using images from Google, Pinterest, or other third-party sources without permission. Bloom does not claim ownership of custom cape assets. Uploaded custom cape assets remain the user&apos;s property.
+              </p>
+              <p>Staff can see every cape and which user uploaded it, so abuse is fast to investigate and enforce.</p>
+              <p className="font-extrabold text-red-200">
+                Any inappropriate or NSFW cape content will be removed, and the user will be permanently banned from using Bloom Client.
+              </p>
+              <p>By checking the agreement box and purchasing/equipping, you confirm you understand and accept this policy.</p>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => {
+                  setCustomCapeTosAccepted(true);
+                  setCustomCapeTosOpen(false);
+                }}
+                className="g-btn-accent h-10 px-4 text-[11px] font-extrabold uppercase tracking-[0.12em]"
+              >
+                Agree And Continue
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

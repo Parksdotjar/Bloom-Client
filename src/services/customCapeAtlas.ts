@@ -106,6 +106,29 @@ function drawImageFill(
   ctx.drawImage(source, 0, 0, sourceWidth, sourceHeight, target.x, target.y, target.width, target.height);
 }
 
+function drawElytraWingMasked(
+  ctx: CanvasRenderingContext2D,
+  source: CanvasImageSource,
+  sourceWidth: number,
+  sourceHeight: number,
+  target: AtlasRegion
+) {
+  const cutX = Math.max(1, target.width * 0.34);
+  const cutY = Math.max(1, target.height * 0.24);
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(target.x, target.y);
+  ctx.lineTo(target.x + target.width - cutX, target.y);
+  ctx.lineTo(target.x + target.width, target.y + cutY);
+  ctx.lineTo(target.x + target.width, target.y + target.height);
+  ctx.lineTo(target.x + cutX, target.y + target.height);
+  ctx.lineTo(target.x, target.y + target.height - cutY);
+  ctx.closePath();
+  ctx.clip();
+  ctx.drawImage(source, 0, 0, sourceWidth, sourceHeight, target.x, target.y, target.width, target.height);
+  ctx.restore();
+}
+
 export async function generateCustomCapeAtlas(input: GenerateCustomCapeAtlasInput): Promise<GeneratedCapeAtlas> {
   const exportWidth = normalizeExportWidth(input.exportWidth);
   const exportHeight = Math.floor(exportWidth / 2);
@@ -192,9 +215,18 @@ export async function generateCustomCapeAtlas(input: GenerateCustomCapeAtlasInpu
     template.bottom
   );
 
+  // Populate Elytra UV slots (right side of the cape template atlas).
+  // This is additive and does not alter cape mapping.
+  // Elytra should use only the inner wing paint area from the template.
+  // Leave the surrounding Elytra slots transparent.
+  // Keep only one Elytra paint face to avoid a doubled/staked wing look in preview.
+  // Swap face target so we keep the lower/attached wing side.
+  drawElytraWingMasked(atlasCtx, visibleFaceCanvas, visibleFaceCanvas.width, visibleFaceCanvas.height, template.elytra.front);
+
   if (input.watermarkText && input.watermarkText.trim()) {
     drawWatermark(atlasCtx, input.watermarkText.trim(), template.front);
     drawWatermark(atlasCtx, input.watermarkText.trim(), template.back);
+    drawWatermark(atlasCtx, input.watermarkText.trim(), template.elytra.front);
   }
 
   const [blob, visibleFaceBlob] = await Promise.all([canvasToBlob(atlas), canvasToBlob(visibleFaceCanvas)]);

@@ -81,6 +81,15 @@ function getInstalledIcon(title: string, row: InstanceContentFile | InstanceModF
   return title === 'Shaders' ? Sparkles : title === 'Resource Packs' ? ImageIcon : Package2;
 }
 
+function isInstalledModFile(row: InstanceContentFile | InstanceModFile): row is InstanceModFile {
+  return typeof (row as InstanceModFile).enabled === 'boolean';
+}
+
+function hasInstalledIcon(row: InstanceContentFile | InstanceModFile): row is InstanceModFile {
+  const iconUrl = (row as InstanceModFile).iconUrl;
+  return typeof iconUrl === 'string' && iconUrl.length > 0;
+}
+
 function EmptyState({ message }: { message: string }) {
   return <div className="p-6 text-center text-sm font-semibold text-slate-500 dark:text-white/55">{message}</div>;
 }
@@ -141,6 +150,9 @@ export function InstanceEditor() {
   const [mods, setMods] = useState<InstanceModFile[]>([]);
   const [resourcepacks, setResourcepacks] = useState<InstanceContentFile[]>([]);
   const [shaderpacks, setShaderpacks] = useState<InstanceContentFile[]>([]);
+  const [installedModsQuery, setInstalledModsQuery] = useState('');
+  const [installedResourcepacksQuery, setInstalledResourcepacksQuery] = useState('');
+  const [installedShadersQuery, setInstalledShadersQuery] = useState('');
   const [modLoading, setModLoading] = useState(false);
   const [resourcepacksLoading, setResourcepacksLoading] = useState(false);
   const [shaderpacksLoading, setShaderpacksLoading] = useState(false);
@@ -210,6 +222,9 @@ export function InstanceEditor() {
       setModsView('installed');
       setResourcepacksView('installed');
       setShadersView('installed');
+      setInstalledModsQuery('');
+      setInstalledResourcepacksQuery('');
+      setInstalledShadersQuery('');
       setFilesTreeQuery('');
       setFilesTreeRows([]);
       setExpandedFolders(new Set());
@@ -999,17 +1014,50 @@ export function InstanceEditor() {
   const renderInstalledLibrary = (
     title: string,
     loadingState: boolean,
-    rows: InstanceContentFile[] | InstanceModFile[],
+    rows: Array<InstanceContentFile | InstanceModFile>,
+    installedQuery: string,
+    setInstalledQuery: (value: string) => void,
     onRefresh: () => void,
     onFolderOpen: () => void,
     onSwitch: () => void,
     onDelete: (row: InstanceContentFile | InstanceModFile) => void,
     onToggle?: (row: InstanceModFile) => void
-  ) => (
+  ) => {
+    const query = installedQuery.trim().toLowerCase();
+    const filteredRows = query.length === 0
+      ? rows
+      : rows.filter((row) => {
+          const displayTitle = row.displayName?.trim() ? row.displayName : cleanFileLabel(row.fileName);
+          const haystack = `${displayTitle} ${row.fileName}`.toLowerCase();
+          return haystack.includes(query);
+        });
+
+    return (
     <section className="g-panel p-6 space-y-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h2 className="text-lg font-black text-slate-900 dark:text-white">{title}</h2>
-        <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex items-center gap-3 flex-wrap">
+        <h2 className="text-lg font-black text-slate-900 dark:text-white shrink-0">{title}</h2>
+        <span
+          className="h-8 w-px shrink-0"
+          style={{ background: 'color-mix(in srgb, var(--g-border) 78%, transparent)' }}
+          aria-hidden
+        />
+        <div
+          className="h-11 min-w-[260px] flex-1 inline-flex items-center gap-2 px-3 border"
+          style={{
+            borderRadius: 'calc(2px * var(--g-roundness-mult))',
+            borderColor: 'color-mix(in srgb, var(--g-border) 82%, transparent)',
+            background: 'linear-gradient(180deg, color-mix(in srgb, var(--g-surface) 72%, transparent), color-mix(in srgb, var(--g-shell) 84%, #000 16%))'
+          }}
+        >
+          <Search size={14} className="text-white/55" />
+          <input
+            value={installedQuery}
+            onChange={(event) => setInstalledQuery(event.target.value)}
+            placeholder={`Search installed ${title.toLowerCase()}...`}
+            className="h-full w-full bg-transparent text-sm font-semibold text-white/88 placeholder:text-white/35 outline-none border-none"
+          />
+        </div>
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
           <button onClick={onSwitch} className="g-btn-accent h-10 px-3 text-xs font-black tracking-[0.14em] uppercase">Open Install View</button>
           <button onClick={onRefresh} title="Refresh" className="g-btn h-10 w-10 inline-flex items-center justify-center"><RefreshCcw size={13} /></button>
           <button onClick={onFolderOpen} title="Open Folder" className="g-btn h-10 w-10 inline-flex items-center justify-center"><FolderOpen size={13} /></button>
@@ -1021,9 +1069,11 @@ export function InstanceEditor() {
           <div className="rounded-2xl border border-slate-300/80 dark:border-white/12 p-6 text-center text-xs font-black tracking-[0.16em] uppercase text-slate-500 dark:text-white/55">Loading...</div>
         ) : rows.length === 0 ? (
           <EmptyState message={`No ${title.toLowerCase()} installed.`} />
+        ) : filteredRows.length === 0 ? (
+          <EmptyState message={`No installed ${title.toLowerCase()} matched your search.`} />
         ) : (
-          rows.map((row) => {
-            const modRow = 'enabled' in row ? row : null;
+          filteredRows.map((row) => {
+            const modRow = isInstalledModFile(row) ? row : null;
             const CardIcon = getInstalledIcon(title, row);
             const displayTitle = row.displayName?.trim() ? row.displayName : cleanFileLabel(row.fileName);
             const description = buildInstalledDescription(title, row);
@@ -1045,12 +1095,12 @@ export function InstanceEditor() {
                     background: 'color-mix(in srgb, var(--g-soft) 82%, #000 18%)'
                   }}
                 >
-                  {'iconUrl' in row && row.iconUrl ? <img src={row.iconUrl} alt={displayTitle} className="h-full w-full object-cover" /> : <CardIcon size={18} className="text-white/70" />}
+                  {hasInstalledIcon(row) ? <img src={row.iconUrl} alt={displayTitle} className="h-full w-full object-cover" /> : <CardIcon size={18} className="text-white/70" />}
                 </div>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="truncate text-lg font-black text-slate-900 dark:text-white">{displayTitle}</h3>
-                    {'enabled' in row ? (
+                    {isInstalledModFile(row) ? (
                       <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-600 dark:text-white/72">
                         {row.enabled ? 'Enabled' : 'Disabled'}
                       </span>
@@ -1092,6 +1142,7 @@ export function InstanceEditor() {
       </div>
     </section>
   );
+  };
 
   const renderMarketplaceList = (
     title: string,
@@ -1833,6 +1884,8 @@ export function InstanceEditor() {
           'Mods',
           modLoading,
           mods,
+          installedModsQuery,
+          setInstalledModsQuery,
           () => { void reloadMods(); },
           () => { void TauriApi.openModsFolder(instance.id); },
           () => setModsView('install'),
@@ -1860,6 +1913,8 @@ export function InstanceEditor() {
             'Resource Packs',
             resourcepacksLoading,
             resourcepacks,
+            installedResourcepacksQuery,
+            setInstalledResourcepacksQuery,
             () => { void reloadResourcepacks(); },
             () => { void TauriApi.openResourcepacksFolder(instance.id); },
             () => setResourcepacksView('install'),
@@ -1872,6 +1927,8 @@ export function InstanceEditor() {
             'Shaders',
             shaderpacksLoading,
             shaderpacks,
+            installedShadersQuery,
+            setInstalledShadersQuery,
             () => { void reloadShaderpacks(); },
             () => { void TauriApi.openShaderpacksFolder(instance.id); },
             () => setShadersView('install'),
