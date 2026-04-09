@@ -44,6 +44,21 @@ export interface InstanceContentFile {
     updatedAt: number;
 }
 
+export interface InstanceExplorerEntry {
+    name: string;
+    relativePath: string;
+    isDir: boolean;
+    sizeBytes: number;
+    childCount: number;
+    createdAt: number;
+    updatedAt: number;
+}
+
+export interface InstanceFileTextReadResult {
+    relativePath: string;
+    text: string;
+}
+
 export interface MarketplaceMod {
     id: string;
     source: 'modrinth' | 'curseforge';
@@ -152,8 +167,37 @@ export interface HostedServerTunnelSession {
     message: string;
 }
 
+export interface StoredBackgroundVideo {
+    path: string;
+    fileName: string;
+    mimeType: string;
+    dataUrl?: string | null;
+}
+
+export interface BloomExportOptions {
+    includeMods: boolean;
+    includeResourcepacks: boolean;
+    includeShaderpacks: boolean;
+    includeConfig: boolean;
+    includeOptions: boolean;
+    includeServerData: boolean;
+    includeSaves: boolean;
+    includeScreenshots: boolean;
+    includeLogs: boolean;
+    includeAllFiles: boolean;
+}
+
+export interface InstanceTransferOptions {
+    includeOptions: boolean;
+    includeServerData: boolean;
+    includeConfig: boolean;
+    includeResourcepacks: boolean;
+    includeShaderpacks: boolean;
+}
+
 export const TauriApi = {
     pathsGet: () => invoke<any>('paths_get'),
+    startupOpenFileTake: () => invoke<string | null>('startup_open_file_take'),
 
     instancesList: () => invoke<Instance[]>('instances_list'),
     instancesGet: (id: string) => invoke<Instance>('instances_get', { id }),
@@ -186,8 +230,26 @@ export const TauriApi = {
         invoke<InstanceContentFile[]>('instance_list_shaderpacks', { instanceId }),
     instanceDeleteShaderpack: (instanceId: string, fileName: string) =>
         invoke<void>('instance_delete_shaderpack', { instanceId, fileName }),
+    instanceFilesList: (instanceId: string, relativePath?: string, query?: string) =>
+        invoke<InstanceExplorerEntry[]>('instance_files_list', { instanceId, relativePath, query }),
+    instanceFilesTree: (instanceId: string, query?: string) =>
+        invoke<InstanceExplorerEntry[]>('instance_files_tree', { instanceId, query }),
+    instanceFilesOpenPath: (instanceId: string, relativePath?: string) =>
+        invoke<void>('instance_files_open_path', { instanceId, relativePath }),
+    instanceFilesCreateDirectory: (instanceId: string, parentRelativePath: string | undefined, name: string) =>
+        invoke<void>('instance_files_create_directory', { instanceId, parentRelativePath, name }),
+    instanceFilesDelete: (instanceId: string, relativePath: string) =>
+        invoke<void>('instance_files_delete', { instanceId, relativePath }),
+    instanceFilesRename: (instanceId: string, relativePath: string, newName: string) =>
+        invoke<void>('instance_files_rename', { instanceId, relativePath, newName }),
+    instanceFilesReadText: (instanceId: string, relativePath: string) =>
+        invoke<InstanceFileTextReadResult>('instance_files_read_text', { instanceId, relativePath }),
+    instanceFilesWriteText: (instanceId: string, relativePath: string, text: string) =>
+        invoke<void>('instance_files_write_text', { instanceId, relativePath, text }),
     instanceCopyGameOptions: (sourceInstanceId: string, targetInstanceId: string) =>
         invoke<string>('instance_copy_game_options', { sourceInstanceId, targetInstanceId }),
+    instanceTransferFiles: (sourceInstanceId: string, targetInstanceId: string, options: InstanceTransferOptions) =>
+        invoke<string>('instance_transfer_files', { sourceInstanceId, targetInstanceId, options }),
     openShaderpacksFolder: (id: string) => invoke<void>('open_shaderpacks_folder', { id }),
     marketplaceSearchMods: (query: string, source?: 'all' | 'modrinth' | 'curseforge', loader?: string, gameVersion?: string) =>
         invoke<MarketplaceMod[]>('marketplace_search_mods', { query, source, loader, gameVersion }),
@@ -197,6 +259,8 @@ export const TauriApi = {
         invoke<MarketplacePack[]>('marketplace_search_modpacks', { query, source }),
     marketplaceInstallModpackInstance: (source: 'modrinth' | 'curseforge', projectId: string, gameVersion: string) =>
         invoke<Instance>('marketplace_install_modpack_instance', { source, projectId, gameVersion }),
+    featuredInstallModpack: (featuredId: string) =>
+        invoke<Instance>('featured_install_modpack', { featuredId }),
     importLocalModpackInstance: (filePath: string, gameVersion: string, instanceName?: string) =>
         invoke<Instance>('import_local_modpack_instance', { filePath, gameVersion, instanceName }),
     marketplaceSearchResourcepacks: (query: string, source?: 'all' | 'modrinth' | 'curseforge', gameVersion?: string) =>
@@ -262,5 +326,13 @@ export const TauriApi = {
     launcherBackgroundLoad: () =>
         invoke<string | null>('launcher_background_load'),
     launcherBackgroundClear: () =>
-        invoke<void>('launcher_background_clear')
+        invoke<void>('launcher_background_clear'),
+    launcherBackgroundVideoSave: (fileName: string, mimeType: string, data: number[]) =>
+        invoke<StoredBackgroundVideo>('launcher_background_video_save', { fileName, mimeType, data }),
+    launcherBackgroundVideoLoad: () =>
+        invoke<StoredBackgroundVideo | null>('launcher_background_video_load'),
+    instanceExportBloom: (instanceId: string, outputPath: string, options: BloomExportOptions) =>
+        invoke<string>('instance_export_bloom', { instanceId, outputPath, options }),
+    saveBinaryFile: (path: string, data: number[]) =>
+        invoke<void>('save_binary_file', { path, data })
 };

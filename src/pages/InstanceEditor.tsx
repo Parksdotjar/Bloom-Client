@@ -1,19 +1,46 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEventHandler, type DragEventHandler, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Copy, Download, FolderOpen, ImageIcon, Package2, RefreshCcw, Save, Search, ShieldPlus, Sparkles, Trash2, UploadCloud } from 'lucide-react';
-import { open } from '@tauri-apps/plugin-dialog';
+import { ArrowLeft, ChevronDown, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, ImageIcon, MoreHorizontal, Package2, Pencil, Play, RefreshCcw, Save, Search, Sparkles, Trash2, UploadCloud, X } from 'lucide-react';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { useInstances } from '../hooks/useInstances';
-import { TauriApi, type InstanceContentFile, type InstanceModFile, type MarketplaceMod, type MarketplacePack, type ModInstallResult } from '../services/tauri';
+import { useAuth } from '../hooks/useAuth';
+import { useDownloader } from '../hooks/useDownloader';
+import { TauriApi, type BloomExportOptions, type InstanceContentFile, type InstanceExplorerEntry, type InstanceModFile, type InstanceTransferOptions, type MarketplaceMod, type MarketplacePack, type ModInstallResult } from '../services/tauri';
 import { UniversalLoadingOverlay } from '../components/UniversalLoadingOverlay';
 
-type EditorTab = 'mods' | 'resourcepacks' | 'shaders' | 'settings';
+type EditorTab = 'mods' | 'resourcepacks' | 'shaders' | 'files' | 'settings';
 type SettingsSubTab = 'profile' | 'launch';
 type SourceFilter = 'all' | 'modrinth' | 'curseforge';
 type LibraryView = 'installed' | 'install';
 type NativeFile = File & { path?: string };
+type MarketplaceInstallVisualState = {
+  phase: 'installing' | 'done';
+  label: string;
+  startedAt: number;
+};
 
-const INSTANCE_OPTIONS_CLIPBOARD_KEY = 'bloom_instance_options_clipboard';
 const KEYBIND_ACTION_EVENT = 'bloom-keybind-action';
+const MIN_CARD_INSTALL_ANIMATION_MS = 2000;
+const DONE_CARD_INSTALL_ANIMATION_MS = 1500;
+const DEFAULT_BLOOM_EXPORT_OPTIONS: BloomExportOptions = {
+  includeMods: true,
+  includeResourcepacks: true,
+  includeShaderpacks: true,
+  includeConfig: true,
+  includeOptions: true,
+  includeServerData: false,
+  includeSaves: false,
+  includeScreenshots: false,
+  includeLogs: false,
+  includeAllFiles: false
+};
+const DEFAULT_INSTANCE_TRANSFER_OPTIONS: InstanceTransferOptions = {
+  includeOptions: true,
+  includeServerData: true,
+  includeConfig: true,
+  includeResourcepacks: false,
+  includeShaderpacks: false
+};
 
 function humanSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -27,6 +54,17 @@ function cleanFileLabel(fileName: string) {
     .replace(/[_-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function normalizeMarketplaceLabel(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function dirname(path: string) {
+  if (!path) return '';
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '');
+  const idx = normalized.lastIndexOf('/');
+  return idx === -1 ? '' : normalized.slice(0, idx);
 }
 
 function buildInstalledDescription(title: string, row: InstanceContentFile | InstanceModFile) {
@@ -43,9 +81,25 @@ function getInstalledIcon(title: string, row: InstanceContentFile | InstanceModF
   return title === 'Shaders' ? Sparkles : title === 'Resource Packs' ? ImageIcon : Package2;
 }
 
+function isInstalledModFile(row: InstanceContentFile | InstanceModFile): row is InstanceModFile {
+  return typeof (row as InstanceModFile).enabled === 'boolean';
+}
+
+function hasInstalledIcon(row: InstanceContentFile | InstanceModFile): row is InstanceModFile {
+  const iconUrl = (row as InstanceModFile).iconUrl;
+  return typeof iconUrl === 'string' && iconUrl.length > 0;
+}
+
 function EmptyState({ message }: { message: string }) {
   return <div className="p-6 text-center text-sm font-semibold text-slate-500 dark:text-white/55">{message}</div>;
 }
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+const boxedControlClass = 'inline-flex items-center justify-center border bg-[#121212] text-white/82 transition hover:bg-[#181818] hover:text-white [border-radius:2px]';
+const boxedDangerControlClass = 'inline-flex items-center justify-center border bg-[#161112] text-red-100/90 transition hover:bg-[#221416] hover:text-red-50 [border-radius:2px]';
 
 export function InstanceEditor() {
   const navigate = useNavigate();
@@ -53,6 +107,8 @@ export function InstanceEditor() {
   const instanceId = searchParams.get('id');
   const initialTab: EditorTab = searchParams.get('tab') === 'settings'
     ? 'settings'
+    : searchParams.get('tab') === 'files'
+      ? 'files'
     : searchParams.get('tab') === 'resourcepacks'
       ? 'resourcepacks'
       : searchParams.get('tab') === 'shaders'
@@ -60,11 +116,18 @@ export function InstanceEditor() {
         : 'mods';
 
   const { instances, updateInstance, loading, loadInstances, getInstance } = useInstances();
+  const { authState } = useAuth();
+  const { startDownload, activeDownloads } = useDownloader();
 
   const instance = useMemo(() => {
     if (!instanceId) return null;
     return instances.find((item) => item.id === instanceId) || null;
   }, [instances, instanceId]);
+
+  const transferableInstances = useMemo(
+    () => instances.filter((item) => item.id !== instanceId),
+    [instances, instanceId]
+  );
 
   const [activeTab, setActiveTab] = useState<EditorTab>(initialTab);
   const [modsView, setModsView] = useState<LibraryView>('installed');
@@ -83,48 +146,66 @@ export function InstanceEditor() {
   const [iconFrame, setIconFrame] = useState<'square' | 'rounded' | 'diamond'>('rounded');
   const [saving, setSaving] = useState(false);
   const [blockingTitle, setBlockingTitle] = useState<string | null>(null);
-  const [optionsClipboard, setOptionsClipboard] = useState<{ instanceId: string; instanceName: string } | null>(() => {
-    try {
-      const raw = localStorage.getItem(INSTANCE_OPTIONS_CLIPBOARD_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as { instanceId?: string; instanceName?: string };
-      return parsed.instanceId && parsed.instanceName ? { instanceId: parsed.instanceId, instanceName: parsed.instanceName } : null;
-    } catch {
-      return null;
-    }
-  });
-  const [pastingOptions, setPastingOptions] = useState(false);
 
   const [mods, setMods] = useState<InstanceModFile[]>([]);
   const [resourcepacks, setResourcepacks] = useState<InstanceContentFile[]>([]);
   const [shaderpacks, setShaderpacks] = useState<InstanceContentFile[]>([]);
+  const [installedModsQuery, setInstalledModsQuery] = useState('');
+  const [installedResourcepacksQuery, setInstalledResourcepacksQuery] = useState('');
+  const [installedShadersQuery, setInstalledShadersQuery] = useState('');
   const [modLoading, setModLoading] = useState(false);
   const [resourcepacksLoading, setResourcepacksLoading] = useState(false);
   const [shaderpacksLoading, setShaderpacksLoading] = useState(false);
   const [installingMods, setInstallingMods] = useState(false);
-  const [installingFabricApi, setInstallingFabricApi] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [lastInstallResult, setLastInstallResult] = useState<ModInstallResult | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [launchingInstanceId, setLaunchingInstanceId] = useState<string | null>(null);
   const [modsQuery, setModsQuery] = useState('');
   const [modsSource, setModsSource] = useState<SourceFilter>('all');
   const [modsSearching, setModsSearching] = useState(false);
   const [modsResults, setModsResults] = useState<MarketplaceMod[]>([]);
-  const [modsInstallingId, setModsInstallingId] = useState<string | null>(null);
+  const [modInstallVisuals, setModInstallVisuals] = useState<Record<string, MarketplaceInstallVisualState>>({});
+  const [installedMarketplaceMods, setInstalledMarketplaceMods] = useState<Set<string>>(() => new Set());
   const [resourcepacksQuery, setResourcepacksQuery] = useState('');
   const [resourcepacksSource, setResourcepacksSource] = useState<SourceFilter>('all');
   const [resourcepacksSearching, setResourcepacksSearching] = useState(false);
   const [resourcepacksResults, setResourcepacksResults] = useState<MarketplacePack[]>([]);
-  const [resourcepacksInstallingId, setResourcepacksInstallingId] = useState<string | null>(null);
+  const [resourcepackInstallVisuals, setResourcepackInstallVisuals] = useState<Record<string, MarketplaceInstallVisualState>>({});
+  const [installedMarketplaceResourcepacks, setInstalledMarketplaceResourcepacks] = useState<Set<string>>(() => new Set());
   const [shadersQuery, setShadersQuery] = useState('');
   const [shadersSource, setShadersSource] = useState<SourceFilter>('all');
   const [shadersSearching, setShadersSearching] = useState(false);
   const [shadersResults, setShadersResults] = useState<MarketplacePack[]>([]);
-  const [shadersInstallingId, setShadersInstallingId] = useState<string | null>(null);
+  const [shaderInstallVisuals, setShaderInstallVisuals] = useState<Record<string, MarketplaceInstallVisualState>>({});
+  const [installedMarketplaceShaders, setInstalledMarketplaceShaders] = useState<Set<string>>(() => new Set());
+  const [filesTreeRows, setFilesTreeRows] = useState<InstanceExplorerEntry[]>([]);
+  const [filesTreeLoading, setFilesTreeLoading] = useState(false);
+  const [filesTreeQuery, setFilesTreeQuery] = useState('');
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+  const [selectedFileText, setSelectedFileText] = useState('');
+  const [selectedFileOriginalText, setSelectedFileOriginalText] = useState('');
+  const [selectedFileLoading, setSelectedFileLoading] = useState(false);
+  const [selectedFileSaving, setSelectedFileSaving] = useState(false);
+  const [selectedFileError, setSelectedFileError] = useState<string | null>(null);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+  const [exportPanelOpen, setExportPanelOpen] = useState(false);
+  const [exportOptions, setExportOptions] = useState<BloomExportOptions>(DEFAULT_BLOOM_EXPORT_OPTIONS);
+  const [transferPanelOpen, setTransferPanelOpen] = useState(false);
+  const [transferSourceInstanceId, setTransferSourceInstanceId] = useState('');
+  const [transferOptions, setTransferOptions] = useState<InstanceTransferOptions>(DEFAULT_INSTANCE_TRANSFER_OPTIONS);
+  const [transferSourceMenuOpen, setTransferSourceMenuOpen] = useState(false);
 
+  const selectedTransferSource = useMemo(
+    () => transferableInstances.find((item) => item.id === transferSourceInstanceId) || null,
+    [transferSourceInstanceId, transferableInstances]
+  );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const iconInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
+  const actionsMenuRef = useRef<HTMLDivElement | null>(null);
+  const transferSourceMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (instance) {
@@ -141,6 +222,16 @@ export function InstanceEditor() {
       setModsView('installed');
       setResourcepacksView('installed');
       setShadersView('installed');
+      setInstalledModsQuery('');
+      setInstalledResourcepacksQuery('');
+      setInstalledShadersQuery('');
+      setFilesTreeQuery('');
+      setFilesTreeRows([]);
+      setExpandedFolders(new Set());
+      setSelectedFilePath(null);
+      setSelectedFileText('');
+      setSelectedFileOriginalText('');
+      setSelectedFileError(null);
       setInstanceMediaLoaded(false);
     }
   }, [instance]);
@@ -174,6 +265,28 @@ export function InstanceEditor() {
     if (!instanceId || instance || loading) return;
     void loadInstances();
   }, [instanceId, instance, loading, loadInstances]);
+
+  useEffect(() => {
+    if (!transferableInstances.length) {
+      setTransferSourceInstanceId('');
+      return;
+    }
+    if (!transferableInstances.some((item) => item.id === transferSourceInstanceId)) {
+      setTransferSourceInstanceId(transferableInstances[0].id);
+    }
+  }, [transferSourceInstanceId, transferableInstances]);
+
+  useEffect(() => {
+    if (!transferSourceMenuOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (transferSourceMenuRef.current && event.target instanceof Node && !transferSourceMenuRef.current.contains(event.target)) {
+        setTransferSourceMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    return () => window.removeEventListener('mousedown', onPointerDown);
+  }, [transferSourceMenuOpen]);
+
 
   const goBack = () => navigate('/instances');
 
@@ -222,6 +335,24 @@ export function InstanceEditor() {
     void reloadShaderpacks();
   }, [instance?.id]);
 
+  useEffect(() => {
+    if (activeTab !== 'files') return;
+    void reloadFilesTree();
+  }, [activeTab, instance?.id]);
+
+  useEffect(() => {
+    if (!launchingInstanceId) return;
+    const current = activeDownloads[launchingInstanceId];
+    if (!current) {
+      setLaunchingInstanceId(null);
+      return;
+    }
+    if (current.status.toLowerCase().startsWith('error:')) {
+      const timer = window.setTimeout(() => setLaunchingInstanceId(null), 1200);
+      return () => window.clearTimeout(timer);
+    }
+  }, [activeDownloads, launchingInstanceId]);
+
   const saveSettings = async () => {
     if (!instance) return;
     setSaving(true);
@@ -249,25 +380,58 @@ export function InstanceEditor() {
     }
   };
 
-  const copyOptionsSetup = () => {
-    if (!instance) return;
-    const payload = { instanceId: instance.id, instanceName: instance.name };
-    localStorage.setItem(INSTANCE_OPTIONS_CLIPBOARD_KEY, JSON.stringify(payload));
-    setOptionsClipboard(payload);
-    setStatusMessage(`Copied ${instance.name} option profile. Open another instance and press Paste Options.`);
-  };
-
-  const pasteOptionsSetup = async () => {
-    if (!instance || !optionsClipboard) return;
-    setPastingOptions(true);
+  const handleTransferFiles = async () => {
+    if (!instance || !transferSourceInstanceId) return;
+    setActionsMenuOpen(false);
+    setTransferPanelOpen(false);
+    setTransferSourceMenuOpen(false);
+    setBlockingTitle('Importing instance files...');
+    setStatusMessage(`Importing selected files into ${instance.name}...`);
     try {
-      const result = await TauriApi.instanceCopyGameOptions(optionsClipboard.instanceId, instance.id);
-      setStatusMessage(`${result} Applied to ${instance.name}.`);
+      const result = await TauriApi.instanceTransferFiles(transferSourceInstanceId, instance.id, transferOptions);
+      const sourceName = transferableInstances.find((item) => item.id === transferSourceInstanceId)?.name || 'source instance';
+      setStatusMessage(`${result} Imported from ${sourceName} into ${instance.name}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setStatusMessage(`Options paste failed: ${message}`);
+      setStatusMessage(`Instance file import failed: ${message}`);
     } finally {
-      setPastingOptions(false);
+      setBlockingTitle(null);
+    }
+  };
+
+  const reloadFilesTree = async (nextQuery?: string) => {
+    if (!instance) return;
+    const query = (nextQuery ?? filesTreeQuery).trim();
+    setFilesTreeLoading(true);
+    try {
+      const rows = await TauriApi.instanceFilesTree(instance.id, query || undefined);
+      setFilesTreeRows(rows);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Failed loading file tree: ${message}`);
+    } finally {
+      setFilesTreeLoading(false);
+    }
+  };
+
+  const loadSelectedFile = async (relativePath: string) => {
+    if (!instance) return;
+    setSelectedFileLoading(true);
+    setSelectedFileSaving(false);
+    setSelectedFileError(null);
+    try {
+      const result = await TauriApi.instanceFilesReadText(instance.id, relativePath);
+      setSelectedFilePath(result.relativePath);
+      setSelectedFileText(result.text);
+      setSelectedFileOriginalText(result.text);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSelectedFilePath(relativePath);
+      setSelectedFileText('');
+      setSelectedFileOriginalText('');
+      setSelectedFileError(message);
+    } finally {
+      setSelectedFileLoading(false);
     }
   };
 
@@ -283,41 +447,36 @@ export function InstanceEditor() {
         return;
       }
       if (action === 'next-instance-tab') {
-        const tabs: EditorTab[] = ['mods', 'resourcepacks', 'shaders', 'settings'];
+        const tabs: EditorTab[] = ['mods', 'resourcepacks', 'shaders', 'files', 'settings'];
         const currentIndex = tabs.indexOf(activeTab);
         setActiveTab(tabs[(currentIndex + 1) % tabs.length]);
         return;
       }
       if (action === 'previous-instance-tab') {
-        const tabs: EditorTab[] = ['mods', 'resourcepacks', 'shaders', 'settings'];
+        const tabs: EditorTab[] = ['mods', 'resourcepacks', 'shaders', 'files', 'settings'];
         const currentIndex = tabs.indexOf(activeTab);
         setActiveTab(tabs[(currentIndex - 1 + tabs.length) % tabs.length]);
         return;
       }
-      if (action === 'switch-installed-view' && activeTab !== 'settings') {
+      if (action === 'switch-installed-view' && activeTab !== 'settings' && activeTab !== 'files') {
         if (activeTab === 'mods') setModsView('installed');
         if (activeTab === 'resourcepacks') setResourcepacksView('installed');
         if (activeTab === 'shaders') setShadersView('installed');
         return;
       }
-      if (action === 'switch-install-view' && activeTab !== 'settings') {
+      if (action === 'switch-install-view' && activeTab !== 'settings' && activeTab !== 'files') {
         if (activeTab === 'mods') setModsView('install');
         if (activeTab === 'resourcepacks') setResourcepacksView('install');
         if (activeTab === 'shaders') setShadersView('install');
-        return;
-      }
-      if (action === 'copy-instance-options') {
-        copyOptionsSetup();
-        return;
-      }
-      if (action === 'paste-instance-options') {
-        void pasteOptionsSetup();
         return;
       }
       if (action === 'refresh-active-page') {
         void reloadMods();
         void reloadResourcepacks();
         void reloadShaderpacks();
+        if (activeTab === 'files') {
+          void reloadFilesTree();
+        }
         return;
       }
       if (action === 'open-active-folder') {
@@ -331,12 +490,74 @@ export function InstanceEditor() {
         }
         if (activeTab === 'shaders') {
           void TauriApi.openShaderpacksFolder(instance.id);
+          return;
+        }
+        if (activeTab === 'files') {
+          void TauriApi.instanceFilesOpenPath(instance.id, selectedFilePath || undefined);
         }
       }
     };
     window.addEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
     return () => window.removeEventListener(KEYBIND_ACTION_EVENT, onKeybindAction as EventListener);
-  }, [instance, activeTab, optionsClipboard, saveSettings, pasteOptionsSetup]);
+  }, [instance, activeTab, selectedFilePath, saveSettings]);
+
+  const launchStatus = launchingInstanceId ? activeDownloads[launchingInstanceId]?.status || 'Preparing launch...' : null;
+
+  const handleLaunch = async () => {
+    if (!instance) return;
+    if (activeDownloads[instance.id] && activeDownloads[instance.id].status !== 'Complete') return;
+    setLaunchingInstanceId(instance.id);
+    await startDownload(instance, authState);
+  };
+
+  useEffect(() => {
+    if (!actionsMenuOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (actionsMenuRef.current && event.target instanceof Node && !actionsMenuRef.current.contains(event.target)) {
+        setActionsMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    return () => window.removeEventListener('mousedown', onPointerDown);
+  }, [actionsMenuOpen]);
+
+  const updateExportOption = (key: keyof BloomExportOptions, value: boolean) => {
+    setExportOptions((current) => {
+      if (key === 'includeAllFiles') {
+        return { ...current, includeAllFiles: value };
+      }
+      return { ...current, [key]: value, includeAllFiles: false };
+    });
+  };
+
+  const updateTransferOption = (key: keyof InstanceTransferOptions, value: boolean) => {
+    setTransferOptions((current) => ({ ...current, [key]: value }));
+  };
+
+  const handleExportBloom = async () => {
+    if (!instance) return;
+    setActionsMenuOpen(false);
+    const selectedPath = await save({
+      title: 'Export Bloom Modpack',
+      defaultPath: `${instance.name.replace(/[<>:"/\\\\|?*]+/g, '').trim() || 'instance'}.bloom`,
+      filters: [{ name: 'Bloom Modpack', extensions: ['bloom'] }]
+    });
+    if (!selectedPath) return;
+
+    setExportPanelOpen(false);
+    setBlockingTitle('Exporting Bloom pack...');
+    setStatusMessage(`Exporting ${instance.name}...`);
+    try {
+      const outputPath = selectedPath.toLowerCase().endsWith('.bloom') ? selectedPath : `${selectedPath}.bloom`;
+      const savedPath = await TauriApi.instanceExportBloom(instance.id, outputPath, exportOptions);
+      setStatusMessage(`Exported Bloom pack to ${savedPath}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Bloom export failed: ${message}`);
+    } finally {
+      setBlockingTitle(null);
+    }
+  };
 
   const handleIconFile: ChangeEventHandler<HTMLInputElement> = (event) => {
     const file = event.target.files?.[0];
@@ -503,24 +724,6 @@ export function InstanceEditor() {
     }
   };
 
-  const autoInstallFabricApi = async () => {
-    if (!instance || instance.loader !== 'fabric') return;
-    setInstallingFabricApi(true);
-    setBlockingTitle('Installing Fabric API...');
-    setStatusMessage('Installing Fabric API...');
-    try {
-      const fileName = await TauriApi.instanceInstallFabricApi(instance.id);
-      await reloadMods();
-      setStatusMessage(`Fabric API installed: ${fileName}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatusMessage(`Fabric API install failed: ${message}`);
-    } finally {
-      setInstallingFabricApi(false);
-      setBlockingTitle(null);
-    }
-  };
-
   const searchModsMarket = async () => {
     if (!instance || !modsQuery.trim()) return;
     setModsSearching(true);
@@ -569,79 +772,295 @@ export function InstanceEditor() {
   const installMarketplaceMod = async (mod: MarketplaceMod) => {
     if (!instance) return;
     const rowId = `${mod.source}:${mod.id}`;
-    setModsInstallingId(rowId);
-    setBlockingTitle('Installing mod...');
+    const startedAt = beginInstallVisual(setModInstallVisuals, rowId, `Installing ${mod.title}`);
     setStatusMessage(`Installing ${mod.title}...`);
     try {
       const file = await TauriApi.marketplaceInstallMod(instance.id, mod.source, mod.id);
       await reloadMods();
+      setInstalledMarketplaceMods((current) => new Set(current).add(rowId));
       setStatusMessage(`Installed ${file} into ${instance.name}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(`Install failed: ${message}`);
     } finally {
-      setModsInstallingId(null);
-      setBlockingTitle(null);
+      await endInstallVisual(setModInstallVisuals, rowId, startedAt);
     }
   };
 
   const installMarketplaceResourcePack = async (pack: MarketplacePack) => {
     if (!instance) return;
     const rowId = `${pack.source}:${pack.id}`;
-    setResourcepacksInstallingId(rowId);
-    setBlockingTitle('Installing resource pack...');
+    const startedAt = beginInstallVisual(setResourcepackInstallVisuals, rowId, `Installing ${pack.title}`);
     setStatusMessage(`Installing ${pack.title}...`);
     try {
       const file = await TauriApi.marketplaceInstallResourcepack(instance.id, pack.source, pack.id, instance.mcVersion);
       await reloadResourcepacks();
+      setInstalledMarketplaceResourcepacks((current) => new Set(current).add(rowId));
       setStatusMessage(`Installed ${file} into ${instance.name}/resourcepacks.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(`Install failed: ${message}`);
     } finally {
-      setResourcepacksInstallingId(null);
-      setBlockingTitle(null);
+      await endInstallVisual(setResourcepackInstallVisuals, rowId, startedAt);
     }
   };
 
   const installMarketplaceShader = async (pack: MarketplacePack) => {
     if (!instance) return;
     const rowId = `${pack.source}:${pack.id}`;
-    setShadersInstallingId(rowId);
-    setBlockingTitle('Installing shader pack...');
+    const startedAt = beginInstallVisual(setShaderInstallVisuals, rowId, `Installing ${pack.title}`);
     setStatusMessage(`Installing ${pack.title}...`);
     try {
       const file = await TauriApi.marketplaceInstallShaderpack(instance.id, pack.source, pack.id, instance.mcVersion);
       await reloadShaderpacks();
+      setInstalledMarketplaceShaders((current) => new Set(current).add(rowId));
       setStatusMessage(`Installed ${file} into ${instance.name}/shaderpacks.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(`Install failed: ${message}`);
     } finally {
-      setShadersInstallingId(null);
-      setBlockingTitle(null);
+      await endInstallVisual(setShaderInstallVisuals, rowId, startedAt);
     }
+  };
+
+  const beginInstallVisual = (
+    setVisuals: React.Dispatch<React.SetStateAction<Record<string, MarketplaceInstallVisualState>>>,
+    rowId: string,
+    label: string
+  ) => {
+    const startedAt = Date.now();
+    setVisuals((current) => ({
+      ...current,
+      [rowId]: {
+        phase: 'installing',
+        label,
+        startedAt
+      }
+    }));
+    return startedAt;
+  };
+
+  const endInstallVisual = async (
+    setVisuals: React.Dispatch<React.SetStateAction<Record<string, MarketplaceInstallVisualState>>>,
+    rowId: string,
+    startedAt: number
+  ) => {
+    const elapsed = Date.now() - startedAt;
+    const remaining = Math.max(0, MIN_CARD_INSTALL_ANIMATION_MS - elapsed);
+    if (remaining > 0) await wait(remaining);
+    setVisuals((current) => {
+      const next = { ...current };
+      const existing = next[rowId];
+      if (existing) {
+        next[rowId] = {
+          ...existing,
+          phase: 'done',
+          label: 'DONE'
+        };
+      }
+      return next;
+    });
+    await wait(DONE_CARD_INSTALL_ANIMATION_MS);
+    setVisuals((current) => {
+      const next = { ...current };
+      delete next[rowId];
+      return next;
+    });
+  };
+
+  const folderRows = useMemo(() => filesTreeRows.filter((row) => row.isDir), [filesTreeRows]);
+  const fileRows = useMemo(() => filesTreeRows.filter((row) => !row.isDir), [filesTreeRows]);
+  const installedModNames = useMemo(
+    () => new Set(
+      mods.flatMap((row) => [normalizeMarketplaceLabel(row.displayName), normalizeMarketplaceLabel(cleanFileLabel(row.fileName))]).filter(Boolean)
+    ),
+    [mods]
+  );
+  const installedResourcepackNames = useMemo(
+    () => new Set(
+      resourcepacks.flatMap((row) => [normalizeMarketplaceLabel(row.displayName), normalizeMarketplaceLabel(cleanFileLabel(row.fileName))]).filter(Boolean)
+    ),
+    [resourcepacks]
+  );
+  const installedShaderNames = useMemo(
+    () => new Set(
+      shaderpacks.flatMap((row) => [normalizeMarketplaceLabel(row.displayName), normalizeMarketplaceLabel(cleanFileLabel(row.fileName))]).filter(Boolean)
+    ),
+    [shaderpacks]
+  );
+
+  const treeByParent = useMemo(() => {
+    const map = new Map<string, InstanceExplorerEntry[]>();
+    for (const row of filesTreeRows) {
+      const parent = dirname(row.relativePath);
+      const bucket = map.get(parent) || [];
+      bucket.push(row);
+      map.set(parent, bucket);
+    }
+    for (const [, bucket] of map) {
+      bucket.sort((a, b) => {
+        if (a.isDir !== b.isDir) return Number(b.isDir) - Number(a.isDir);
+        return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+      });
+    }
+    return map;
+  }, [filesTreeRows]);
+
+  const selectedFileDirty = selectedFilePath !== null && selectedFileText !== selectedFileOriginalText;
+
+  const toggleFolderExpanded = (relativePath: string) => {
+    setExpandedFolders((current) => {
+      const next = new Set(current);
+      if (next.has(relativePath)) next.delete(relativePath);
+      else next.add(relativePath);
+      return next;
+    });
+  };
+
+  const createFolderAt = async (parentRelativePath?: string) => {
+    if (!instance) return;
+    const folderName = window.prompt('New folder name')?.trim();
+    if (!folderName) return;
+    try {
+      await TauriApi.instanceFilesCreateDirectory(instance.id, parentRelativePath, folderName);
+      setStatusMessage(`Created folder "${folderName}".`);
+      await reloadFilesTree();
+      if (parentRelativePath) {
+        setExpandedFolders((current) => {
+          const next = new Set(current);
+          next.add(parentRelativePath);
+          return next;
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Create folder failed: ${message}`);
+    }
+  };
+
+  const renameFilesRow = async (row: InstanceExplorerEntry) => {
+    if (!instance) return;
+    const nextName = window.prompt('Rename to:', row.name)?.trim();
+    if (!nextName || nextName === row.name) return;
+    try {
+      await TauriApi.instanceFilesRename(instance.id, row.relativePath, nextName);
+      const updatedPath = `${dirname(row.relativePath) ? `${dirname(row.relativePath)}/` : ''}${nextName}`;
+      if (selectedFilePath === row.relativePath) {
+        setSelectedFilePath(updatedPath);
+      }
+      setStatusMessage(`Renamed "${row.name}" to "${nextName}".`);
+      await reloadFilesTree();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Rename failed: ${message}`);
+    }
+  };
+
+  const deleteFilesRow = async (row: InstanceExplorerEntry) => {
+    if (!instance) return;
+    const confirmed = window.confirm(`Delete "${row.name}"? This cannot be undone.`);
+    if (!confirmed) return;
+    try {
+      await TauriApi.instanceFilesDelete(instance.id, row.relativePath);
+      if (selectedFilePath === row.relativePath) {
+        setSelectedFilePath(null);
+        setSelectedFileText('');
+        setSelectedFileOriginalText('');
+      }
+      setStatusMessage(`Deleted "${row.name}".`);
+      await reloadFilesTree();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Delete failed: ${message}`);
+    }
+  };
+
+  const openPathInSystem = async (relativePath?: string) => {
+    if (!instance) return;
+    try {
+      await TauriApi.instanceFilesOpenPath(instance.id, relativePath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Unable to open path: ${message}`);
+    }
+  };
+
+  const saveSelectedFile = async () => {
+    if (!instance || !selectedFilePath) return;
+    setSelectedFileSaving(true);
+    try {
+      await TauriApi.instanceFilesWriteText(instance.id, selectedFilePath, selectedFileText);
+      setSelectedFileOriginalText(selectedFileText);
+      setSelectedFileError(null);
+      setStatusMessage(`Saved ${selectedFilePath}.`);
+      await reloadFilesTree();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSelectedFileError(message);
+      setStatusMessage(`Save failed: ${message}`);
+    } finally {
+      setSelectedFileSaving(false);
+    }
+  };
+
+  const handleTreeRowClick = async (row: InstanceExplorerEntry) => {
+    if (row.isDir) {
+      toggleFolderExpanded(row.relativePath);
+      return;
+    }
+    await loadSelectedFile(row.relativePath);
   };
 
   const renderInstalledLibrary = (
     title: string,
     loadingState: boolean,
-    rows: InstanceContentFile[] | InstanceModFile[],
+    rows: Array<InstanceContentFile | InstanceModFile>,
+    installedQuery: string,
+    setInstalledQuery: (value: string) => void,
     onRefresh: () => void,
     onFolderOpen: () => void,
     onSwitch: () => void,
     onDelete: (row: InstanceContentFile | InstanceModFile) => void,
-    onToggle?: (row: InstanceModFile) => void,
-    extraAction?: ReactNode
-  ) => (
+    onToggle?: (row: InstanceModFile) => void
+  ) => {
+    const query = installedQuery.trim().toLowerCase();
+    const filteredRows = query.length === 0
+      ? rows
+      : rows.filter((row) => {
+          const displayTitle = row.displayName?.trim() ? row.displayName : cleanFileLabel(row.fileName);
+          const haystack = `${displayTitle} ${row.fileName}`.toLowerCase();
+          return haystack.includes(query);
+        });
+
+    return (
     <section className="g-panel p-6 space-y-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h2 className="text-lg font-black text-slate-900 dark:text-white">{title}</h2>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={onRefresh} className="g-btn h-10 px-3 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5"><RefreshCcw size={13} /> Refresh</button>
-          {extraAction}
-          <button onClick={onFolderOpen} className="g-btn h-10 px-3 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5"><FolderOpen size={13} /> Folder</button>
+      <div className="flex items-center gap-3 flex-wrap">
+        <h2 className="text-lg font-black text-slate-900 dark:text-white shrink-0">{title}</h2>
+        <span
+          className="h-8 w-px shrink-0"
+          style={{ background: 'color-mix(in srgb, var(--g-border) 78%, transparent)' }}
+          aria-hidden
+        />
+        <div
+          className="h-11 min-w-[260px] flex-1 inline-flex items-center gap-2 px-3 border"
+          style={{
+            borderRadius: 'calc(2px * var(--g-roundness-mult))',
+            borderColor: 'color-mix(in srgb, var(--g-border) 82%, transparent)',
+            background: 'linear-gradient(180deg, color-mix(in srgb, var(--g-surface) 72%, transparent), color-mix(in srgb, var(--g-shell) 84%, #000 16%))'
+          }}
+        >
+          <Search size={14} className="text-white/55" />
+          <input
+            value={installedQuery}
+            onChange={(event) => setInstalledQuery(event.target.value)}
+            placeholder={`Search installed ${title.toLowerCase()}...`}
+            className="h-full w-full bg-transparent text-sm font-semibold text-white/88 placeholder:text-white/35 outline-none border-none"
+          />
+        </div>
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
           <button onClick={onSwitch} className="g-btn-accent h-10 px-3 text-xs font-black tracking-[0.14em] uppercase">Open Install View</button>
+          <button onClick={onRefresh} title="Refresh" className="g-btn h-10 w-10 inline-flex items-center justify-center"><RefreshCcw size={13} /></button>
+          <button onClick={onFolderOpen} title="Open Folder" className="g-btn h-10 w-10 inline-flex items-center justify-center"><FolderOpen size={13} /></button>
         </div>
       </div>
 
@@ -650,9 +1069,11 @@ export function InstanceEditor() {
           <div className="rounded-2xl border border-slate-300/80 dark:border-white/12 p-6 text-center text-xs font-black tracking-[0.16em] uppercase text-slate-500 dark:text-white/55">Loading...</div>
         ) : rows.length === 0 ? (
           <EmptyState message={`No ${title.toLowerCase()} installed.`} />
+        ) : filteredRows.length === 0 ? (
+          <EmptyState message={`No installed ${title.toLowerCase()} matched your search.`} />
         ) : (
-          rows.map((row) => {
-            const modRow = 'enabled' in row ? row : null;
+          filteredRows.map((row) => {
+            const modRow = isInstalledModFile(row) ? row : null;
             const CardIcon = getInstalledIcon(title, row);
             const displayTitle = row.displayName?.trim() ? row.displayName : cleanFileLabel(row.fileName);
             const description = buildInstalledDescription(title, row);
@@ -674,12 +1095,12 @@ export function InstanceEditor() {
                     background: 'color-mix(in srgb, var(--g-soft) 82%, #000 18%)'
                   }}
                 >
-                  {'iconUrl' in row && row.iconUrl ? <img src={row.iconUrl} alt={displayTitle} className="h-full w-full object-cover" /> : <CardIcon size={18} className="text-white/70" />}
+                  {hasInstalledIcon(row) ? <img src={row.iconUrl} alt={displayTitle} className="h-full w-full object-cover" /> : <CardIcon size={18} className="text-white/70" />}
                 </div>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="truncate text-lg font-black text-slate-900 dark:text-white">{displayTitle}</h3>
-                    {'enabled' in row ? (
+                    {isInstalledModFile(row) ? (
                       <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-600 dark:text-white/72">
                         {row.enabled ? 'Enabled' : 'Disabled'}
                       </span>
@@ -721,6 +1142,7 @@ export function InstanceEditor() {
       </div>
     </section>
   );
+  };
 
   const renderMarketplaceList = (
     title: string,
@@ -731,7 +1153,9 @@ export function InstanceEditor() {
     searchingState: boolean,
     onSearch: () => void,
     rows: MarketplacePack[] | MarketplaceMod[],
-    installingId: string | null,
+    installVisuals: Record<string, MarketplaceInstallVisualState>,
+    installedNames: Set<string>,
+    installedRowIds: Set<string>,
     onInstall: (row: MarketplacePack | MarketplaceMod) => void,
     placeholder: string,
     emptyMessage: string,
@@ -741,15 +1165,15 @@ export function InstanceEditor() {
     <section className="g-panel p-6 space-y-4">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <h2 className="text-lg font-black text-slate-900 dark:text-white">{title}</h2>
-          <button onClick={() => {
+        <button onClick={() => {
           if (title === 'Mods Marketplace') setModsView('installed');
           if (title === 'Resource Packs Marketplace') setResourcepacksView('installed');
           if (title === 'Shaders Marketplace') setShadersView('installed');
-        }} className="g-btn h-10 px-3 text-xs font-black tracking-[0.14em] uppercase">Back To Installed</button>
+        }} className={`h-10 px-3 text-xs font-black tracking-[0.14em] uppercase ${boxedControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 76%, transparent)' }}>Back To Installed</button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_120px] gap-2">
-        <div className="g-select-trigger h-11 px-3 flex items-center gap-2">
+        <div className="h-11 px-3 flex items-center gap-2 border bg-[#131313] [border-radius:2px]" style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }}>
           <Search size={14} className="text-slate-500 dark:text-white/60" />
           <input
             value={query}
@@ -761,12 +1185,12 @@ export function InstanceEditor() {
             className="w-full bg-transparent text-sm font-semibold outline-none text-slate-900 dark:text-white"
           />
         </div>
-        <select value={source} onChange={(event) => setSource(event.target.value as SourceFilter)} className="g-select-trigger h-11 px-3 text-sm font-bold text-slate-900 dark:text-white">
+        <select value={source} onChange={(event) => setSource(event.target.value as SourceFilter)} className="h-11 px-3 text-sm font-bold text-slate-900 dark:text-white border bg-[#131313] [border-radius:2px]" style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }}>
           <option value="all">All Sources</option>
           <option value="modrinth">Modrinth</option>
           <option value="curseforge">CurseForge</option>
         </select>
-        <button onClick={onSearch} disabled={searchingState} className={`rounded-xl border h-11 text-xs font-black tracking-[0.14em] uppercase disabled:opacity-45 ${accentClasses}`} style={{ background: 'var(--g-accent-gradient)' }}>
+        <button onClick={onSearch} disabled={searchingState} className={`border h-11 text-xs font-black tracking-[0.14em] uppercase disabled:opacity-45 [border-radius:2px] ${accentClasses}`} style={{ background: 'var(--g-accent-gradient)', borderColor: 'color-mix(in srgb, var(--g-border) 78%, transparent)', boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.18)' }}>
           {searchingState ? 'Searching...' : 'Search'}
         </button>
       </div>
@@ -777,26 +1201,55 @@ export function InstanceEditor() {
         ) : (
           rows.map((row) => {
             const rowId = `${row.source}:${row.id}`;
+            const installVisual = installVisuals[rowId] ?? null;
+            const isInstalling = !!installVisual;
+            const isInstalled = installedRowIds.has(rowId) || installedNames.has(normalizeMarketplaceLabel(row.title));
             return (
               <article
                 key={rowId}
-                className="grid grid-cols-[64px_1fr_auto] items-center gap-4 border px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                className={`simple-install-card relative grid grid-cols-[64px_1fr_auto] items-center gap-4 overflow-hidden border px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${isInstalling ? 'is-installing' : ''} ${isInstalled && !isInstalling ? 'is-installed' : ''}`}
                 style={{
                   borderRadius: 'calc(22px * var(--g-roundness-mult))',
                   borderColor: 'color-mix(in srgb, var(--g-border) 82%, transparent)',
                   background: 'linear-gradient(180deg, color-mix(in srgb, var(--g-surface-strong) 82%, transparent), color-mix(in srgb, var(--g-shell-strong) 88%, #000 12%))'
                 }}
               >
-                <div className="w-14 h-14 rounded-xl border border-slate-300 dark:border-white/15 bg-slate-200 dark:bg-white/10 overflow-hidden flex items-center justify-center">
+                <div className="simple-install-card__content w-14 h-14 border border-slate-300 dark:border-white/15 bg-slate-200 dark:bg-white/10 overflow-hidden flex items-center justify-center [border-radius:2px]">
                   {row.iconUrl ? <img src={row.iconUrl} alt={row.title} className="w-full h-full object-cover" /> : icon === 'mod' || icon === 'shader' ? <Sparkles size={14} className="text-slate-500 dark:text-white/55" /> : <ImageIcon size={14} className="text-slate-500 dark:text-white/55" />}
                 </div>
-                <div className="min-w-0 flex-1">
+                <div className="simple-install-card__content min-w-0 flex-1">
                   <p className="text-lg font-black text-slate-900 dark:text-white truncate">{row.title}</p>
                   <p className="mt-1 text-sm font-semibold text-slate-500 dark:text-white/55 truncate">{row.description}</p>
                 </div>
-                <button onClick={() => onInstall(row)} disabled={installingId === rowId} className={`rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5 disabled:opacity-45 ${accentClasses}`}>
-                  <Download size={12} /> {installingId === rowId ? 'Installing...' : 'Install'}
+                <button
+                  onClick={() => onInstall(row)}
+                  disabled={isInstalling || isInstalled}
+                  className={`simple-install-card__button border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5 transition-all duration-200 [border-radius:2px] ${
+                    isInstalling || isInstalled
+                      ? 'border-white/10 bg-white/[0.05] text-white/50'
+                      : accentClasses
+                  }`}
+                  style={isInstalling || isInstalled
+                    ? { borderColor: 'color-mix(in srgb, var(--g-border) 82%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 70%, transparent)' }
+                    : { boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.18)' }}
+                >
+                  <Download size={12} /> {isInstalled ? 'Installed' : isInstalling ? 'Installing...' : 'Install'}
                 </button>
+                {isInstalling ? (
+                  <>
+                    <div className="simple-install-card__veil" />
+                    <div className="simple-install-card__loader">
+                      <div className={`simple-install-card__text ${installVisual?.phase === 'done' ? 'is-done' : ''}`}>
+                        {installVisual?.label ?? 'Installing'}
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+                {isInstalled && !isInstalling ? (
+                  <div className="simple-install-card__installed">
+                    Installed
+                  </div>
+                ) : null}
               </article>
             );
           })
@@ -804,6 +1257,131 @@ export function InstanceEditor() {
       </div>
     </section>
   );
+
+  const renderFilesExplorer = () => {
+    if (!instance) return null;
+    const hasSearch = filesTreeQuery.trim().length > 0;
+    const renderTree = (parentPath: string, depth: number): ReactNode => {
+      const children = treeByParent.get(parentPath) || [];
+      return children.map((row) => {
+        const isExpanded = expandedFolders.has(row.relativePath);
+        const showChildren = row.isDir && (isExpanded || hasSearch);
+        const isSelectedFile = !row.isDir && selectedFilePath === row.relativePath;
+        return (
+          <div key={row.relativePath}>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => { void handleTreeRowClick(row); }}
+                className="group flex h-9 min-w-0 flex-1 items-center gap-2 border border-transparent px-2 text-left text-sm transition hover:border-white/10 hover:bg-white/[0.04] [border-radius:2px]"
+                style={{ paddingLeft: `${10 + (depth * 14)}px`, background: isSelectedFile ? 'color-mix(in srgb, var(--g-accent-soft) 58%, transparent)' : undefined }}
+              >
+                {row.isDir ? <ChevronDown size={12} className={`shrink-0 text-white/55 transition ${showChildren ? 'rotate-0' : '-rotate-90'}`} /> : <span className="w-3 shrink-0" />}
+                {row.isDir ? <Folder size={13} className="shrink-0 text-white/70" /> : <FileText size={13} className="shrink-0 text-white/45" />}
+                <span className="truncate font-semibold text-white/88">{row.name}</span>
+                {row.isDir && (
+                  <span className="ml-auto border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] font-black uppercase tracking-[0.12em] text-white/58 [border-radius:2px]">
+                    {row.childCount}
+                  </span>
+                )}
+              </button>
+              <button onClick={() => { void renameFilesRow(row); }} className={`hidden h-7 w-7 items-center justify-center md:inline-flex ${boxedControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }}><Pencil size={11} /></button>
+              <button onClick={() => { void deleteFilesRow(row); }} className={`hidden h-7 w-7 items-center justify-center md:inline-flex ${boxedDangerControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-danger) 28%, var(--g-border) 72%)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-danger) 20%, transparent)' }}><Trash2 size={11} /></button>
+            </div>
+            {showChildren ? <div>{renderTree(row.relativePath, depth + 1)}</div> : null}
+          </div>
+        );
+      });
+    };
+
+    return (
+      <section className="g-panel p-5 md:p-6">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-black text-slate-900 dark:text-white">Files</h2>
+            <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-white/55">Tree explorer with real in-instance file editing.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => void reloadFilesTree()} className={`h-10 w-10 ${boxedControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }} title="Refresh tree"><RefreshCcw size={13} /></button>
+            <button onClick={() => void createFolderAt()} className={`h-10 w-10 ${boxedControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }} title="New folder"><FolderPlus size={13} /></button>
+            <button onClick={() => void openPathInSystem()} className={`h-10 w-10 ${boxedControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }} title="Open instance folder"><FolderOpen size={13} /></button>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[360px_minmax(0,1fr)]">
+          <aside className="border border-white/10 bg-black/30 p-3 [border-radius:10px]">
+            <div className="mb-2 h-10 px-3 flex items-center gap-2 border bg-[#131313] [border-radius:2px]" style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }}>
+              <Search size={13} className="text-slate-500 dark:text-white/60" />
+              <input
+                value={filesTreeQuery}
+                onChange={(event) => setFilesTreeQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void reloadFilesTree(filesTreeQuery);
+                }}
+                placeholder="Search files or folders..."
+                className="w-full bg-transparent text-sm font-semibold outline-none text-slate-900 dark:text-white"
+              />
+            </div>
+            <div className="mb-3 grid grid-cols-2 gap-2">
+              <button className="border bg-[#151515] px-3 py-1.5 text-xs font-black uppercase tracking-[0.12em] text-white [border-radius:2px]" style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }}>Folders {folderRows.length}</button>
+              <button className="border bg-[#111111] px-3 py-1.5 text-xs font-black uppercase tracking-[0.12em] text-white/72 [border-radius:2px]" style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 66%, transparent)' }}>Files {fileRows.length}</button>
+            </div>
+            <div className="max-h-[620px] overflow-auto pr-1">
+              {filesTreeLoading ? (
+                <div className="p-4 text-center text-xs font-black uppercase tracking-[0.14em] text-white/55">Loading tree...</div>
+              ) : (
+                renderTree('', 0)
+              )}
+            </div>
+          </aside>
+
+          <section className="border border-white/10 bg-black/30 p-4 [border-radius:10px]">
+            {selectedFilePath ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-[10px] font-black uppercase tracking-[0.14em] text-white/55">{selectedFilePath}</p>
+                    <p className="mt-1 text-xs font-semibold text-white/55">Editing this file updates the real instance file.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => void openPathInSystem(selectedFilePath)} className={`h-9 w-9 ${boxedControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }} title="Open in system"><FolderOpen size={12} /></button>
+                    <button onClick={() => void loadSelectedFile(selectedFilePath)} className={`h-9 w-9 ${boxedControlClass}`} style={{ borderColor: 'color-mix(in srgb, var(--g-border) 88%, transparent)', boxShadow: 'inset 0 -1px 0 color-mix(in srgb, var(--g-border) 72%, transparent)' }} title="Reload file"><RefreshCcw size={12} /></button>
+                    <button
+                      onClick={() => { void saveSelectedFile(); }}
+                      disabled={selectedFileSaving || !selectedFileDirty || selectedFileLoading || !!selectedFileError}
+                      className="g-btn-accent h-9 px-3 text-xs font-black uppercase tracking-[0.12em] disabled:opacity-45 inline-flex items-center gap-1.5 [border-radius:2px]"
+                      style={{ boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.18)' }}
+                    >
+                      <Save size={12} /> {selectedFileSaving ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+
+                {selectedFileLoading ? (
+                  <div className="border border-white/10 bg-black/35 p-4 text-center text-xs font-black uppercase tracking-[0.14em] text-white/55 [border-radius:2px]">Loading file...</div>
+                ) : selectedFileError ? (
+                  <div className="border border-red-500/35 bg-red-500/10 p-4 text-sm font-semibold text-red-100 [border-radius:2px]">{selectedFileError}</div>
+                ) : (
+                  <textarea
+                    value={selectedFileText}
+                    onChange={(event) => setSelectedFileText(event.target.value)}
+                    spellCheck={false}
+                    className="h-[620px] w-full resize-none border border-white/10 bg-black/45 p-3 font-mono text-[12px] leading-5 text-white outline-none [border-radius:2px]"
+                  />
+                )}
+              </div>
+            ) : (
+              <div className="flex h-[620px] items-center justify-center border border-white/10 bg-black/35 p-4 text-center [border-radius:2px]">
+                <div>
+                  <p className="text-lg font-black text-white">Select a file from the tree</p>
+                  <p className="mt-1 text-sm font-semibold text-white/58">Folders expand in the left panel. Click a file to view and edit.</p>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      </section>
+    );
+  };
 
   if (loading || (instance && !instanceMediaLoaded)) {
     return <div className="min-h-full p-8 flex items-center justify-center"><p className="text-sm font-black tracking-[0.16em] uppercase text-slate-500 dark:text-white/55">Loading instance...</p></div>;
@@ -821,13 +1399,172 @@ export function InstanceEditor() {
   return (
     <div className="min-h-full w-full max-w-[1360px] mx-auto p-4 md:p-6 space-y-4">
       <UniversalLoadingOverlay
-        open={!!blockingTitle}
+        open={!!blockingTitle || !!launchStatus}
         fixed
-        eyebrow="Working"
-        title={blockingTitle || 'Working...'}
-        description="Bloom is applying changes to this instance."
+        eyebrow={launchStatus ? 'Launching' : blockingTitle?.toLowerCase().includes('export') ? 'Exporting' : blockingTitle?.toLowerCase().includes('import') ? 'Importing' : 'Working'}
+        title={blockingTitle || launchStatus || 'Working...'}
+        description={launchStatus ? 'Bloom is installing files and starting Minecraft.' : blockingTitle?.toLowerCase().includes('export') ? 'Bloom is building your portable .bloom archive.' : blockingTitle?.toLowerCase().includes('import') ? 'Bloom is copying the selected instance files into this profile.' : 'Bloom is applying changes to this instance.'}
       />
-      <section className="g-panel-strong p-6">
+      {transferPanelOpen && (
+        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/65 px-4">
+          <div className="w-full max-w-2xl rounded-[28px] border border-white/10 bg-black p-6 shadow-[0_28px_90px_rgba(0,0,0,0.45)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] g-accent-text">Transfer</p>
+                <h2 className="mt-2 text-3xl font-black text-white">Import Instance Files</h2>
+                <p className="mt-2 text-sm text-white/60">Copy selected files from another instance into <span className="font-bold text-white">{instance?.name}</span>. This is useful for moving options profiles and multiplayer server lists without reinstalling everything else.</p>
+              </div>
+              <button onClick={() => setTransferPanelOpen(false)} className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-black text-white/75 transition hover:bg-white/[0.04] hover:text-white">
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="mt-6 space-y-4">
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-[0.18em] text-white/50">Source Instance</label>
+                <div className="relative mt-2" ref={transferSourceMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => transferableInstances.length > 0 && setTransferSourceMenuOpen((current) => !current)}
+                    className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-black px-4 py-3 text-left text-sm font-semibold text-white transition hover:bg-white/[0.04]"
+                  >
+                    <span className="truncate">
+                      {selectedTransferSource ? `${selectedTransferSource.name} · ${selectedTransferSource.loader.toUpperCase()} ${selectedTransferSource.mcVersion}` : 'No other instances available'}
+                    </span>
+                    <ChevronDown size={16} className={`shrink-0 text-white/60 transition ${transferSourceMenuOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {transferSourceMenuOpen && transferableInstances.length > 0 && (
+                    <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-20 overflow-hidden rounded-2xl border border-white/10 bg-black shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
+                      {transferableInstances.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => {
+                            setTransferSourceInstanceId(item.id);
+                            setTransferSourceMenuOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold transition ${item.id === transferSourceInstanceId ? 'bg-white/[0.08] text-white' : 'text-white/75 hover:bg-white/[0.04] hover:text-white'}`}
+                        >
+                          <span className="truncate">{item.name}</span>
+                          <span className="ml-3 shrink-0 text-[10px] font-black uppercase tracking-[0.14em] text-white/38">{item.loader} {item.mcVersion}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                {([
+                  ['includeOptions', 'Options Files', 'options.txt, OptiFine settings, shader options, keybind support files.'],
+                  ['includeServerData', 'Server Data', 'servers.dat and the local servers folder for multiplayer addresses and icons.'],
+                  ['includeConfig', 'Config Folder', 'Everything under config/ for mod configs, UI layouts, and client tweaks.'],
+                  ['includeResourcepacks', 'Resource Packs', 'Installed local resource packs for this profile.'],
+                  ['includeShaderpacks', 'Shaderpacks', 'Installed local shader packs for this profile.']
+                ] as const).map(([key, label, description]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => updateTransferOption(key, !transferOptions[key])}
+                    className={[
+                      'rounded-2xl border p-4 text-left transition',
+                      transferOptions[key]
+                        ? 'border-white/10 bg-[color:color-mix(in_srgb,var(--g-accent)_18%,black)] hover:bg-[color:color-mix(in_srgb,var(--g-accent)_22%,black)]'
+                        : 'border-white/10 bg-black hover:bg-white/[0.04]'
+                    ].join(' ')}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-black text-white">{label}</p>
+                      <span className="text-[10px] font-black uppercase tracking-[0.14em] text-white/70">{transferOptions[key] ? 'On' : 'Off'}</span>
+                    </div>
+                    <p className="mt-2 text-xs text-white/58">{description}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-between gap-3 border-t border-white/10 pt-5">
+              <button onClick={() => setTransferOptions(DEFAULT_INSTANCE_TRANSFER_OPTIONS)} className="inline-flex h-10 items-center rounded-xl border border-white/10 bg-black px-4 text-[10px] font-black uppercase tracking-[0.12em] text-white/78 transition hover:bg-white/[0.04] hover:text-white">
+                Reset Defaults
+              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setTransferPanelOpen(false)} className="inline-flex h-10 items-center rounded-xl border border-white/10 bg-black px-4 text-[10px] font-black uppercase tracking-[0.12em] text-white/78 transition hover:bg-white/[0.04] hover:text-white">
+                  Cancel
+                </button>
+                <button
+                  onClick={() => { void handleTransferFiles(); }}
+                  disabled={!transferSourceInstanceId || (!transferOptions.includeOptions && !transferOptions.includeServerData && !transferOptions.includeConfig && !transferOptions.includeResourcepacks && !transferOptions.includeShaderpacks)}
+                  className="g-btn-accent h-10 px-5 text-[10px] font-black uppercase tracking-[0.12em] inline-flex items-center gap-2 disabled:opacity-45"
+                >
+                  <Copy size={13} /> Import Here
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {exportPanelOpen && (
+        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/65 px-4">
+          <div className="w-full max-w-3xl rounded-[28px] border border-white/12 bg-[#0f0d12] p-6 shadow-[0_28px_90px_rgba(0,0,0,0.45)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] g-accent-text">Export</p>
+                <h2 className="mt-2 text-3xl font-black text-white">Export as `.bloom`</h2>
+                <p className="mt-2 text-sm text-white/60">Choose what this pack should include. The defaults cover the usual client-side pieces needed to share a Bloom modpack cleanly.</p>
+              </div>
+              <button onClick={() => setExportPanelOpen(false)} className="g-btn h-10 w-10 inline-flex items-center justify-center">
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="mt-6 grid gap-3 md:grid-cols-2">
+              {([
+                ['includeMods', 'Mods', 'Installed mods folder.'],
+                ['includeResourcepacks', 'Resource Packs', 'Local resource packs folder.'],
+                ['includeShaderpacks', 'Shaderpacks', 'Local shader packs folder.'],
+                ['includeConfig', 'Config', 'Config and mod settings folders.'],
+                ['includeOptions', 'Options Files', 'options.txt and related client option files.'],
+                ['includeServerData', 'Server Data', 'servers.dat and local multiplayer server data.'],
+                ['includeSaves', 'World Saves', 'Singleplayer worlds in this instance.'],
+                ['includeScreenshots', 'Screenshots', 'The screenshots folder for this instance.'],
+                ['includeLogs', 'Logs', 'latest.log and the logs folder.'],
+                ['includeAllFiles', 'All Files', 'Export the full instance folder instead of a curated pack.']
+              ] as const).map(([key, label, description]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => updateExportOption(key, !exportOptions[key])}
+                  className={[
+                    'rounded-2xl border p-4 text-left transition',
+                    exportOptions[key] ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.05]'
+                  ].join(' ')}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-black text-white">{label}</p>
+                    <span className="text-[10px] font-black uppercase tracking-[0.14em] text-white/70">{exportOptions[key] ? 'On' : 'Off'}</span>
+                  </div>
+                  <p className="mt-2 text-xs text-white/58">{description}</p>
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-6 flex items-center justify-between gap-3 border-t border-white/10 pt-5">
+              <button onClick={() => setExportOptions(DEFAULT_BLOOM_EXPORT_OPTIONS)} className="g-btn h-10 px-4 text-[10px] font-black uppercase tracking-[0.12em]">
+                Reset Defaults
+              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setExportPanelOpen(false)} className="g-btn h-10 px-4 text-[10px] font-black uppercase tracking-[0.12em]">
+                  Cancel
+                </button>
+                <button onClick={() => { void handleExportBloom(); }} className="g-btn-accent h-10 px-5 text-[10px] font-black uppercase tracking-[0.12em] inline-flex items-center gap-2">
+                  <Download size={13} /> Export
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      <section className="g-panel-strong overflow-visible p-6">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3">
             <div
@@ -847,17 +1584,52 @@ export function InstanceEditor() {
           </div>
 
           <div className="flex items-center gap-2">
-            <button onClick={goBack} className="g-btn h-11 px-4 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-2">
-              <ArrowLeft size={14} /> Back
+            <div className="relative z-[80]" ref={actionsMenuRef}>
+              <button onClick={() => setActionsMenuOpen((current) => !current)} className="g-btn h-11 w-11 inline-flex items-center justify-center">
+                <MoreHorizontal size={16} />
+              </button>
+              {actionsMenuOpen && (
+                <div className="absolute right-0 top-[calc(100%+8px)] z-[140] min-w-[220px] overflow-hidden rounded-2xl border border-white/10 bg-black shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
+                  <div className="border-b border-white/8 px-3 py-2">
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/38">Instance Actions</p>
+                  </div>
+                  <div className="p-2">
+                  <button
+                    onClick={() => {
+                      setActionsMenuOpen(false);
+                      setTransferPanelOpen(true);
+                    }}
+                    className="flex h-11 w-full items-center gap-2 rounded-xl px-3 text-left text-xs font-black uppercase tracking-[0.12em] text-white/85 transition hover:bg-white/[0.06]"
+                  >
+                    <Copy size={13} /> Transfer Files
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActionsMenuOpen(false);
+                      setExportPanelOpen(true);
+                    }}
+                    className="mt-1 flex h-11 w-full items-center gap-2 rounded-xl px-3 text-left text-xs font-black uppercase tracking-[0.12em] text-white/85 transition hover:bg-white/[0.06]"
+                  >
+                    <Download size={13} /> Export
+                  </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <button onClick={goBack} title="Back" className="g-btn h-11 w-11 inline-flex items-center justify-center">
+              <ArrowLeft size={14} />
             </button>
-            <button onClick={saveSettings} disabled={saving} className="g-btn-accent h-11 px-5 text-xs font-black tracking-[0.14em] uppercase disabled:opacity-45 inline-flex items-center gap-2">
-              <Save size={14} /> {saving ? 'Saving...' : 'Save'}
+            <button onClick={() => void handleLaunch()} title="Launch" disabled={!!activeDownloads[instance.id] && activeDownloads[instance.id].status !== 'Complete'} className="g-btn h-11 w-11 inline-flex items-center justify-center disabled:opacity-45">
+              <Play size={14} />
+            </button>
+            <button onClick={saveSettings} title={saving ? 'Saving...' : 'Save'} disabled={saving} className="g-btn-accent h-11 w-11 inline-flex items-center justify-center disabled:opacity-45">
+              <Save size={14} />
             </button>
           </div>
         </div>
 
         <div
-          className="mt-4 inline-grid grid-cols-2 md:grid-cols-4 gap-2 border p-2"
+          className="mt-4 inline-grid grid-cols-2 md:grid-cols-5 gap-2 border p-2"
           style={{
             borderRadius: 'calc(22px * var(--g-roundness-mult))',
             borderColor: 'var(--g-border)',
@@ -868,6 +1640,7 @@ export function InstanceEditor() {
             ['mods', 'Mods'],
             ['resourcepacks', 'Resource Packs'],
             ['shaders', 'Shaders'],
+            ['files', 'Files'],
             ['settings', 'Settings']
           ] as const).map(([tab, label]) => (
             <button
@@ -886,7 +1659,7 @@ export function InstanceEditor() {
           ))}
         </div>
 
-        {activeTab !== 'settings' && (
+        {activeTab !== 'settings' && activeTab !== 'files' && (
           <div
             className="mt-4 inline-grid grid-cols-2 gap-2 border p-2"
             style={{
@@ -1068,37 +1841,6 @@ export function InstanceEditor() {
                 </div>
               ) : (
                 <div className="space-y-5">
-                  <div className="rounded-xl border border-slate-300/80 dark:border-white/12 p-4 bg-white/70 dark:bg-white/[0.02]">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <p className="text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45">Options Transfer</p>
-                        <p className="mt-2 text-sm font-semibold text-slate-700 dark:text-white/76">
-                          Copy keybinds, video settings, music volume, sensitivity, FOV, and other common option files from one instance into another.
-                        </p>
-                        <p className="mt-2 text-xs font-semibold text-slate-500 dark:text-white/55">
-                          Source: {optionsClipboard ? optionsClipboard.instanceName : 'Nothing copied yet'}
-                        </p>
-                      </div>
-                      <div className="flex gap-2 flex-wrap">
-                        <button onClick={copyOptionsSetup} className="rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-white/5 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5">
-                          <Copy size={13} /> Copy Options
-                        </button>
-                        <button
-                          onClick={() => { void pasteOptionsSetup(); }}
-                          disabled={!optionsClipboard || optionsClipboard.instanceId === instance.id || pastingOptions}
-                          className="g-btn-accent px-3 py-2 text-xs font-black tracking-[0.14em] uppercase inline-flex items-center gap-1.5 disabled:opacity-45"
-                        >
-                          <Save size={13} /> {pastingOptions ? 'Pasting...' : 'Paste Options'}
-                        </button>
-                      </div>
-                    </div>
-                    {optionsClipboard?.instanceId === instance.id && (
-                      <p className="mt-3 text-xs font-semibold text-amber-700 dark:text-amber-300">
-                        Open a different instance before pressing Paste Options.
-                      </p>
-                    )}
-                  </div>
-
                   <div className="grid gap-4 lg:grid-cols-2">
                     <div className="rounded-xl border border-slate-300/80 dark:border-white/12 p-4 bg-white/70 dark:bg-white/[0.02]">
                       <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Memory (MB)</label>
@@ -1142,15 +1884,16 @@ export function InstanceEditor() {
           'Mods',
           modLoading,
           mods,
+          installedModsQuery,
+          setInstalledModsQuery,
           () => { void reloadMods(); },
           () => { void TauriApi.openModsFolder(instance.id); },
           () => setModsView('install'),
           (row) => { void removeMod(row as InstanceModFile); },
-          (row) => { void toggleMod(row); },
-          <button onClick={autoInstallFabricApi} disabled={instance.loader !== 'fabric' || installingFabricApi} className="rounded-xl border border-emerald-500/50 bg-emerald-500/15 px-3 py-2 text-xs font-black tracking-[0.14em] uppercase text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1.5 disabled:opacity-45"><ShieldPlus size={13} /> {installingFabricApi ? 'Installing...' : 'Auto Fabric API'}</button>
+          (row) => { void toggleMod(row); }
         ) : (
           <div className="space-y-4">
-            {renderMarketplaceList('Mods Marketplace', modsQuery, setModsQuery, modsSource, setModsSource, modsSearching, () => { void searchModsMarket(); }, modsResults, modsInstallingId, (row) => { void installMarketplaceMod(row as MarketplaceMod); }, 'Search marketplace mods...', 'Search to load marketplace mods for this instance.', 'border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-200', 'mod')}
+            {renderMarketplaceList('Mods Marketplace', modsQuery, setModsQuery, modsSource, setModsSource, modsSearching, () => { void searchModsMarket(); }, modsResults, modInstallVisuals, installedModNames, installedMarketplaceMods, (row) => { void installMarketplaceMod(row as MarketplaceMod); }, 'Search marketplace mods...', 'Search to load marketplace mods for this instance.', 'border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-200', 'mod')}
             <section className="g-panel p-6">
               <div onDrop={handleDrop} onDragOver={handleDragOver} onDragLeave={handleDragLeave} className={['rounded-2xl border-2 border-dashed p-4 text-center transition-colors', isDragging ? 'border-[var(--g-accent)] bg-[var(--g-accent-soft)]' : 'border-slate-300/80 dark:border-white/20 bg-slate-100/40 dark:bg-white/[0.03]'].join(' ')}>
                 <p className="text-sm font-black text-slate-700 dark:text-white/75 inline-flex items-center gap-2"><UploadCloud size={15} /> Drop .jar files here</p>
@@ -1170,24 +1913,30 @@ export function InstanceEditor() {
             'Resource Packs',
             resourcepacksLoading,
             resourcepacks,
+            installedResourcepacksQuery,
+            setInstalledResourcepacksQuery,
             () => { void reloadResourcepacks(); },
             () => { void TauriApi.openResourcepacksFolder(instance.id); },
             () => setResourcepacksView('install'),
             (row) => { void removeResourcepack(row as InstanceContentFile); }
           )
-          : renderMarketplaceList('Resource Packs Marketplace', resourcepacksQuery, setResourcepacksQuery, resourcepacksSource, setResourcepacksSource, resourcepacksSearching, () => { void searchResourcePacksMarket(); }, resourcepacksResults, resourcepacksInstallingId, (row) => { void installMarketplaceResourcePack(row as MarketplacePack); }, 'Search resource packs...', 'Search to load resource packs.', 'border-cyan-500/50 bg-cyan-500/15 text-cyan-700 dark:text-cyan-200', 'pack')
-      ) : (
+          : renderMarketplaceList('Resource Packs Marketplace', resourcepacksQuery, setResourcepacksQuery, resourcepacksSource, setResourcepacksSource, resourcepacksSearching, () => { void searchResourcePacksMarket(); }, resourcepacksResults, resourcepackInstallVisuals, installedResourcepackNames, installedMarketplaceResourcepacks, (row) => { void installMarketplaceResourcePack(row as MarketplacePack); }, 'Search resource packs...', 'Search to load resource packs.', 'border-cyan-500/50 bg-cyan-500/15 text-cyan-700 dark:text-cyan-200', 'pack')
+      ) : activeTab === 'shaders' ? (
         shadersView === 'installed'
           ? renderInstalledLibrary(
             'Shaders',
             shaderpacksLoading,
             shaderpacks,
+            installedShadersQuery,
+            setInstalledShadersQuery,
             () => { void reloadShaderpacks(); },
             () => { void TauriApi.openShaderpacksFolder(instance.id); },
             () => setShadersView('install'),
             (row) => { void removeShaderpack(row as InstanceContentFile); }
           )
-          : renderMarketplaceList('Shaders Marketplace', shadersQuery, setShadersQuery, shadersSource, setShadersSource, shadersSearching, () => { void searchShadersMarket(); }, shadersResults, shadersInstallingId, (row) => { void installMarketplaceShader(row as MarketplacePack); }, 'Search shaders...', 'Search to load shader packs.', 'border-fuchsia-500/50 bg-fuchsia-500/15 text-fuchsia-700 dark:text-fuchsia-200', 'shader')
+          : renderMarketplaceList('Shaders Marketplace', shadersQuery, setShadersQuery, shadersSource, setShadersSource, shadersSearching, () => { void searchShadersMarket(); }, shadersResults, shaderInstallVisuals, installedShaderNames, installedMarketplaceShaders, (row) => { void installMarketplaceShader(row as MarketplacePack); }, 'Search shaders...', 'Search to load shader packs.', 'border-fuchsia-500/50 bg-fuchsia-500/15 text-fuchsia-700 dark:text-fuchsia-200', 'shader')
+      ) : (
+        renderFilesExplorer()
       )}
 
       {(statusMessage || lastInstallResult) && (

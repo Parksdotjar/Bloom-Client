@@ -47,6 +47,7 @@ export type ConsoleCommandContext = {
   getAppearanceSnapshot: () => Record<string, string>;
   setUiScale: (value: number) => { mappedDensity: string };
   setReducedMotion: (enabled: boolean) => void;
+  openCosmeticsModMenu: () => void;
   listInstances: () => Promise<Instance[]>;
   createInstance: (name: string) => Promise<Instance>;
   removeInstance: (instanceId: string) => Promise<void>;

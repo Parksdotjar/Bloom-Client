@@ -1,8 +1,23 @@
-import { useEffect, useRef, useState, type ChangeEvent, type PointerEventHandler, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type PointerEventHandler, type ReactNode, type WheelEvent } from 'react';
 import { clsx } from 'clsx';
 import { APP_VERSION } from '../constants/version';
 import { TauriApi } from '../services/tauri';
-import { UniversalLoadingOverlay } from '../components/UniversalLoadingOverlay';
+import {
+  UniversalLoadingOverlay,
+  UNIVERSAL_LOADING_STYLE_KEY,
+  readUniversalLoadingStyle,
+  type UniversalLoadingStyle
+} from '../components/UniversalLoadingOverlay';
+import {
+  getDefaultShopRarityCustomColors,
+  readShopRarityThemeSettings,
+  SHOP_RARITY_ORDER,
+  SHOP_RARITY_PRESETS,
+  writeShopRarityThemeSettings,
+  type ShopRarityKey,
+  type ShopRarityPresetId,
+  type ShopRarityThemeSettings
+} from '../services/shopTheme';
 import { eventToDisplayShortcut } from '../utils/shortcuts';
 import {
   CONSOLE_HOTKEY_DEFAULT,
@@ -21,7 +36,7 @@ import {
 } from '../services/updater';
 
 type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
-type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'rainbow';
+type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'custom';
 type BackgroundMode = 'none' | 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula' | 'custom';
 type DensityMode = 'compact' | 'cozy' | 'spacious';
 type FontPackMode = 'manrope' | 'space-grotesk' | 'sora';
@@ -33,11 +48,8 @@ type ButtonThemeMode = 'default' | 'simple' | 'cartoon' | 'glass' | 'neon' | 'pi
 type MotionMode = 'off' | 'subtle' | 'standard' | 'cinematic';
 type MotionEasingPreset = 'out-quad' | 'out-cubic' | 'in-out-cubic' | 'out-back' | 'out-elastic' | 'linear' | 'custom';
 type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
-type SoundPackMode = 'off' | 'soft' | 'arcade' | 'retro';
 type StartupSceneTheme = 'nova' | 'horizon' | 'matrix';
 type StartupSceneSoundProfile = 'off' | 'shimmer' | 'impact';
-type InstanceInstallLoadingStyle = 'orbit' | 'bars' | 'prism' | 'pulse';
-
 type AppearancePresetPayload = {
   themeMode: LauncherTheme;
   accentMode: AccentMode;
@@ -87,11 +99,40 @@ type AppearancePresetExportFileV1 = {
 };
 
 type SettingsTab = 'general' | 'appearance' | 'keybinds' | 'widgets' | 'updates' | 'extra';
+type AppearanceSection = 'animation' | 'background' | 'sidebar' | 'style' | 'presets' | 'shop';
+type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help' | 'information';
+type SidebarTabsVisibility = Record<SidebarTabId, boolean>;
+
+const APPEARANCE_SECTIONS: { id: AppearanceSection; label: string; description: string }[] = [
+  { id: 'animation', label: 'Animation', description: 'FPS, easing, and motion profile settings.' },
+  { id: 'background', label: 'Background', description: 'Background mode, opacity, and custom image controls.' },
+  { id: 'sidebar', label: 'Sidebar', description: 'Sidebar style, position, and dock visuals.' },
+  { id: 'style', label: 'Style', description: 'Buttons, roundness, card style, icon pack, and glass.' },
+  { id: 'presets', label: 'Presets', description: 'Save, import, export, and apply appearance presets.' },
+  { id: 'shop', label: 'Shop', description: 'Rarity palette and cosmetic storefront color overrides.' }
+];
+
+const SIDEBAR_TABS_VISIBILITY_DEFAULTS: SidebarTabsVisibility = {
+  home: true,
+  instances: true,
+  marketplace: true,
+  importer: true,
+  widgets: true,
+  cosmetics: true,
+  'custom-cape': true,
+  chat: false,
+  'script-studio': false,
+  'host-server': false,
+  games: false,
+  help: true,
+  information: true
+};
 
 const THEME_STORAGE_KEY = 'bloom_theme_mode';
 const THEME_CHANGE_EVENT = 'bloom-theme-change';
 const ACCENT_STORAGE_KEY = 'bloom_accent_mode';
 const ACCENT_CHANGE_EVENT = 'bloom-accent-change';
+const ACCENT_CUSTOM_COLOR_KEY = 'bloom_accent_custom_color';
 const BACKGROUND_STORAGE_KEY = 'bloom_background_mode';
 const BACKGROUND_CHANGE_EVENT = 'bloom-background-change';
 const BACKGROUND_VISUAL_OPACITY_KEY = 'bloom_background_visual_opacity';
@@ -137,6 +178,7 @@ const SIDEBAR_DOCK_HOVER_ENABLED_KEY = 'bloom_sidebar_dock_hover_enabled';
 const SIDEBAR_DOCK_GROW_SIZE_KEY = 'bloom_sidebar_dock_grow_size';
 const SIDEBAR_DOCK_GROW_SPEED_KEY = 'bloom_sidebar_dock_grow_speed';
 const SIDEBAR_TAB_GAP_KEY = 'bloom_sidebar_tab_gap';
+const SIDEBAR_TABS_VISIBILITY_KEY = 'bloom_sidebar_tabs_visibility';
 const UI_ASSET_PIXEL_LEVEL_KEY = 'bloom_ui_asset_pixel_level';
 const UI_ASSET_PIXEL_LEVEL_CHANGE_EVENT = 'bloom-ui-asset-pixel-level-change';
 const ICON_PACK_KEY = 'bloom_icon_pack';
@@ -150,20 +192,15 @@ const GLASS_AMOUNT_CHANGE_EVENT = 'bloom-glass-amount-change';
 const SHORTCUT_SEARCH_KEY = 'bloom_shortcut_search';
 const SHORTCUT_CREATE_INSTANCE_KEY = 'bloom_shortcut_create_instance';
 const SHORTCUT_SETTINGS_KEY = 'bloom_shortcut_settings';
+const SHORTCUT_INSTANCE_LAUNCHER_KEY = 'bloom_shortcut_instance_launcher';
 const SHORTCUT_REPLAY_STARTUP_SCENE_KEY = 'bloom_shortcut_replay_startup_scene';
 const SHORTCUTS_CHANGE_EVENT = 'bloom-shortcuts-change';
 const EXTRA_KEYBINDS_STORAGE_KEY = 'bloom_extra_keybinds';
-const SOUND_PACK_KEY = 'bloom_sound_pack';
-const SOUND_CLICKS_KEY = 'bloom_sound_clicks_enabled';
-const SOUND_HOVERS_KEY = 'bloom_sound_hovers_enabled';
-const SOUND_NOTIFICATIONS_KEY = 'bloom_sound_notifications_enabled';
-const SOUND_CHANGE_EVENT = 'bloom-sound-change';
 const STARTUP_SCENE_ENABLED_KEY = 'bloom_startup_scene_enabled';
 const STARTUP_SCENE_THEME_KEY = 'bloom_startup_scene_theme';
 const STARTUP_SCENE_SOUND_PROFILE_KEY = 'bloom_startup_scene_sound_profile';
 const STARTUP_SCENE_CHANGE_EVENT = 'bloom-startup-scene-change';
 const ROUTE_TAB_ANIMATIONS_KEY = 'bloom_route_tab_animations_enabled';
-const INSTANCE_INSTALL_LOADING_STYLE_KEY = 'bloom_instance_install_loading_style';
 const APPEARANCE_PRESETS_KEY = 'bloom_appearance_presets';
 
 const THEMES: { id: LauncherTheme; label: string; description: string }[] = [
@@ -215,24 +252,10 @@ const BUTTON_THEMES: { id: ButtonThemeMode; label: string; description: string }
   { id: 'arcade', label: 'Arcade', description: 'Punchy cabinet-button depth.' }
 ];
 
-const SOUND_PACKS: { id: SoundPackMode; label: string; description: string }[] = [
-  { id: 'off', label: 'Off', description: 'Disable UI sounds.' },
-  { id: 'soft', label: 'Soft', description: 'Subtle clean cues.' },
-  { id: 'arcade', label: 'Arcade', description: 'Bright digital sounds.' },
-  { id: 'retro', label: 'Retro', description: 'Crunchier 8-bit style.' }
-];
-
 const STARTUP_SCENE_THEMES: { id: StartupSceneTheme; label: string; description: string }[] = [
   { id: 'nova', label: 'Nova', description: 'Neon burst intro.' },
   { id: 'horizon', label: 'Horizon', description: 'Sunrise gradient flow.' },
   { id: 'matrix', label: 'Matrix', description: 'Grid pulse style.' }
-];
-
-const INSTANCE_INSTALL_LOADING_STYLES: { id: InstanceInstallLoadingStyle; label: string; description: string }[] = [
-  { id: 'orbit', label: 'Orbit', description: 'Single orbit ring around a center core.' },
-  { id: 'bars', label: 'Bars', description: 'Quiet vertical bars with staggered motion.' },
-  { id: 'prism', label: 'Prism', description: 'Rotating diamond frame with a bright core.' },
-  { id: 'pulse', label: 'Pulse', description: 'Soft expanding rings with a minimal center.' }
 ];
 
 const KEYBIND_GROUPS = [
@@ -240,6 +263,7 @@ const KEYBIND_GROUPS = [
     title: 'Global',
     bindings: [
       { id: 'search', label: 'Open Search', description: 'Focus the launcher search overlay.', defaultValue: 'Ctrl+K', wired: true },
+      { id: 'instance-launcher', label: 'Open Instance Launcher', description: 'Open the global instance spotlight and launch from anywhere.', defaultValue: 'Ctrl+Shift+K', wired: true },
       { id: 'create', label: 'Create Instance', description: 'Jump straight into the instance create flow.', defaultValue: 'Ctrl+N', wired: true },
       { id: 'settings', label: 'Open Settings', description: 'Open the main settings page.', defaultValue: 'Ctrl+,', wired: true },
       { id: 'console', label: 'Open Console', description: 'Toggle the Bloom developer console overlay.', defaultValue: CONSOLE_HOTKEY_DEFAULT, wired: true },
@@ -279,17 +303,39 @@ const STARTUP_SCENE_SOUND_PROFILES: { id: StartupSceneSoundProfile; label: strin
   { id: 'impact', label: 'Impact', description: 'Punchier digital hit.' }
 ];
 
-type BackgroundTargetSize = { width: number; height: number };
+const UNIVERSAL_LOADING_STYLES: { id: UniversalLoadingStyle; label: string; description: string }[] = [
+  { id: 'orbit', label: 'Orbit', description: 'Single orbit ring around a center core.' },
+  { id: 'bars', label: 'Bars', description: 'Quiet vertical bars with staggered motion.' },
+  { id: 'prism', label: 'Prism', description: 'Rotating diamond frame with a bright core.' },
+  { id: 'pulse', label: 'Pulse', description: 'Soft expanding rings with a minimal center.' }
+];
 
-function resolveBackgroundTarget(width: number, height: number): BackgroundTargetSize {
-  if (width >= 3840 || height >= 2160) {
-    return { width: 3840, height: 2160 };
-  }
+const SHOP_RARITY_LABELS: Record<ShopRarityKey, string> = {
+  common: 'Common',
+  uncommon: 'Uncommon',
+  rare: 'Rare',
+  epic: 'Epic',
+  legendary: 'Legendary',
+  mythic: 'Mythic',
+  unique: 'Unique',
+  featured: 'Featured',
+  partner: 'Partner',
+  custom: 'Custom'
+};
+
+type BackgroundTargetSize = { width: number; height: number };
+type CustomBackgroundMediaKind = 'image' | 'video' | null;
+
+function resolveBackgroundTarget(_width: number, _height: number): BackgroundTargetSize {
   return { width: 1920, height: 1080 };
 }
 
 function clamp01(value: number) {
   return Math.max(-1, Math.min(1, value));
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function loadImageElement(src: string) {
@@ -364,12 +410,41 @@ function clampRoundness(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
+function readSidebarTabsVisibility(): SidebarTabsVisibility {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_TABS_VISIBILITY_KEY);
+    if (!raw) return { ...SIDEBAR_TABS_VISIBILITY_DEFAULTS };
+    const parsed = JSON.parse(raw) as Partial<Record<SidebarTabId, unknown>>;
+    return {
+      home: typeof parsed.home === 'boolean' ? parsed.home : SIDEBAR_TABS_VISIBILITY_DEFAULTS.home,
+      instances: typeof parsed.instances === 'boolean' ? parsed.instances : SIDEBAR_TABS_VISIBILITY_DEFAULTS.instances,
+      marketplace: typeof parsed.marketplace === 'boolean' ? parsed.marketplace : SIDEBAR_TABS_VISIBILITY_DEFAULTS.marketplace,
+      importer: typeof parsed.importer === 'boolean' ? parsed.importer : SIDEBAR_TABS_VISIBILITY_DEFAULTS.importer,
+      widgets: typeof parsed.widgets === 'boolean' ? parsed.widgets : SIDEBAR_TABS_VISIBILITY_DEFAULTS.widgets,
+      cosmetics: typeof parsed.cosmetics === 'boolean' ? parsed.cosmetics : SIDEBAR_TABS_VISIBILITY_DEFAULTS.cosmetics,
+      'custom-cape': typeof parsed['custom-cape'] === 'boolean' ? parsed['custom-cape'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['custom-cape'],
+      chat: typeof parsed.chat === 'boolean' ? parsed.chat : SIDEBAR_TABS_VISIBILITY_DEFAULTS.chat,
+      'script-studio': typeof parsed['script-studio'] === 'boolean' ? parsed['script-studio'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['script-studio'],
+      'host-server': typeof parsed['host-server'] === 'boolean' ? parsed['host-server'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['host-server'],
+      games: typeof parsed.games === 'boolean' ? parsed.games : SIDEBAR_TABS_VISIBILITY_DEFAULTS.games,
+      help: typeof parsed.help === 'boolean' ? parsed.help : SIDEBAR_TABS_VISIBILITY_DEFAULTS.help,
+      information: typeof parsed.information === 'boolean' ? parsed.information : SIDEBAR_TABS_VISIBILITY_DEFAULTS.information
+    };
+  } catch {
+    return { ...SIDEBAR_TABS_VISIBILITY_DEFAULTS };
+  }
+}
+
 function clampGlassAmount(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function clampBackgroundOpacity(value: number) {
+  return Math.max(10, Math.min(100, Math.round(value)));
 }
 
 function clampDropdownOpacity(value: number) {
@@ -403,6 +478,40 @@ function triggerJsonDownload(fileName: string, payload: unknown) {
   anchor.download = fileName;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+async function saveJsonWithFilePicker(fileName: string, payload: unknown) {
+  const text = JSON.stringify(payload, null, 2);
+  const picker = (window as unknown as {
+    showSaveFilePicker?: (options: {
+      suggestedName?: string;
+      types?: Array<{ description?: string; accept: Record<string, string[]> }>;
+    }) => Promise<{
+      createWritable: () => Promise<{ write: (data: string) => Promise<void>; close: () => Promise<void> }>;
+    }>;
+  }).showSaveFilePicker;
+
+  if (!picker) {
+    triggerJsonDownload(fileName, payload);
+    return true;
+  }
+
+  try {
+    const handle = await picker({
+      suggestedName: fileName,
+      types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }]
+    });
+    const writable = await handle.createWritable();
+    await writable.write(text);
+    await writable.close();
+    return true;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return false;
+    }
+    triggerJsonDownload(fileName, payload);
+    return true;
+  }
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -461,7 +570,7 @@ function parseAppearancePresetPayload(raw: unknown): AppearancePresetPayload | n
     themeMode: raw.themeMode,
     accentMode: raw.accentMode,
     backgroundMode: raw.backgroundMode,
-    backgroundVisualOpacity: clampPercent(Number(raw.backgroundVisualOpacity)),
+    backgroundVisualOpacity: clampBackgroundOpacity(Number(raw.backgroundVisualOpacity)),
     taskbarSurfaceOpacity: clampPercent(Number(raw.taskbarSurfaceOpacity)),
     dropdownOpacity: Number.isFinite(Number(raw.dropdownOpacity)) ? clampDropdownOpacity(Number(raw.dropdownOpacity)) : 92,
     densityMode: raw.densityMode,
@@ -523,7 +632,7 @@ function readStoredAppearancePresets(): AppearancePresetRecord[] {
 function AppearanceDropdown(props: { title: string; description: string; children: ReactNode }) {
   const { title, description, children } = props;
   return (
-    <details className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+    <details open className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
       <summary className="cursor-pointer list-none">
         <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">{title}</p>
         <p className="text-xs g-muted mt-1">{description}</p>
@@ -535,43 +644,43 @@ function AppearanceDropdown(props: { title: string; description: string; childre
   );
 }
 
-function LoadingScreenPreviewGlyph({ style }: { style: InstanceInstallLoadingStyle }) {
-  if (style === 'bars') {
-    return (
-      <div className="flex h-16 items-end justify-center gap-1.5">
-        {[0, 1, 2, 3].map((index) => (
-          <span
-            key={index}
-            className="w-2 rounded-full bg-white/85"
-            style={{ height: `${20 + index * 7}px`, opacity: 0.45 + index * 0.12 }}
-          />
-        ))}
-      </div>
-    );
-  }
-  if (style === 'prism') {
-    return (
-      <div className="relative h-16 w-16">
-        <div className="absolute inset-0 rotate-45 rounded-[18px] border border-white/70" />
-        <div className="absolute inset-[18px] rotate-45 rounded-[8px] bg-white/90" />
-      </div>
-    );
-  }
-  if (style === 'pulse') {
-    return (
-      <div className="relative h-16 w-16">
-        <div className="absolute inset-2 rounded-full border border-white/30" />
-        <div className="absolute inset-5 rounded-full border border-white/60" />
-        <div className="absolute inset-[26px] rounded-full bg-white/92" />
-      </div>
-    );
-  }
+function parseShopColorHex(value: string) {
+  const raw = value.trim();
+  const hex = raw.match(/^#([0-9a-f]{6})$/i);
+  if (hex) return `#${hex[1].toLowerCase()}`;
+  const rgba = raw.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (!rgba) return '#a979ff';
+  const toHex = (channel: string) => Math.max(0, Math.min(255, Number(channel) || 0)).toString(16).padStart(2, '0');
+  return `#${toHex(rgba[1])}${toHex(rgba[2])}${toHex(rgba[3])}`;
+}
+
+function writeShopColorValue(hex: string, current: string) {
+  if (!current.trim().toLowerCase().startsWith('rgba')) return hex.toLowerCase();
+  const alphaMatch = current.match(/rgba\(\d+,\s*\d+,\s*\d+,\s*([0-9.]+)\)/i);
+  const alpha = alphaMatch ? Math.max(0, Math.min(1, Number(alphaMatch[1]) || 0)).toFixed(2) : '0.45';
+  const clean = hex.replace('#', '');
+  const r = Number.parseInt(clean.slice(0, 2), 16);
+  const g = Number.parseInt(clean.slice(2, 4), 16);
+  const b = Number.parseInt(clean.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function ShopColorField(props: { label: string; value: string; onChange: (next: string) => void }) {
+  const { label, value, onChange } = props;
   return (
-    <div className="relative h-16 w-16">
-      <div className="absolute inset-1 rounded-full border border-white/22" />
-      <div className="absolute inset-4 rounded-full border border-white/70" />
-      <div className="absolute left-1/2 top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/92" />
-      <div className="absolute left-1/2 top-2 h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-white/78" />
+    <div className="rounded-lg border border-white/15 bg-white/[0.04] p-2 space-y-2">
+      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/55">{label}</p>
+      <input
+        type="color"
+        value={parseShopColorHex(value)}
+        onChange={(event) => onChange(writeShopColorValue(event.target.value, value))}
+        className="h-9 w-full rounded-md border border-white/15 bg-black/30"
+      />
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-8 w-full rounded-md border border-white/15 bg-black/35 px-2 text-xs text-white placeholder:text-white/35 outline-none"
+      />
     </div>
   );
 }
@@ -582,8 +691,13 @@ const ACCENTS: { id: AccentMode; label: string; swatch: string }[] = [
   { id: 'emerald', label: 'Emerald', swatch: 'linear-gradient(90deg,#28cf7d,#89f4bd)' },
   { id: 'amber', label: 'Amber', swatch: 'linear-gradient(90deg,#ffad2f,#ffd57f)' },
   { id: 'rose', label: 'Rose', swatch: 'linear-gradient(90deg,#ff5c89,#ff9cb7)' },
-  { id: 'rainbow', label: 'Rainbow', swatch: 'linear-gradient(90deg,#ff5f6d,#ffc371,#47e0ff,#60ff9f,#b57bff)' }
+  { id: 'custom', label: 'Custom', swatch: 'linear-gradient(90deg,#ff76d7,#ffb4e8)' }
 ];
+
+function normalizeAccentColor(value: string | null | undefined) {
+  const clean = (value ?? '').trim();
+  return /^#[0-9a-fA-F]{6}$/.test(clean) ? clean.toLowerCase() : '#ff76d7';
+}
 
 const EASING_PRESETS: { id: MotionEasingPreset; label: string; description: string }[] = [
   { id: 'out-quad', label: 'Out Quad', description: 'Default launcher feel.' },
@@ -635,6 +749,9 @@ function serializeKeybindMap(map: Record<string, string>) {
 
 export function Settings() {
   const [tab, setTab] = useState<SettingsTab>('general');
+  const [appearanceSection, setAppearanceSection] = useState<AppearanceSection>('animation');
+  const [universalLoadingStyle, setUniversalLoadingStyle] = useState<UniversalLoadingStyle>(() => readUniversalLoadingStyle());
+  const [showUniversalLoadingPreview, setShowUniversalLoadingPreview] = useState(false);
   const [showWidgetDocker, setShowWidgetDocker] = useState<boolean>(() => localStorage.getItem(SHOW_WIDGET_DOCKER_KEY) === 'true');
   const [hideEmptyWidgetSlots, setHideEmptyWidgetSlots] = useState<boolean>(() => localStorage.getItem(HIDE_EMPTY_WIDGET_SLOTS_KEY) === 'true');
   const [showGamesSection, setShowGamesSection] = useState<boolean>(() => localStorage.getItem(SHOW_GAMES_SECTION_KEY) === 'true');
@@ -655,6 +772,7 @@ export function Settings() {
     if (Number.isFinite(stored)) return clampSidebarTabGap(stored);
     return 8;
   });
+  const [sidebarTabsVisibility, setSidebarTabsVisibility] = useState<SidebarTabsVisibility>(() => readSidebarTabsVisibility());
   const [uiAssetPixelLevel, setUiAssetPixelLevel] = useState<number>(() => {
     const stored = Number(localStorage.getItem(UI_ASSET_PIXEL_LEVEL_KEY));
     if (Number.isFinite(stored)) return clampUiAssetPixelLevel(stored);
@@ -680,11 +798,13 @@ export function Settings() {
     return 70;
   });
   const [shortcutSearch, setShortcutSearch] = useState<string>(() => localStorage.getItem(SHORTCUT_SEARCH_KEY) || 'Ctrl+K');
+  const [shortcutInstanceLauncher, setShortcutInstanceLauncher] = useState<string>(() => localStorage.getItem(SHORTCUT_INSTANCE_LAUNCHER_KEY) || 'Ctrl+Shift+K');
   const [shortcutCreateInstance, setShortcutCreateInstance] = useState<string>(() => localStorage.getItem(SHORTCUT_CREATE_INSTANCE_KEY) || 'Ctrl+N');
   const [shortcutSettings, setShortcutSettings] = useState<string>(() => localStorage.getItem(SHORTCUT_SETTINGS_KEY) || 'Ctrl+,');
   const [shortcutConsole, setShortcutConsole] = useState<string>(() => localStorage.getItem(SHORTCUT_CONSOLE_KEY) || CONSOLE_HOTKEY_DEFAULT);
   const [shortcutReplayStartupScene, setShortcutReplayStartupScene] = useState<string>(() => localStorage.getItem(SHORTCUT_REPLAY_STARTUP_SCENE_KEY) || 'Ctrl+Shift+J');
   const [draftShortcutSearch, setDraftShortcutSearch] = useState<string>(() => localStorage.getItem(SHORTCUT_SEARCH_KEY) || 'Ctrl+K');
+  const [draftShortcutInstanceLauncher, setDraftShortcutInstanceLauncher] = useState<string>(() => localStorage.getItem(SHORTCUT_INSTANCE_LAUNCHER_KEY) || 'Ctrl+Shift+K');
   const [draftShortcutCreateInstance, setDraftShortcutCreateInstance] = useState<string>(() => localStorage.getItem(SHORTCUT_CREATE_INSTANCE_KEY) || 'Ctrl+N');
   const [draftShortcutSettings, setDraftShortcutSettings] = useState<string>(() => localStorage.getItem(SHORTCUT_SETTINGS_KEY) || 'Ctrl+,');
   const [draftShortcutConsole, setDraftShortcutConsole] = useState<string>(() => localStorage.getItem(SHORTCUT_CONSOLE_KEY) || CONSOLE_HOTKEY_DEFAULT);
@@ -713,13 +833,6 @@ export function Settings() {
   const [capturingShortcut, setCapturingShortcut] = useState<string | null>(null);
   const [keybindSaveState, setKeybindSaveState] = useState<'idle' | 'saved'>('idle');
   const [savingOverlayOpen, setSavingOverlayOpen] = useState(false);
-  const [soundPack, setSoundPack] = useState<SoundPackMode>(() => {
-    const stored = localStorage.getItem(SOUND_PACK_KEY);
-    return stored === 'off' || stored === 'soft' || stored === 'arcade' || stored === 'retro' ? stored : 'soft';
-  });
-  const [soundClicksEnabled, setSoundClicksEnabled] = useState<boolean>(() => localStorage.getItem(SOUND_CLICKS_KEY) !== 'false');
-  const [soundHoversEnabled, setSoundHoversEnabled] = useState<boolean>(() => localStorage.getItem(SOUND_HOVERS_KEY) === 'true');
-  const [soundNotificationsEnabled, setSoundNotificationsEnabled] = useState<boolean>(() => localStorage.getItem(SOUND_NOTIFICATIONS_KEY) !== 'false');
   const [startupSceneEnabled, setStartupSceneEnabled] = useState<boolean>(() => localStorage.getItem(STARTUP_SCENE_ENABLED_KEY) !== 'false');
   const [startupSceneTheme, setStartupSceneTheme] = useState<StartupSceneTheme>(() => {
     const stored = localStorage.getItem(STARTUP_SCENE_THEME_KEY);
@@ -728,10 +841,6 @@ export function Settings() {
   const [startupSceneSoundProfile, setStartupSceneSoundProfile] = useState<StartupSceneSoundProfile>(() => {
     const stored = localStorage.getItem(STARTUP_SCENE_SOUND_PROFILE_KEY);
     return stored === 'off' || stored === 'shimmer' || stored === 'impact' ? stored : 'shimmer';
-  });
-  const [instanceInstallLoadingStyle, setInstanceInstallLoadingStyle] = useState<InstanceInstallLoadingStyle>(() => {
-    const stored = localStorage.getItem(INSTANCE_INSTALL_LOADING_STYLE_KEY);
-    return stored === 'orbit' || stored === 'bars' || stored === 'prism' || stored === 'pulse' ? stored : 'orbit';
   });
   const [availableUpdate, setAvailableUpdate] = useState<ExternalUpdate | null>(null);
   const [updaterStatus, setUpdaterStatus] = useState<string>('No update check run yet.');
@@ -749,10 +858,11 @@ export function Settings() {
   });
   const [accentMode, setAccentMode] = useState<AccentMode>(() => {
     const stored = localStorage.getItem(ACCENT_STORAGE_KEY);
-    return stored === 'purple' || stored === 'cyan' || stored === 'emerald' || stored === 'amber' || stored === 'rose' || stored === 'rainbow'
+    return stored === 'purple' || stored === 'cyan' || stored === 'emerald' || stored === 'amber' || stored === 'rose' || stored === 'custom'
       ? stored
       : 'purple';
   });
+  const [accentCustomColor, setAccentCustomColor] = useState<string>(() => normalizeAccentColor(localStorage.getItem(ACCENT_CUSTOM_COLOR_KEY)));
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>(() => {
     const stored = localStorage.getItem(BACKGROUND_STORAGE_KEY);
     return stored === 'none' || stored === 'plus' || stored === 'particles' || stored === 'aurora' || stored === 'scanlines' || stored === 'nebula' || stored === 'custom'
@@ -762,6 +872,7 @@ export function Settings() {
   const [customBackgroundSaved, setCustomBackgroundSaved] = useState<string | null>(null);
   const [customBackgroundSource, setCustomBackgroundSource] = useState<string | null>(null);
   const [customBackgroundRenderPreview, setCustomBackgroundRenderPreview] = useState<string | null>(null);
+  const [customBackgroundMediaKind, setCustomBackgroundMediaKind] = useState<CustomBackgroundMediaKind>('image');
   const [customBackgroundTarget, setCustomBackgroundTarget] = useState<BackgroundTargetSize>({ width: 1920, height: 1080 });
   const [customBackgroundZoom, setCustomBackgroundZoom] = useState(1);
   const [customBackgroundPanX, setCustomBackgroundPanX] = useState(0);
@@ -770,15 +881,17 @@ export function Settings() {
   const [customBackgroundError, setCustomBackgroundError] = useState<string | null>(null);
   const [draggingCustomBackground, setDraggingCustomBackground] = useState(false);
   const customBackgroundPointerRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const customBackgroundAutosaveTimerRef = useRef<number | null>(null);
   const [appearancePresets, setAppearancePresets] = useState<AppearancePresetRecord[]>(() => readStoredAppearancePresets());
   const [appearancePresetName, setAppearancePresetName] = useState('');
   const [appearancePresetStatus, setAppearancePresetStatus] = useState<string | null>(null);
   const [appearancePresetError, setAppearancePresetError] = useState<string | null>(null);
+  const [shopRarityTheme, setShopRarityTheme] = useState<ShopRarityThemeSettings>(() => readShopRarityThemeSettings());
   const appearanceImportRef = useRef<HTMLInputElement | null>(null);
   const [backgroundVisualOpacity, setBackgroundVisualOpacity] = useState<number>(() => {
     const stored = Number(localStorage.getItem(BACKGROUND_VISUAL_OPACITY_KEY));
-    if (Number.isFinite(stored)) return clampPercent(stored);
-    return 100;
+    if (Number.isFinite(stored)) return clampBackgroundOpacity(stored);
+    return 20;
   });
   const [taskbarSurfaceOpacity, setTaskbarSurfaceOpacity] = useState<number>(() => {
     const stored = Number(localStorage.getItem(TASKBAR_SURFACE_OPACITY_KEY));
@@ -800,7 +913,7 @@ export function Settings() {
   });
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => {
     const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
-    return stored === 'rail' || stored === 'classic' || stored === 'expanded' ? stored : 'classic';
+    return stored === 'rail' || stored === 'classic' || stored === 'expanded' ? stored : 'rail';
   });
   const [sidebarPosition, setSidebarPosition] = useState<SidebarPosition>(() => {
     const stored = localStorage.getItem(SIDEBAR_POSITION_STORAGE_KEY);
@@ -818,7 +931,7 @@ export function Settings() {
     const stored = localStorage.getItem(BUTTON_THEME_STORAGE_KEY);
     return stored === 'default' || stored === 'simple' || stored === 'cartoon' || stored === 'glass' || stored === 'neon' || stored === 'pixel' || stored === 'brutalist' || stored === 'pill' || stored === 'terminal' || stored === 'arcade'
       ? stored
-      : 'default';
+      : 'brutalist';
   });
   const [motionMode, setMotionMode] = useState<MotionMode>(() => {
     const stored = localStorage.getItem(MOTION_STORAGE_KEY);
@@ -882,6 +995,7 @@ export function Settings() {
   });
   const keybindsDirty =
     draftShortcutSearch !== shortcutSearch
+    || draftShortcutInstanceLauncher !== shortcutInstanceLauncher
     || draftShortcutCreateInstance !== shortcutCreateInstance
     || draftShortcutSettings !== shortcutSettings
     || draftShortcutConsole !== shortcutConsole
@@ -933,8 +1047,9 @@ export function Settings() {
     window.dispatchEvent(new CustomEvent(GLASS_AMOUNT_CHANGE_EVENT, { detail: { amount: clamped } }));
   };
 
-  const applyShortcuts = (partial: { search?: string; create?: string; settings?: string; console?: string; replayStartupScene?: string }) => {
+  const applyShortcuts = (partial: { search?: string; instanceLauncher?: string; create?: string; settings?: string; console?: string; replayStartupScene?: string }) => {
     setDraftShortcutSearch(partial.search ?? draftShortcutSearch);
+    setDraftShortcutInstanceLauncher(partial.instanceLauncher ?? draftShortcutInstanceLauncher);
     setDraftShortcutCreateInstance(partial.create ?? draftShortcutCreateInstance);
     setDraftShortcutSettings(partial.settings ?? draftShortcutSettings);
     setDraftShortcutConsole(partial.console ?? draftShortcutConsole);
@@ -949,6 +1064,7 @@ export function Settings() {
 
   const clearShortcut = (id: string) => {
     if (id === 'search') applyShortcuts({ search: '' });
+    else if (id === 'instance-launcher') applyShortcuts({ instanceLauncher: '' });
     else if (id === 'create') applyShortcuts({ create: '' });
     else if (id === 'settings') applyShortcuts({ settings: '' });
     else if (id === 'console') applyShortcuts({ console: '' });
@@ -959,12 +1075,14 @@ export function Settings() {
   const saveKeybinds = () => {
     setSavingOverlayOpen(true);
     setShortcutSearch(draftShortcutSearch);
+    setShortcutInstanceLauncher(draftShortcutInstanceLauncher);
     setShortcutCreateInstance(draftShortcutCreateInstance);
     setShortcutSettings(draftShortcutSettings);
     setShortcutConsole(draftShortcutConsole);
     setShortcutReplayStartupScene(draftShortcutReplayStartupScene);
     setExtraKeybinds(draftExtraKeybinds);
     localStorage.setItem(SHORTCUT_SEARCH_KEY, draftShortcutSearch);
+    localStorage.setItem(SHORTCUT_INSTANCE_LAUNCHER_KEY, draftShortcutInstanceLauncher);
     localStorage.setItem(SHORTCUT_CREATE_INSTANCE_KEY, draftShortcutCreateInstance);
     localStorage.setItem(SHORTCUT_SETTINGS_KEY, draftShortcutSettings);
     localStorage.setItem(SHORTCUT_CONSOLE_KEY, draftShortcutConsole);
@@ -973,6 +1091,7 @@ export function Settings() {
     window.dispatchEvent(new CustomEvent(SHORTCUTS_CHANGE_EVENT, {
       detail: {
         search: draftShortcutSearch,
+        instanceLauncher: draftShortcutInstanceLauncher,
         create: draftShortcutCreateInstance,
         settings: draftShortcutSettings,
         console: draftShortcutConsole,
@@ -1007,29 +1126,6 @@ export function Settings() {
     }));
   };
 
-  const applySound = (partial: {
-    pack?: SoundPackMode;
-    clicks?: boolean;
-    hovers?: boolean;
-    notifications?: boolean;
-  }) => {
-    const nextPack = partial.pack ?? soundPack;
-    const nextClicks = partial.clicks ?? soundClicksEnabled;
-    const nextHovers = partial.hovers ?? soundHoversEnabled;
-    const nextNotifications = partial.notifications ?? soundNotificationsEnabled;
-    setSoundPack(nextPack);
-    setSoundClicksEnabled(nextClicks);
-    setSoundHoversEnabled(nextHovers);
-    setSoundNotificationsEnabled(nextNotifications);
-    localStorage.setItem(SOUND_PACK_KEY, nextPack);
-    localStorage.setItem(SOUND_CLICKS_KEY, nextClicks ? 'true' : 'false');
-    localStorage.setItem(SOUND_HOVERS_KEY, nextHovers ? 'true' : 'false');
-    localStorage.setItem(SOUND_NOTIFICATIONS_KEY, nextNotifications ? 'true' : 'false');
-    window.dispatchEvent(new CustomEvent(SOUND_CHANGE_EVENT, {
-      detail: { pack: nextPack, clicks: nextClicks, hovers: nextHovers, notifications: nextNotifications }
-    }));
-  };
-
   const applyStartupScene = (partial: { enabled?: boolean; theme?: StartupSceneTheme; soundProfile?: StartupSceneSoundProfile }) => {
     const nextEnabled = partial.enabled ?? startupSceneEnabled;
     const nextTheme = partial.theme ?? startupSceneTheme;
@@ -1043,11 +1139,6 @@ export function Settings() {
     window.dispatchEvent(new CustomEvent(STARTUP_SCENE_CHANGE_EVENT, { detail: { enabled: nextEnabled, theme: nextTheme, soundProfile: nextSound } }));
   };
 
-  const applyInstanceInstallLoadingStyle = (value: InstanceInstallLoadingStyle) => {
-    setInstanceInstallLoadingStyle(value);
-    localStorage.setItem(INSTANCE_INSTALL_LOADING_STYLE_KEY, value);
-  };
-
   const applyUpdatePreferences = (partial: { autoCheck?: boolean; notifications?: boolean }) => {
     const nextAutoCheck = partial.autoCheck ?? updateAutoCheckEnabled;
     const nextNotifications = partial.notifications ?? updateNotificationsEnabled;
@@ -1058,7 +1149,17 @@ export function Settings() {
 
   const loadSavedCustomBackground = async () => {
     try {
+      const videoAsset = await TauriApi.launcherBackgroundVideoLoad();
+      if (videoAsset) {
+        const videoUrl = videoAsset.dataUrl ?? videoAsset.path;
+        setCustomBackgroundMediaKind('video');
+        setCustomBackgroundSaved(videoUrl);
+        setCustomBackgroundSource(videoUrl);
+        setCustomBackgroundRenderPreview(videoUrl);
+        return;
+      }
       const dataUrl = await TauriApi.launcherBackgroundLoad();
+      setCustomBackgroundMediaKind(dataUrl ? 'image' : null);
       setCustomBackgroundSaved(dataUrl);
       if (!customBackgroundSource && dataUrl) {
         setCustomBackgroundSource(dataUrl);
@@ -1068,15 +1169,46 @@ export function Settings() {
     }
   };
 
+  const persistCustomBackground = async (
+    source: string,
+    target: BackgroundTargetSize,
+    zoom: number,
+    panX: number,
+    panY: number
+  ) => {
+    if (customBackgroundMediaKind !== 'image') return;
+    setCustomBackgroundSaving(true);
+    setCustomBackgroundError(null);
+    const rendered = await renderCustomBackgroundImage(source, target, zoom, panX, panY);
+    await TauriApi.launcherBackgroundSave(dataUrlToBytes(rendered));
+    setCustomBackgroundSaved(rendered);
+    applyBackground('custom');
+    window.dispatchEvent(new CustomEvent(BACKGROUND_CHANGE_EVENT, { detail: { background: 'custom', previewDataUrl: rendered, previewVideoUrl: null, previewMediaType: 'image' } }));
+  };
+
   const onCustomBackgroundFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
       setCustomBackgroundError(null);
+      if (file.type.startsWith('video/')) {
+        const objectUrl = URL.createObjectURL(file);
+        const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+        await TauriApi.launcherBackgroundVideoSave(file.name, file.type || 'video/mp4', bytes);
+        setCustomBackgroundMediaKind('video');
+        setCustomBackgroundSaved(objectUrl);
+        setCustomBackgroundSource(objectUrl);
+        setCustomBackgroundRenderPreview(objectUrl);
+        applyBackground('custom');
+        window.dispatchEvent(new CustomEvent(BACKGROUND_CHANGE_EVENT, { detail: { background: 'custom', previewDataUrl: null, previewVideoUrl: objectUrl, previewMediaType: 'video' } }));
+        return;
+      }
       const dataUrl = await fileToDataUrl(file);
       const image = await loadImageElement(dataUrl);
+      const nextTarget = resolveBackgroundTarget(image.naturalWidth, image.naturalHeight);
+      setCustomBackgroundMediaKind('image');
       setCustomBackgroundSource(dataUrl);
-      setCustomBackgroundTarget(resolveBackgroundTarget(image.naturalWidth, image.naturalHeight));
+      setCustomBackgroundTarget(nextTarget);
       setCustomBackgroundZoom(1);
       setCustomBackgroundPanX(0);
       setCustomBackgroundPanY(0);
@@ -1087,39 +1219,18 @@ export function Settings() {
     }
   };
 
-  const saveCustomBackground = async () => {
-    if (!customBackgroundSource) return;
-    try {
-      setCustomBackgroundSaving(true);
-      setCustomBackgroundError(null);
-      const rendered = await renderCustomBackgroundImage(
-        customBackgroundSource,
-        customBackgroundTarget,
-        customBackgroundZoom,
-        customBackgroundPanX,
-        customBackgroundPanY
-      );
-      await TauriApi.launcherBackgroundSave(dataUrlToBytes(rendered));
-      setCustomBackgroundSaved(rendered);
-      applyBackground('custom');
-      window.dispatchEvent(new CustomEvent(BACKGROUND_CHANGE_EVENT, { detail: { background: 'custom', previewDataUrl: rendered } }));
-    } catch (error) {
-      setCustomBackgroundError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setCustomBackgroundSaving(false);
-    }
-  };
-
   const clearCustomBackground = async () => {
     try {
       await TauriApi.launcherBackgroundClear();
+      setCustomBackgroundMediaKind(null);
       setCustomBackgroundSaved(null);
       setCustomBackgroundSource(null);
+      setCustomBackgroundRenderPreview(null);
       setCustomBackgroundError(null);
       if (backgroundMode === 'custom') {
         applyBackground('particles');
       }
-      window.dispatchEvent(new CustomEvent(BACKGROUND_CHANGE_EVENT, { detail: { background: 'particles', previewDataUrl: null } }));
+      window.dispatchEvent(new CustomEvent(BACKGROUND_CHANGE_EVENT, { detail: { background: 'particles', previewDataUrl: null, previewVideoUrl: null, previewMediaType: null } }));
     } catch (error) {
       setCustomBackgroundError(error instanceof Error ? error.message : String(error));
     }
@@ -1156,7 +1267,7 @@ export function Settings() {
     roundnessLevel,
     buttonRoundnessLevel,
     glassAmount,
-    customBackgroundDataUrl: customBackgroundSaved
+    customBackgroundDataUrl: customBackgroundMediaKind === 'image' ? customBackgroundSaved : null
   });
 
   const applyAppearancePresetPayload = async (payload: AppearancePresetPayload, presetLabel?: string) => {
@@ -1248,19 +1359,23 @@ export function Settings() {
     setAppearancePresetError(null);
   };
 
-  const exportAppearancePreset = (preset: AppearancePresetRecord) => {
+  const exportAppearancePreset = async (preset: AppearancePresetRecord) => {
     const payload: AppearancePresetExportFileV1 = {
       type: 'bloom-appearance-preset',
       version: 1,
       preset
     };
     const fileName = `bloom-appearance-${slugifyPresetName(preset.name)}.json`;
-    triggerJsonDownload(fileName, payload);
+    const didSave = await saveJsonWithFilePicker(fileName, payload);
+    if (!didSave) {
+      setAppearancePresetStatus('Export cancelled.');
+      return;
+    }
     setAppearancePresetError(null);
     setAppearancePresetStatus(`Exported preset "${preset.name}".`);
   };
 
-  const exportCurrentAppearance = () => {
+  const exportCurrentAppearance = async () => {
     const cleanedName = sanitizePresetName(appearancePresetName) || 'Current Appearance';
     const now = Date.now();
     const preset: AppearancePresetRecord = {
@@ -1270,7 +1385,7 @@ export function Settings() {
       updatedAt: now,
       payload: buildCurrentAppearancePayload()
     };
-    exportAppearancePreset(preset);
+    await exportAppearancePreset(preset);
   };
 
   const onImportAppearancePresetFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1310,7 +1425,7 @@ export function Settings() {
   };
 
   const onCustomBackgroundPointerDown: PointerEventHandler<HTMLDivElement> = (event) => {
-    if (!customBackgroundSource) return;
+    if (!customBackgroundSource || customBackgroundMediaKind !== 'image') return;
     customBackgroundPointerRef.current = {
       x: event.clientX,
       y: event.clientY,
@@ -1321,7 +1436,7 @@ export function Settings() {
   };
 
   const onCustomBackgroundPointerMove: PointerEventHandler<HTMLDivElement> = (event) => {
-    if (!customBackgroundPointerRef.current) return;
+    if (!customBackgroundPointerRef.current || customBackgroundMediaKind !== 'image') return;
     const deltaX = event.clientX - customBackgroundPointerRef.current.x;
     const deltaY = event.clientY - customBackgroundPointerRef.current.y;
     setCustomBackgroundPanX(clamp01(customBackgroundPointerRef.current.panX + deltaX / 220));
@@ -1331,6 +1446,13 @@ export function Settings() {
   const onCustomBackgroundPointerUp = () => {
     customBackgroundPointerRef.current = null;
     setDraggingCustomBackground(false);
+  };
+
+  const onCustomBackgroundWheel = (event: WheelEvent<HTMLDivElement>) => {
+    if (!customBackgroundSource || customBackgroundMediaKind !== 'image') return;
+    event.preventDefault();
+    const factor = event.deltaY < 0 ? 1.08 : 0.92;
+    setCustomBackgroundZoom((current) => clamp(current * factor, 1, 2.8));
   };
 
   const runUpdateCheck = async () => {
@@ -1382,6 +1504,7 @@ export function Settings() {
       const shortcut = eventToDisplayShortcut(event);
       if (!shortcut) return;
       if (capturingShortcut === 'search') applyShortcuts({ search: shortcut });
+      else if (capturingShortcut === 'instance-launcher') applyShortcuts({ instanceLauncher: shortcut });
       else if (capturingShortcut === 'create') applyShortcuts({ create: shortcut });
       else if (capturingShortcut === 'settings') applyShortcuts({ settings: shortcut });
       else if (capturingShortcut === 'console') applyShortcuts({ console: shortcut });
@@ -1391,7 +1514,7 @@ export function Settings() {
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [capturingShortcut, shortcutSearch, shortcutCreateInstance, shortcutSettings, shortcutConsole, shortcutReplayStartupScene, extraKeybinds]);
+  }, [capturingShortcut, shortcutSearch, shortcutInstanceLauncher, shortcutCreateInstance, shortcutSettings, shortcutConsole, shortcutReplayStartupScene, extraKeybinds]);
 
   useEffect(() => {
     const handleSettingsTabOpen = (event: Event) => {
@@ -1421,8 +1544,40 @@ export function Settings() {
   }, []);
 
   useEffect(() => {
+    if (!customBackgroundSource) return;
+    if (customBackgroundAutosaveTimerRef.current !== null) {
+      window.clearTimeout(customBackgroundAutosaveTimerRef.current);
+    }
+    customBackgroundAutosaveTimerRef.current = window.setTimeout(() => {
+      void persistCustomBackground(
+        customBackgroundSource,
+        customBackgroundTarget,
+        customBackgroundZoom,
+        customBackgroundPanX,
+        customBackgroundPanY
+      )
+        .catch((error) => {
+          setCustomBackgroundError(error instanceof Error ? error.message : String(error));
+        })
+        .finally(() => {
+          setCustomBackgroundSaving(false);
+        });
+    }, 280);
+    return () => {
+      if (customBackgroundAutosaveTimerRef.current !== null) {
+        window.clearTimeout(customBackgroundAutosaveTimerRef.current);
+        customBackgroundAutosaveTimerRef.current = null;
+      }
+    };
+  }, [customBackgroundMediaKind, customBackgroundSource, customBackgroundTarget, customBackgroundZoom, customBackgroundPanX, customBackgroundPanY]);
+
+  useEffect(() => {
     if (!customBackgroundSource) {
       setCustomBackgroundRenderPreview(customBackgroundSaved);
+      return;
+    }
+    if (customBackgroundMediaKind === 'video') {
+      setCustomBackgroundRenderPreview(customBackgroundSource);
       return;
     }
     let active = true;
@@ -1440,12 +1595,22 @@ export function Settings() {
     return () => {
       active = false;
     };
-  }, [customBackgroundSource, customBackgroundSaved, customBackgroundTarget, customBackgroundZoom, customBackgroundPanX, customBackgroundPanY]);
+  }, [customBackgroundMediaKind, customBackgroundSource, customBackgroundSaved, customBackgroundTarget, customBackgroundZoom, customBackgroundPanX, customBackgroundPanY]);
 
   const applyAccent = (next: AccentMode) => {
     setAccentMode(next);
     localStorage.setItem(ACCENT_STORAGE_KEY, next);
-    window.dispatchEvent(new CustomEvent(ACCENT_CHANGE_EVENT, { detail: { accent: next } }));
+    localStorage.setItem(ACCENT_CUSTOM_COLOR_KEY, accentCustomColor);
+    window.dispatchEvent(new CustomEvent(ACCENT_CHANGE_EVENT, { detail: { accent: next, customColor: accentCustomColor } }));
+  };
+
+  const applyCustomAccentColor = (next: string) => {
+    const normalized = normalizeAccentColor(next);
+    setAccentCustomColor(normalized);
+    setAccentMode('custom');
+    localStorage.setItem(ACCENT_CUSTOM_COLOR_KEY, normalized);
+    localStorage.setItem(ACCENT_STORAGE_KEY, 'custom');
+    window.dispatchEvent(new CustomEvent(ACCENT_CHANGE_EVENT, { detail: { accent: 'custom', customColor: normalized } }));
   };
 
   const applyBackground = (next: BackgroundMode) => {
@@ -1455,7 +1620,7 @@ export function Settings() {
   };
 
   const applyBackgroundVisualOpacity = (next: number) => {
-    const clamped = clampPercent(next);
+    const clamped = clampBackgroundOpacity(next);
     setBackgroundVisualOpacity(clamped);
     localStorage.setItem(BACKGROUND_VISUAL_OPACITY_KEY, String(clamped));
     window.dispatchEvent(new CustomEvent(BACKGROUND_VISUAL_OPACITY_CHANGE_EVENT, { detail: { value: clamped } }));
@@ -1509,6 +1674,37 @@ export function Settings() {
     setButtonTheme(next);
     localStorage.setItem(BUTTON_THEME_STORAGE_KEY, next);
     window.dispatchEvent(new CustomEvent(BUTTON_THEME_CHANGE_EVENT, { detail: { buttonTheme: next } }));
+  };
+
+  const applyShopRarityPreset = (presetId: ShopRarityPresetId) => {
+    const next = { ...shopRarityTheme, presetId };
+    setShopRarityTheme(next);
+    writeShopRarityThemeSettings(next);
+  };
+
+  const applyShopRarityCustomColor = (rarity: ShopRarityKey, field: keyof (typeof shopRarityTheme.custom)[ShopRarityKey], value: string) => {
+    const next = {
+      ...shopRarityTheme,
+      presetId: 'custom' as const,
+      custom: {
+        ...shopRarityTheme.custom,
+        [rarity]: {
+          ...shopRarityTheme.custom[rarity],
+          [field]: value
+        }
+      }
+    };
+    setShopRarityTheme(next);
+    writeShopRarityThemeSettings(next);
+  };
+
+  const resetShopRarityCustomColors = () => {
+    const next = {
+      presetId: 'custom' as const,
+      custom: getDefaultShopRarityCustomColors()
+    };
+    setShopRarityTheme(next);
+    writeShopRarityThemeSettings(next);
   };
 
   const applyMotion = (next: MotionMode) => {
@@ -1580,6 +1776,7 @@ export function Settings() {
     sidebarDockGrowSize?: number;
     sidebarDockGrowSpeed?: number;
     sidebarTabGap?: number;
+    sidebarTabsVisibility?: SidebarTabsVisibility;
   }) => {
     window.dispatchEvent(
       new CustomEvent(EXTRA_CHANGE_EVENT, {
@@ -1591,7 +1788,8 @@ export function Settings() {
           sidebarDockHoverEnabled: partial.sidebarDockHoverEnabled ?? sidebarDockHoverEnabled,
           sidebarDockGrowSize: partial.sidebarDockGrowSize ?? sidebarDockGrowSize,
           sidebarDockGrowSpeed: partial.sidebarDockGrowSpeed ?? sidebarDockGrowSpeed,
-          sidebarTabGap: partial.sidebarTabGap ?? sidebarTabGap
+          sidebarTabGap: partial.sidebarTabGap ?? sidebarTabGap,
+          sidebarTabsVisibility: partial.sidebarTabsVisibility ?? sidebarTabsVisibility
         }
       })
     );
@@ -1648,8 +1846,27 @@ export function Settings() {
     dispatchExtraChange({ sidebarTabGap: clamped });
   };
 
+  const applySidebarTabVisibility = (tabId: SidebarTabId, visible: boolean) => {
+    const next = { ...sidebarTabsVisibility, [tabId]: visible };
+    setSidebarTabsVisibility(next);
+    localStorage.setItem(SIDEBAR_TABS_VISIBILITY_KEY, JSON.stringify(next));
+    dispatchExtraChange({ sidebarTabsVisibility: next });
+  };
+
+  const applyUniversalLoadingStyle = (next: UniversalLoadingStyle) => {
+    setUniversalLoadingStyle(next);
+    localStorage.setItem(UNIVERSAL_LOADING_STYLE_KEY, next);
+  };
+
+  useEffect(() => {
+    if (!showUniversalLoadingPreview) return;
+    const timer = window.setTimeout(() => setShowUniversalLoadingPreview(false), 1300);
+    return () => window.clearTimeout(timer);
+  }, [showUniversalLoadingPreview]);
+
   const curvePath = `M 0 100 C ${motionEasingX1 * 100} ${100 - motionEasingY1 * 100}, ${motionEasingX2 * 100} ${100 - motionEasingY2 * 100}, 100 0`;
   const curveCss = `cubic-bezier(${motionEasingX1}, ${motionEasingY1}, ${motionEasingX2}, ${motionEasingY2})`;
+  const activeAppearanceSection = APPEARANCE_SECTIONS.find((section) => section.id === appearanceSection) ?? APPEARANCE_SECTIONS[0];
 
   return (
     <div className="max-w-[1100px] mx-auto min-h-full space-y-4">
@@ -1659,6 +1876,13 @@ export function Settings() {
         eyebrow="Saving"
         title="Saving keybinds..."
         description="Bloom is applying your shortcut changes."
+      />
+      <UniversalLoadingOverlay
+        open={showUniversalLoadingPreview}
+        fixed
+        eyebrow="Preview"
+        title="Universal Loading Screen"
+        description="This style will be used for launch, install, import, and export actions."
       />
       <section className="g-panel-strong p-6">
         <p className="text-[10px] uppercase tracking-[0.2em] font-extrabold g-accent-text">Settings</p>
@@ -1688,7 +1912,35 @@ export function Settings() {
 
         </section>
       ) : tab === 'appearance' ? (
-        <section className="g-panel p-6 space-y-6">
+        <section className="g-panel p-4 md:p-6">
+          <div className="grid grid-cols-1 xl:grid-cols-[240px_1fr] gap-4">
+            <aside className="rounded-xl border border-white/10 bg-white/[0.03] p-3 h-fit">
+              <p className="px-2 text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Appearance Groups</p>
+              <div className="mt-2 space-y-1">
+                {APPEARANCE_SECTIONS.map((section) => (
+                  <button
+                    key={section.id}
+                    onClick={() => setAppearanceSection(section.id)}
+                    className={clsx(
+                      'w-full rounded-lg border px-3 py-2.5 text-left transition',
+                      appearanceSection === section.id
+                        ? 'border-[var(--g-accent)] bg-white/[0.06] shadow-[0_0_0_1px_var(--g-accent-soft)]'
+                        : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.04]'
+                    )}
+                  >
+                    <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-white">{section.label}</p>
+                  </button>
+                ))}
+              </div>
+            </aside>
+            <div className="space-y-4">
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Active Group</p>
+                <h2 className="mt-1 text-xl font-extrabold text-white">{activeAppearanceSection.label}</h2>
+                <p className="mt-1 text-xs g-muted">{activeAppearanceSection.description}</p>
+              </div>
+
+              {appearanceSection === 'presets' && (
           <AppearanceDropdown title="Appearance Presets" description="Save, apply, export, and import full launcher look presets to share with others.">
             <input
               ref={appearanceImportRef}
@@ -1708,11 +1960,11 @@ export function Settings() {
               <button onClick={saveAppearancePreset} className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]">
                 Save Current
               </button>
-              <button onClick={exportCurrentAppearance} className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]">
+              <button onClick={() => { void exportCurrentAppearance(); }} className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]">
                 Export Current
               </button>
               <button onClick={() => appearanceImportRef.current?.click()} className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]">
-                Import File
+                Import Preset
               </button>
             </div>
 
@@ -1740,7 +1992,7 @@ export function Settings() {
                           Apply
                         </button>
                         <button
-                          onClick={() => exportAppearancePreset(preset)}
+                          onClick={() => { void exportAppearancePreset(preset); }}
                           className="g-btn h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]"
                         >
                           Export
@@ -1757,6 +2009,48 @@ export function Settings() {
                 ))
               )}
             </div>
+          </AppearanceDropdown>
+              )}
+
+              {appearanceSection === 'style' && (
+                <>
+          <AppearanceDropdown title="Accent Color" description="Global accent applied to controls and highlights.">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {ACCENTS.map((accent) => (
+                <button
+                  key={accent.id}
+                  onClick={() => applyAccent(accent.id)}
+                  className={clsx('rounded-xl border p-3 text-left', accentMode === accent.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}
+                >
+                  <div className="h-6 rounded-md border border-white/15" style={{ background: accent.id === 'custom' ? `linear-gradient(90deg, ${accentCustomColor}, color-mix(in srgb, ${accentCustomColor} 58%, white))` : accent.swatch }} />
+                  <p className="mt-2 text-sm font-extrabold text-white">{accent.label}</p>
+                </button>
+              ))}
+            </div>
+            {accentMode === 'custom' && (
+              <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="color"
+                      value={accentCustomColor}
+                      onChange={(event) => applyCustomAccentColor(event.target.value)}
+                      className="h-11 w-14 rounded-lg border border-white/15 bg-transparent p-1"
+                    />
+                    <div>
+                      <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-white/58">Custom Accent</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{accentCustomColor}</p>
+                    </div>
+                  </div>
+                  <input
+                    value={accentCustomColor}
+                    onChange={(event) => applyCustomAccentColor(event.target.value)}
+                    className="h-11 flex-1 rounded-lg border border-white/10 bg-white/[0.03] px-3 text-sm font-semibold text-white outline-none"
+                    placeholder="#ff76d7"
+                  />
+                </div>
+              </div>
+            )}
           </AppearanceDropdown>
 
           <AppearanceDropdown title="Theme Mode" description="Pick the overall visual theme for the launcher.">
@@ -1890,21 +2184,10 @@ export function Settings() {
             </div>
           </AppearanceDropdown>
 
-          <AppearanceDropdown title="Accent Color" description="Global accent applied to controls and highlights.">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {ACCENTS.map((accent) => (
-                <button
-                  key={accent.id}
-                  onClick={() => applyAccent(accent.id)}
-                  className={clsx('rounded-xl border p-3 text-left', accentMode === accent.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}
-                >
-                  <div className="h-6 rounded-md border border-white/15" style={{ background: accent.swatch }} />
-                  <p className="mt-2 text-sm font-extrabold text-white">{accent.label}</p>
-                </button>
-              ))}
-            </div>
-          </AppearanceDropdown>
+                </>
+              )}
 
+              {appearanceSection === 'background' && (
           <AppearanceDropdown title="Background" description="Pick animated/background texture style.">
             <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
               {([ 
@@ -1934,7 +2217,7 @@ export function Settings() {
                   <span className="text-sm font-extrabold text-white">{backgroundVisualOpacity}%</span>
                 </div>
                 <p className="text-xs g-muted mt-1">Lower values darken the launcher background more.</p>
-                <input type="range" min={0} max={100} step={1} value={backgroundVisualOpacity} onChange={(event) => applyBackgroundVisualOpacity(Number(event.target.value))} className="mt-3 w-full g-range" />
+                <input type="range" min={10} max={100} step={1} value={backgroundVisualOpacity} onChange={(event) => applyBackgroundVisualOpacity(Number(event.target.value))} className="mt-3 w-full g-range" />
               </div>
 
               <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
@@ -1948,69 +2231,121 @@ export function Settings() {
 
             </div>
 
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Custom Background</p>
-                  <p className="text-xs g-muted mt-1">Bloom outputs a 16:9 render. Images under 4K are rendered at 1920x1080. 4K sources render at 3840x2160.</p>
+                  <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Universal Loading Screen</p>
+                  <p className="text-xs g-muted mt-1">Pick the loading style Bloom uses for launch, install, import, and export actions.</p>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <label className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] inline-flex items-center justify-center cursor-pointer">
-                    Upload Image
-                    <input type="file" accept="image/*" onChange={(event) => { void onCustomBackgroundFile(event); }} className="hidden" />
-                  </label>
-                  <button onClick={() => { void saveCustomBackground(); }} disabled={!customBackgroundSource || customBackgroundSaving} className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50">
-                    {customBackgroundSaving ? 'Saving...' : 'Save Background'}
+                <button
+                  onClick={() => setShowUniversalLoadingPreview(true)}
+                  className="g-btn h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]"
+                >
+                  Preview
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                {UNIVERSAL_LOADING_STYLES.map((style) => (
+                  <button
+                    key={style.id}
+                    onClick={() => {
+                      applyUniversalLoadingStyle(style.id);
+                      setShowUniversalLoadingPreview(true);
+                    }}
+                    className={clsx(
+                      'rounded-lg border p-3 text-left transition',
+                      universalLoadingStyle === style.id
+                        ? 'border-[var(--g-accent)] bg-white/[0.06] shadow-[0_0_0_1px_var(--g-accent-soft)]'
+                        : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.04]'
+                    )}
+                  >
+                    <p className="text-sm font-extrabold text-white">{style.label}</p>
+                    <p className="mt-1 text-xs g-muted">{style.description}</p>
                   </button>
-                  <button onClick={() => { void clearCustomBackground(); }} disabled={!customBackgroundSaved && !customBackgroundSource} className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50">
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Custom Background Editor</p>
+                    <p className="text-xs g-muted mt-1">Upload, drag, and scroll-zoom. Saves automatically to a 1920x1080 output.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <label className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] inline-flex items-center justify-center cursor-pointer">
+                      Upload Image / Video
+                      <input type="file" accept="image/*,video/mp4,video/webm,video/ogg" onChange={(event) => { void onCustomBackgroundFile(event); }} className="hidden" />
+                    </label>
+                    <button
+                      onClick={() => {
+                        setCustomBackgroundPanX(0);
+                      setCustomBackgroundPanY(0);
+                      setCustomBackgroundZoom(1);
+                    }}
+                    disabled={!customBackgroundSource || customBackgroundMediaKind === 'video'}
+                    className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                  >
+                    Reset View
+                  </button>
+                  <button
+                    onClick={() => { void clearCustomBackground(); }}
+                    disabled={!customBackgroundSaved && !customBackgroundSource}
+                    className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                  >
                     Clear
                   </button>
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-3 text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/55">
-                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">Output {customBackgroundTarget.width}x{customBackgroundTarget.height}</span>
-                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">{customBackgroundSaved ? 'Saved to Bloom' : 'Not saved yet'}</span>
+              <div className="flex flex-wrap items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/55">
+                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">{customBackgroundMediaKind === 'video' ? 'Local Video' : `Output ${customBackgroundTarget.width}x${customBackgroundTarget.height}`}</span>
+                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">{customBackgroundSaving ? 'Autosaving…' : customBackgroundSaved ? 'Saved' : 'Not Saved'}</span>
+                <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5">{customBackgroundMediaKind === 'video' ? 'Loop Playback' : `Zoom ${customBackgroundZoom.toFixed(2)}x`}</span>
               </div>
 
-              <div className="grid grid-cols-1 xl:grid-cols-[1.25fr_0.9fr] gap-4">
+              <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_0.85fr] gap-4">
                 <div className="space-y-3">
-                  <p className="text-[11px] uppercase tracking-[0.12em] font-extrabold text-white/55">Position and Zoom</p>
                   <div
                     onPointerDown={onCustomBackgroundPointerDown}
                     onPointerMove={onCustomBackgroundPointerMove}
                     onPointerUp={onCustomBackgroundPointerUp}
                     onPointerLeave={onCustomBackgroundPointerUp}
-                    className={clsx('relative aspect-video overflow-hidden rounded-2xl border border-white/10 bg-black/40', customBackgroundSource ? (draggingCustomBackground ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default')}
+                    onWheel={onCustomBackgroundWheel}
+                    className={clsx('relative aspect-video overflow-hidden rounded-2xl border border-white/10 bg-black/40', customBackgroundSource ? (customBackgroundMediaKind === 'image' ? (draggingCustomBackground ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default') : 'cursor-default')}
                   >
                     {customBackgroundSource ? (
                       <>
-                        <img
-                          src={customBackgroundSource}
-                          alt="Custom background editor"
-                          className="absolute inset-0 h-full w-full object-cover select-none pointer-events-none"
-                          style={{
-                            transform: `translate(${customBackgroundPanX * 14}%, ${customBackgroundPanY * 14}%) scale(${customBackgroundZoom})`
-                          }}
-                        />
+                        {customBackgroundMediaKind === 'video' ? (
+                          <video
+                            src={customBackgroundSource}
+                            className="absolute inset-0 h-full w-full object-cover select-none pointer-events-none"
+                            autoPlay
+                            loop
+                            muted
+                            playsInline
+                          />
+                        ) : (
+                          <img
+                            src={customBackgroundSource}
+                            alt="Custom background editor"
+                            className="absolute inset-0 h-full w-full object-cover select-none pointer-events-none"
+                            style={{
+                              transform: `translate(${customBackgroundPanX * 14}%, ${customBackgroundPanY * 14}%) scale(${customBackgroundZoom})`
+                            }}
+                          />
+                        )}
                         <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.06)_1px,transparent_1px)] [background-size:10%_10%]" />
-                        <div className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-white/60 shadow-[0_0_0_9999px_rgba(0,0,0,0.28)]" />
+                        {customBackgroundMediaKind === 'image' && <div className="pointer-events-none absolute left-[7%] top-[7%] h-[86%] w-[86%] rounded-xl border border-white/70 shadow-[0_0_0_9999px_rgba(0,0,0,0.36)]" />}
+                        <div className="pointer-events-none absolute bottom-2 left-2 rounded-md border border-white/15 bg-black/45 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white/80">
+                          {customBackgroundMediaKind === 'video' ? 'Stored locally on this device' : 'Drag to Pan • Scroll to Zoom'}
+                        </div>
                       </>
                     ) : (
-                      <div className="absolute inset-0 flex items-center justify-center text-sm font-bold text-white/38">Upload an image to position it</div>
+                      <div className="absolute inset-0 flex items-center justify-center text-sm font-bold text-white/38">Upload an image to start editing</div>
                     )}
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <label className="text-xs text-white/68">Horizontal
-                      <input type="range" min={-1} max={1} step={0.01} value={customBackgroundPanX} onChange={(event) => setCustomBackgroundPanX(Number(event.target.value))} className="mt-2 w-full g-range" />
-                    </label>
-                    <label className="text-xs text-white/68">Vertical
-                      <input type="range" min={-1} max={1} step={0.01} value={customBackgroundPanY} onChange={(event) => setCustomBackgroundPanY(Number(event.target.value))} className="mt-2 w-full g-range" />
-                    </label>
-                    <label className="text-xs text-white/68">Zoom
-                      <input type="range" min={1} max={2.8} step={0.01} value={customBackgroundZoom} onChange={(event) => setCustomBackgroundZoom(Number(event.target.value))} className="mt-2 w-full g-range" />
-                    </label>
-                  </div>
+
                 </div>
 
                 <div className="space-y-3">
@@ -2018,12 +2353,16 @@ export function Settings() {
                   <div className="rounded-2xl border border-white/10 bg-black/40 p-3">
                     <div className="aspect-video overflow-hidden rounded-xl border border-white/10 bg-black/50">
                       {customBackgroundRenderPreview ? (
-                        <img src={customBackgroundRenderPreview} alt="Custom background output preview" className="h-full w-full object-cover" />
+                        customBackgroundMediaKind === 'video' ? (
+                          <video src={customBackgroundRenderPreview} className="h-full w-full object-cover" autoPlay loop muted playsInline />
+                        ) : (
+                          <img src={customBackgroundRenderPreview} alt="Custom background output preview" className="h-full w-full object-cover" />
+                        )
                       ) : (
                         <div className="flex h-full items-center justify-center text-sm font-bold text-white/38">Saved output preview appears here</div>
                       )}
                     </div>
-                    <p className="mt-3 text-xs g-muted">This preview is rendered from the same canvas output Bloom will use for the launcher background.</p>
+                    <p className="mt-3 text-xs g-muted">{customBackgroundMediaKind === 'video' ? 'This video is stored locally in Bloom app data and plays directly from disk.' : 'This preview is rendered from the same output Bloom will save and use as your launcher background.'}</p>
                   </div>
                 </div>
               </div>
@@ -2031,7 +2370,10 @@ export function Settings() {
               {customBackgroundError && <p className="text-sm text-red-300">{customBackgroundError}</p>}
             </div>
           </AppearanceDropdown>
+              )}
 
+              {appearanceSection === 'sidebar' && (
+                <>
           <AppearanceDropdown title="Layout Density" description="Controls overall spacing and scale.">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {([
@@ -2108,6 +2450,41 @@ export function Settings() {
             </div>
           </AppearanceDropdown>
 
+          <AppearanceDropdown title="Sidebar Tabs" description="Toggle which tabs appear in the sidebar navigation.">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {([
+                { id: 'home', label: 'Home' },
+                { id: 'instances', label: 'Instances' },
+                { id: 'marketplace', label: 'Marketplace' },
+                { id: 'importer', label: 'Importer' },
+                { id: 'widgets', label: 'Widgets' },
+                { id: 'cosmetics', label: 'Cosmetic Locker' },
+                { id: 'custom-cape', label: 'Custom Cape' },
+                { id: 'chat', label: 'Chat' },
+                { id: 'script-studio', label: 'Script Studio (IDE)' },
+                { id: 'host-server', label: 'Host Server' },
+                { id: 'games', label: 'Games' },
+                { id: 'help', label: 'Help' },
+                { id: 'information', label: 'Information' }
+              ] as { id: SidebarTabId; label: string }[]).map((tabOption) => (
+                <div key={tabOption.id} className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2.5 flex items-center justify-between gap-3">
+                  <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-white/78">{tabOption.label}</p>
+                  <button
+                    data-on={sidebarTabsVisibility[tabOption.id]}
+                    onClick={() => applySidebarTabVisibility(tabOption.id, !sidebarTabsVisibility[tabOption.id])}
+                    className="g-toggle"
+                    aria-label={`Toggle ${tabOption.label} tab`}
+                  />
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] g-muted">Default hidden tabs: Games, Script Studio, Chat, and Host Server.</p>
+          </AppearanceDropdown>
+                </>
+              )}
+
+              {appearanceSection === 'animation' && (
+                <>
           <AppearanceDropdown title="Motion Profile" description="Controls animation amount and pacing.">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
               {([
@@ -2119,27 +2496,6 @@ export function Settings() {
                 <button key={mode.id} onClick={() => applyMotion(mode.id)} className={clsx('rounded-xl border p-3 text-left', motionMode === mode.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}>
                   <p className="text-sm font-extrabold text-white">{mode.label}</p>
                   <p className="text-xs g-muted mt-1">{mode.desc}</p>
-                </button>
-              ))}
-            </div>
-          </AppearanceDropdown>
-
-          <AppearanceDropdown title="Universal Loading Screen" description="Pick the minimal loading screen Bloom uses for installs, saves, imports, and launch actions.">
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-              {INSTANCE_INSTALL_LOADING_STYLES.map((style) => (
-                <button
-                  key={style.id}
-                  onClick={() => applyInstanceInstallLoadingStyle(style.id)}
-                  className={clsx(
-                    'rounded-xl border p-3 text-left transition',
-                    instanceInstallLoadingStyle === style.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]'
-                  )}
-                >
-                  <div className="flex h-24 items-center justify-center rounded-xl border border-white/10 bg-black/30">
-                    <LoadingScreenPreviewGlyph style={style.id} />
-                  </div>
-                  <p className="mt-3 text-sm font-extrabold text-white">{style.label}</p>
-                  <p className="mt-1 text-[11px] g-muted">{style.description}</p>
                 </button>
               ))}
             </div>
@@ -2270,6 +2626,62 @@ export function Settings() {
               <input type="range" min={-70} max={70} step={1} value={motionOffsetY} onChange={(event) => applyMotionTuning({ offsetY: Number(event.target.value) })} className="w-full mt-1 g-range" />
             </div>
           </AppearanceDropdown>
+                </>
+              )}
+
+              {appearanceSection === 'shop' && (
+                <>
+          <AppearanceDropdown title="Preset Palette" description="Choose a single rarity palette for the cosmetic shop. Default uses colors from the listing data.">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {SHOP_RARITY_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  onClick={() => applyShopRarityPreset(preset.id)}
+                  className={clsx('rounded-xl border p-3 text-left', shopRarityTheme.presetId === preset.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}
+                >
+                  <p className="text-sm font-extrabold text-white">{preset.label}</p>
+                  <p className="text-xs g-muted mt-1">{preset.description}</p>
+                </button>
+              ))}
+            </div>
+          </AppearanceDropdown>
+
+          <AppearanceDropdown title="Custom Rarity Colors" description="Set each rarity to its own gradient and glow. Editing here automatically switches the shop theme to Custom.">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs g-muted">These colors apply to shop cards, badges, and rarity accents.</p>
+              <button onClick={resetShopRarityCustomColors} className="g-btn h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]">
+                Reset Custom Colors
+              </button>
+            </div>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+              {SHOP_RARITY_ORDER.map((rarity) => {
+                const colors = shopRarityTheme.custom[rarity];
+                return (
+                  <div key={rarity} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <div
+                      className="rounded-lg border border-white/10 p-3"
+                      style={{
+                        background: `linear-gradient(145deg, ${colors.start}, ${colors.end})`,
+                        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.08), 0 0 22px ${colors.glow}`
+                      }}
+                    >
+                      <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/80">{SHOP_RARITY_LABELS[rarity]}</p>
+                      <p className="text-xs text-white/65 mt-1">{rarity}</p>
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+                      <ShopColorField label="Start" value={colors.start} onChange={(next: string) => applyShopRarityCustomColor(rarity, 'start', next)} />
+                      <ShopColorField label="End" value={colors.end} onChange={(next: string) => applyShopRarityCustomColor(rarity, 'end', next)} />
+                      <ShopColorField label="Glow" value={colors.glow} onChange={(next: string) => applyShopRarityCustomColor(rarity, 'glow', next)} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </AppearanceDropdown>
+                </>
+              )}
+            </div>
+          </div>
         </section>
       ) : tab === 'keybinds' ? (
         <section className="g-panel p-6 space-y-4">
@@ -2315,6 +2727,8 @@ export function Settings() {
                   const currentValue =
                     binding.id === 'search'
                       ? draftShortcutSearch
+                      : binding.id === 'instance-launcher'
+                        ? draftShortcutInstanceLauncher
                       : binding.id === 'create'
                         ? draftShortcutCreateInstance
                         : binding.id === 'settings'
@@ -2533,29 +2947,6 @@ export function Settings() {
                   ))}
                 </div>
               </div>
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
-            <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">UI Sound Pack</p>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-              {SOUND_PACKS.map((pack) => (
-                <button key={pack.id} onClick={() => applySound({ pack: pack.id })} className={clsx('rounded-lg border p-2 text-left', soundPack === pack.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}>
-                  <p className="text-xs font-extrabold text-white uppercase tracking-[0.12em]">{pack.label}</p>
-                  <p className="text-[10px] g-muted mt-1">{pack.description}</p>
-                </button>
-              ))}
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              <button onClick={() => applySound({ clicks: !soundClicksEnabled })} className="g-btn w-full h-10 rounded-lg px-3 inline-flex items-center justify-between text-xs font-extrabold uppercase tracking-[0.12em]">
-                Clicks <span>{soundClicksEnabled ? 'On' : 'Off'}</span>
-              </button>
-              <button onClick={() => applySound({ hovers: !soundHoversEnabled })} className="g-btn w-full h-10 rounded-lg px-3 inline-flex items-center justify-between text-xs font-extrabold uppercase tracking-[0.12em]">
-                Hovers <span>{soundHoversEnabled ? 'On' : 'Off'}</span>
-              </button>
-              <button onClick={() => applySound({ notifications: !soundNotificationsEnabled })} className="g-btn w-full h-10 rounded-lg px-3 inline-flex items-center justify-between text-xs font-extrabold uppercase tracking-[0.12em]">
-                Notifications <span>{soundNotificationsEnabled ? 'On' : 'Off'}</span>
-              </button>
             </div>
           </div>
 

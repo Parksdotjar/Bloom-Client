@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-const ORACLE_JAVA_25_PAGE: &str = "https://www.oracle.com/java/technologies/javase-downloads.html";
-const ORACLE_JAVA_25_WINDOWS_X64_EXE: &str =
-    "https://download.oracle.com/java/25/latest/jdk-25_windows-x64_bin.exe";
+const ADOPTIUM_JAVA_21_PAGE: &str = "https://adoptium.net/temurin/releases/?version=21";
+const ADOPTIUM_JAVA_21_WINDOWS_X64_ZIP: &str =
+    "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LaunchConfig {
@@ -54,13 +54,16 @@ fn parse_java_requirement(requirement: &str) -> Option<u32> {
 fn build_java_install_help(required_major: u32) -> String {
     format!(
         "This instance requires Java {required_major} or later.\n\
-1. Download Oracle Java 25 for Windows x64.\n\
-2. Install it with the default options.\n\
+Bloom normally installs a managed Java runtime automatically, but that step failed.\n\
+\n\
+Windows fallback:\n\
+1. Download Temurin Java 21 x64.\n\
+2. Extract/install it.\n\
 3. Restart Bloom Client.\n\
 4. Launch the instance again.\n\
 \n\
-Oracle Java downloads page: {ORACLE_JAVA_25_PAGE}\n\
-Direct Oracle Java 25 Windows x64 installer: {ORACLE_JAVA_25_WINDOWS_X64_EXE}"
+Temurin Java 21 downloads page: {ADOPTIUM_JAVA_21_PAGE}\n\
+Direct Temurin Java 21 Windows x64 package: {ADOPTIUM_JAVA_21_WINDOWS_X64_ZIP}"
     )
 }
 
@@ -200,6 +203,158 @@ fn discover_windows_java_binaries() -> Vec<String> {
     out
 }
 
+fn version_json_java_major(version_json: &serde_json::Value) -> Option<u32> {
+    version_json
+        .get("javaVersion")
+        .and_then(|value| value.get("majorVersion"))
+        .and_then(|value| value.as_u64())
+        .map(|value| value as u32)
+}
+
+fn prepend_unique_case_insensitive(values: &mut Vec<String>, candidate: String) {
+    if let Some(index) = values
+        .iter()
+        .position(|existing| existing.eq_ignore_ascii_case(&candidate))
+    {
+        let value = values.remove(index);
+        values.insert(0, value);
+        return;
+    }
+    values.insert(0, candidate);
+}
+
+fn managed_java_21_paths(runtimes_dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    let java_home = runtimes_dir.join("java").join("temurin-21");
+    let javaw = java_home.join("bin").join("javaw.exe");
+    (java_home, javaw)
+}
+
+#[cfg(target_os = "windows")]
+fn extract_zip_bytes_to_dir(
+    bytes: &[u8],
+    destination: &std::path::Path,
+) -> Result<(), String> {
+    use std::fs;
+    use std::io::{self, Cursor};
+    use zip::ZipArchive;
+
+    let reader = Cursor::new(bytes);
+    let mut archive =
+        ZipArchive::new(reader).map_err(|e| format!("Invalid Java runtime archive: {}", e))?;
+
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|e| format!("Failed reading Java runtime archive entry: {}", e))?;
+        let Some(name) = entry.enclosed_name().map(|value| value.to_owned()) else {
+            continue;
+        };
+        let out_path = destination.join(name);
+        if entry.is_dir() {
+            fs::create_dir_all(&out_path).map_err(|e| e.to_string())?;
+            continue;
+        }
+        if let Some(parent) = out_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let mut out_file = fs::File::create(&out_path).map_err(|e| e.to_string())?;
+        io::copy(&mut entry, &mut out_file).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn locate_java_home(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    use std::fs;
+
+    let direct = root.join("bin").join("javaw.exe");
+    if direct.is_file() {
+        return Some(root.to_path_buf());
+    }
+
+    let entries = fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if path.join("bin").join("javaw.exe").is_file() {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
+async fn ensure_managed_java_21(paths: &crate::paths::AppPaths) -> Result<String, String> {
+    use std::fs;
+
+    let (java_home, javaw_path) = managed_java_21_paths(&paths.runtimes);
+    if javaw_path.is_file() {
+        return Ok(javaw_path.to_string_lossy().to_string());
+    }
+
+    let java_root = paths.runtimes.join("java");
+    let staging_dir = java_root.join("temurin-21-installing");
+    if staging_dir.exists() {
+        let _ = fs::remove_dir_all(&staging_dir);
+    }
+    fs::create_dir_all(&staging_dir).map_err(|e| e.to_string())?;
+
+    let response = reqwest::get(ADOPTIUM_JAVA_21_WINDOWS_X64_ZIP)
+        .await
+        .map_err(|e| format!("Failed to download managed Java 21 runtime: {}", e))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Failed to download managed Java 21 runtime (HTTP {}).",
+            response.status()
+        ));
+    }
+
+    let archive_bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed reading Java 21 runtime bytes: {}", e))?;
+
+    extract_zip_bytes_to_dir(&archive_bytes, &staging_dir)?;
+
+    let extracted_home = locate_java_home(&staging_dir)
+        .ok_or_else(|| "Managed Java 21 archive did not contain a usable runtime.".to_string())?;
+
+    if java_home.exists() {
+        let _ = fs::remove_dir_all(&java_home);
+    }
+    if let Some(parent) = java_home.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    fs::rename(&extracted_home, &java_home).map_err(|e| {
+        format!(
+            "Failed to finalize managed Java 21 runtime install from {} to {}: {}",
+            extracted_home.display(),
+            java_home.display(),
+            e
+        )
+    })?;
+
+    if staging_dir.exists() {
+        let _ = fs::remove_dir_all(&staging_dir);
+    }
+
+    if !javaw_path.is_file() {
+        return Err("Managed Java 21 install completed, but javaw.exe was not found.".to_string());
+    }
+
+    Ok(javaw_path.to_string_lossy().to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn ensure_managed_java_21(_paths: &crate::paths::AppPaths) -> Result<String, String> {
+    Err("Managed Java runtime install is currently implemented for Windows only.".to_string())
+}
+
 fn build_java_launch_candidates(requested: &str, required_major: Option<u32>) -> Vec<String> {
     use std::path::Path;
 
@@ -324,7 +479,8 @@ fn build_java_launch_candidates(requested: &str, required_major: Option<u32>) ->
 
 #[tauri::command]
 pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(), String> {
-    use crate::bloom_mod::ensure_bloom_menu_mod;
+    use crate::bloom_bridge::{ensure_launcher_bridge, LaunchBridgeBootstrap};
+    use crate::bloom_mod::ensure_bloom_cosmetics_mod;
     use crate::paths::{paths_get, AppPaths};
     use std::collections::HashMap;
     use std::fs;
@@ -350,7 +506,14 @@ pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(),
     let loader_type = instance_json["loader"].as_str().unwrap_or("vanilla");
     let instance_dir = paths.instances.join(&config.instance_id);
 
-    ensure_bloom_menu_mod(&instance_dir, loader_type, mc_version)?;
+    ensure_bloom_cosmetics_mod(&instance_dir, loader_type, mc_version)?;
+
+    let bridge_runtime = ensure_launcher_bridge(LaunchBridgeBootstrap {
+        minecraft_uuid: config.uuid.clone(),
+        username: config.username.clone(),
+        mc_access_token: config.access_token.clone(),
+    })
+    .await?;
 
     // Guard against broken mod files that would crash Fabric with ZipException.
     if loader_type == "fabric" {
@@ -931,12 +1094,19 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
         .join(format!("launch-{}-{}.log", config.instance_id, ts));
 
     let working_dir = instance_dir;
-    let required_java_major = if loader_type == "fabric" {
+    let mods_required_java_major = if loader_type == "fabric" {
         detect_required_java_major(&working_dir.join("mods"))?
     } else {
         None
     };
-    let launch_candidates = build_java_launch_candidates(&config.java_path, required_java_major);
+    let runtime_required_java_major = version_json_java_major(&v_data);
+    let required_java_major = match (runtime_required_java_major, mods_required_java_major) {
+        (Some(runtime), Some(mods)) => Some(runtime.max(mods)),
+        (Some(runtime), None) => Some(runtime),
+        (None, Some(mods)) => Some(mods),
+        (None, None) => None,
+    };
+    let mut launch_candidates = build_java_launch_candidates(&config.java_path, required_java_major);
     let requested_java_is_generic = config.java_path.trim().is_empty()
         || config.java_path.eq_ignore_ascii_case("java")
         || config.java_path.eq_ignore_ascii_case("javaw")
@@ -946,6 +1116,16 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
             .and_then(|value| value.parse::<u32>().ok())
             .is_some();
     if let Some(required_major) = required_java_major {
+        let has_known_matching_candidate = launch_candidates
+            .iter()
+            .any(|candidate| detect_java_major(candidate).is_some_and(|major| major >= required_major));
+        if !has_known_matching_candidate && cfg!(target_os = "windows") && required_major >= 21 {
+            let managed_java = ensure_managed_java_21(&paths).await?;
+            prepend_unique_case_insensitive(&mut launch_candidates, managed_java.clone());
+            let sibling_java = managed_java.replace("javaw.exe", "java.exe");
+            prepend_unique_case_insensitive(&mut launch_candidates, sibling_java);
+        }
+
         let has_known_matching_candidate = launch_candidates
             .iter()
             .any(|candidate| detect_java_major(candidate).is_some_and(|major| major >= required_major));
@@ -981,6 +1161,9 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
 
         match Command::new(&candidate)
             .args(&args)
+            .env("BLOOM_BRIDGE_HOST", &bridge_runtime.host)
+            .env("BLOOM_BRIDGE_PORT", bridge_runtime.port.to_string())
+            .env("BLOOM_BRIDGE_TOKEN", &bridge_runtime.token)
             .stdout(Stdio::from(stdout_handle))
             .stderr(Stdio::from(stderr_handle))
             .current_dir(&working_dir)

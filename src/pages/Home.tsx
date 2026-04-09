@@ -5,6 +5,7 @@ import { useInstances } from '../hooks/useInstances';
 import { useAuth } from '../hooks/useAuth';
 import { useDownloader } from '../hooks/useDownloader';
 import { TauriApi } from '../services/tauri';
+import { UniversalLoadingOverlay } from '../components/UniversalLoadingOverlay';
 
 type HomeWidgetId = 'hero' | 'instances' | 'account' | 'metrics' | 'clock' | 'stopwatch';
 type HomeWidget = { id: HomeWidgetId; visible: boolean };
@@ -51,6 +52,7 @@ export function Home() {
   const [now, setNow] = useState<Date>(() => new Date());
   const [stopwatchRunning, setStopwatchRunning] = useState(false);
   const [stopwatchElapsedMs, setStopwatchElapsedMs] = useState(0);
+  const [launchingInstanceId, setLaunchingInstanceId] = useState<string | null>(null);
 
   const chips = useMemo(
     () => [selected?.loader?.toUpperCase() || 'VANILLA', selected?.mcVersion || '1.21.1', authState ? authState.profile.name : 'OFFLINE'],
@@ -194,6 +196,19 @@ export function Home() {
     return () => clearInterval(timer);
   }, [stopwatchRunning]);
 
+  useEffect(() => {
+    if (!launchingInstanceId) return;
+    const current = activeDownloads[launchingInstanceId];
+    if (!current) {
+      setLaunchingInstanceId(null);
+      return;
+    }
+    if (current.status.toLowerCase().startsWith('error:')) {
+      const timer = window.setTimeout(() => setLaunchingInstanceId(null), 1200);
+      return () => window.clearTimeout(timer);
+    }
+  }, [activeDownloads, launchingInstanceId]);
+
   const persistLayout = (next: Record<HomeWidgetId, WidgetSlot>) => {
     setLayout(next);
     localStorage.setItem(WIDGET_LAYOUT_STORAGE_KEY, JSON.stringify(next));
@@ -291,6 +306,14 @@ export function Home() {
     return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
   };
 
+  const launchStatus = launchingInstanceId ? activeDownloads[launchingInstanceId]?.status || 'Preparing launch...' : null;
+
+  const handleLaunch = async (instance: NonNullable<typeof selected>) => {
+    if (activeDownloads[instance.id] && activeDownloads[instance.id].status !== 'Complete') return;
+    setLaunchingInstanceId(instance.id);
+    await startDownload(instance, authState);
+  };
+
   const widgetMap: Record<HomeWidgetId, ReactNode> = {
     hero: (
       <section className="g-panel-strong p-6 relative overflow-hidden h-full">
@@ -311,7 +334,7 @@ export function Home() {
             <div className="flex gap-2">
               <button
                 disabled={!selected}
-                onClick={() => selected && startDownload(selected, authState)}
+                onClick={() => selected && void handleLaunch(selected)}
                 className="g-btn-accent h-11 px-5 text-sm font-extrabold uppercase tracking-[0.12em] inline-flex items-center gap-2 disabled:opacity-45"
               >
                 <Play size={14} /> Launch
@@ -349,8 +372,9 @@ export function Home() {
         </div>
         <div className="mt-4 space-y-2">
           {instances.slice(0, 6).map((instance) => (
-            <Link key={instance.id} to={`/instance-editor?id=${encodeURIComponent(instance.id)}`} className="block rounded-xl border border-white/10 bg-white/[0.03] p-3 hover:bg-white/[0.06]">
-              <div className="flex items-center gap-3">
+            <Link key={instance.id} to={`/instance-editor?id=${encodeURIComponent(instance.id)}`} className="group block rounded-xl border border-white/10 bg-white/[0.03] p-3 hover:bg-white/[0.06]">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
                 <div
                   className={
                     instance.iconFrame === 'diamond'
@@ -363,10 +387,22 @@ export function Home() {
                 >
                   {instance.iconDataUrl ? <img src={instance.iconDataUrl} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/10" />}
                 </div>
-                <div>
-                  <p className="text-lg font-extrabold text-white">{instance.name}</p>
+                <div className="min-w-0">
+                  <p className="text-lg font-extrabold text-white truncate">{instance.name}</p>
                   <p className="text-xs g-muted mt-1">{instance.loader.toUpperCase()} {instance.mcVersion}</p>
                 </div>
+              </div>
+                <button
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void handleLaunch(instance);
+                  }}
+                  disabled={!!activeDownloads[instance.id] && activeDownloads[instance.id].status !== 'Complete'}
+                  className="g-btn-accent h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] inline-flex items-center gap-1 opacity-0 -translate-x-1 pointer-events-none transition duration-200 group-hover:opacity-100 group-hover:translate-x-0 group-hover:pointer-events-auto disabled:opacity-45 disabled:pointer-events-none shrink-0"
+                >
+                  <Play size={12} /> Launch
+                </button>
               </div>
             </Link>
           ))}
@@ -393,7 +429,7 @@ export function Home() {
           </select>
           <button
             disabled={!accountLaunchInstance}
-            onClick={() => accountLaunchInstance && startDownload(accountLaunchInstance, authState)}
+            onClick={() => accountLaunchInstance && void handleLaunch(accountLaunchInstance)}
             className="w-full g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] inline-flex items-center justify-center gap-2 disabled:opacity-45"
           >
             <Play size={13} /> Launch Instance
@@ -490,8 +526,16 @@ export function Home() {
   };
 
   return (
-    <div className="max-w-[1400px] mx-auto min-h-full space-y-4">
-      {showWidgetDocker && (
+    <>
+      <UniversalLoadingOverlay
+        open={!!launchStatus}
+        fixed
+        eyebrow="Launching"
+        title={launchStatus || 'Preparing launch...'}
+        description="Bloom is installing files and starting Minecraft."
+      />
+      <div className="max-w-[1400px] mx-auto min-h-full space-y-4">
+        {showWidgetDocker && (
         <details className="g-panel p-3">
           <summary className="cursor-pointer select-none text-xs font-extrabold uppercase tracking-[0.12em] text-white/60">
             Widget Docking
@@ -523,7 +567,7 @@ export function Home() {
             ))}
           </div>
         </details>
-      )}
+        )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <div className="lg:col-span-12">{renderSlot('hero')}</div>
@@ -550,6 +594,7 @@ export function Home() {
           </button>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }

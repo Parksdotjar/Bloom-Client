@@ -1,27 +1,25 @@
 {
   "schemaVersion": 1,
-  "id": "bloommenu",
+  "id": "bloomcosmetics",
   "version": "${version}",
-  "name": "Bloom Menu",
-  "description": "Bloom-themed in-game mod menu and cosmetics hub.",
+  "name": "BLOOM COSMETICS v0.0.9",
+  "description": "Client-side Bloom cosmetics live sync and rendering mod. No in-game UI; controlled by Bloom Client launcher.",
   "authors": [
-    "Parks",
+    "Bloom",
     "Codex"
   ],
-  "contact": {},
   "license": "All-Rights-Reserved",
-  "icon": "assets/bloommenu/textures/gui/bloom_logo.png",
   "environment": "client",
   "entrypoints": {
-    "main": [
-      "com.bloomunit.bloommenu.BloomMenuMod"
-    ],
     "client": [
-      "com.bloomunit.bloommenu.client.BloomMenuClient"
+      "dev.bloom.cosmetics.BloomCosmeticsClient"
     ]
   },
+  "mixins": [
+    "bloomcosmetics.client.mixins.json"
+  ],
   "depends": {
-    "fabricloader": ">=0.18.3",
+    "fabricloader": ">=0.18.4",
     "minecraft": "~1.21.11",
     "java": ">=21",
     "fabric-api": "*"

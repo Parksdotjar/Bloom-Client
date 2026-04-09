@@ -1,13 +1,16 @@
 {
   "name": "bloom-client",
   "private": true,
-  "version": "0.3.1",
+  "version": "1.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "mod:sync": "powershell -ExecutionPolicy Bypass -File ./scripts/sync-bloom-mod.ps1",
+    "mod:build": "powershell -ExecutionPolicy Bypass -File ./scripts/sync-bloom-mod.ps1 -Build",
+    "desktop:build": "npm run mod:build && npm run tauri build"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -22,6 +25,7 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.13.1",
+    "skinview3d": "^3.4.1",
     "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
@@ -36,4 +40,3 @@
     "vite": "^7.0.4"
   }
 }
-

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { ensureCommerceIdentity } from '../services/cosmetics';
 
 export interface DeviceCodeResponse {
     userCode: string;
@@ -154,6 +155,25 @@ function useAuthController(): AuthContextValue {
         }
     };
 
+    const syncCommerceIdentityForAuth = async (state: AuthState) => {
+        const mcUuid = state.profile.id?.trim();
+        const username = state.profile.name?.trim();
+        if (!mcUuid || !username) return;
+
+        let lastError: unknown = null;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+            try {
+                await ensureCommerceIdentity(mcUuid, username, username);
+                return;
+            } catch (error) {
+                lastError = error;
+                await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+            }
+        }
+
+        console.error('[auth] commerce identity sync failed', lastError);
+    };
+
     const getAvatarStorageKey = (profileId: string) => `${PROFILE_AVATAR_KEY_PREFIX}${profileId}`;
 
     const schedulePoll = (code: string, intervalSeconds: number, expiresAtMs: number, attempts: number, sessionId: number) => {
@@ -242,6 +262,11 @@ function useAuthController(): AuthContextValue {
         const saved = localStorage.getItem(getAvatarStorageKey(profileId));
         setProfileAvatarUrl(saved || null);
     }, [authState?.profile.id]);
+
+    useEffect(() => {
+        if (!authState) return;
+        void syncCommerceIdentityForAuth(authState);
+    }, [authState?.profile.id, authState?.profile.name]);
 
     useEffect(() => {
         if (!loading || authDebug.phase !== 'requesting_code') return;
@@ -400,6 +425,7 @@ function useAuthController(): AuthContextValue {
                     activeVerificationUriComplete: null
                 }));
                 setDeviceCode(null);
+                void syncCommerceIdentityForAuth(res);
             } else {
                 console.log('[auth] poll pending', { sessionId, attempt });
                 setAuthDebug(prev => ({

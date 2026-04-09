@@ -1,5 +1,6 @@
 mod auth;
 mod backgrounds;
+mod bloom_bridge;
 mod bloom_mod;
 mod discord_presence;
 mod downloader;
@@ -10,22 +11,39 @@ mod launcher;
 mod mojang;
 mod paths;
 mod servers;
+mod windows_shell;
+use std::sync::Mutex;
 use tauri::Manager;
+
+struct PendingOpenFile(Mutex<Option<String>>);
+
+#[tauri::command]
+fn startup_open_file_take(state: tauri::State<'_, PendingOpenFile>) -> Option<String> {
+    state.0.lock().ok().and_then(|mut pending| pending.take())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let pending_open_file = std::env::args().skip(1).find(|arg| {
+        let lower = arg.to_ascii_lowercase();
+        lower.ends_with(".bloom") || lower.ends_with(".mrpack") || lower.ends_with(".zip")
+    });
+
     tauri::Builder::default()
+        .manage(PendingOpenFile(Mutex::new(pending_open_file)))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
+            let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128@2x.png"))?;
             for (_, window) in app.webview_windows() {
                 let _ = window.set_icon(icon.clone());
             }
+            let _ = windows_shell::ensure_bloom_file_association();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             paths::paths_get,
+            startup_open_file_take,
             instances::instances_list,
             instances::instances_get,
             instances::instances_create,
@@ -45,11 +63,22 @@ pub fn run() {
             instances::instance_delete_mod,
             instances::instance_delete_resourcepack,
             instances::instance_delete_shaderpack,
+            instances::instance_files_list,
+            instances::instance_files_tree,
+            instances::instance_files_open_path,
+            instances::instance_files_create_directory,
+            instances::instance_files_delete,
+            instances::instance_files_rename,
+            instances::instance_files_read_text,
+            instances::instance_files_write_text,
             instances::instance_copy_game_options,
+            instances::instance_transfer_files,
             instances::marketplace_search_mods,
             instances::marketplace_install_mod,
             instances::marketplace_search_modpacks,
             instances::marketplace_install_modpack_instance,
+            instances::featured_install_modpack,
+            instances::instance_export_bloom,
             instances::import_local_modpack_instance,
             instances::marketplace_search_resourcepacks,
             instances::marketplace_install_resourcepack,
@@ -72,6 +101,9 @@ pub fn run() {
             backgrounds::launcher_background_save,
             backgrounds::launcher_background_load,
             backgrounds::launcher_background_clear,
+            backgrounds::launcher_background_video_save,
+            backgrounds::launcher_background_video_load,
+            backgrounds::save_binary_file,
             servers::hosted_servers_list,
             servers::hosted_servers_get,
             servers::hosted_servers_create,

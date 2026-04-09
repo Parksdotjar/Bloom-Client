@@ -121,7 +121,7 @@ pub async fn download_version_json(
 
 #[tauri::command]
 pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Result<(), String> {
-    use crate::bloom_mod::ensure_bloom_menu_mod;
+    use crate::bloom_mod::ensure_bloom_cosmetics_mod;
     use crate::paths::{paths_get, AppPaths};
     use futures::future::join_all;
     use tauri::Emitter;
@@ -562,7 +562,7 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
         },
     );
 
-    ensure_bloom_menu_mod(&instance_dir, loader_type, mc_version)?;
+    ensure_bloom_cosmetics_mod(&instance_dir, loader_type, mc_version)?;
 
     Ok(())
 }
