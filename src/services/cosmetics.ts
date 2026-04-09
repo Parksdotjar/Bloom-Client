@@ -80,6 +80,25 @@ export type WalletRecord = {
   updated_at: string;
 };
 
+export type OwnerMemberRecord = {
+  user_id: string;
+  username: string | null;
+  display_name: string | null;
+  mc_uuid: string | null;
+  role: 'user' | 'owner';
+  balance_bb: number;
+  profile_updated_at: string;
+  wallet_updated_at: string | null;
+};
+
+export type OwnerGrantCapeResult = {
+  user_id: string;
+  cape_id: string;
+  cape_slug: string;
+  already_owned: boolean;
+  granted_at: string;
+};
+
 export type WalletLedgerRecord = {
   id: string;
   user_id: string;
@@ -232,6 +251,45 @@ export type FinalizeCustomCapeExportResult = {
   transaction_status: string;
 };
 
+function resolveEdgeBase() {
+  const raw = String(import.meta.env.VITE_SUPABASE_URL || 'https://sb.bloomclient.org').trim();
+  try {
+    return new URL(raw).origin.replace(/\/+$/, '');
+  } catch {
+    return raw.replace(/\/+$/, '');
+  }
+}
+
+function extractEdgeError(payload: unknown, fallback = 'edge_request_failed') {
+  if (!payload || typeof payload !== 'object') return fallback;
+  const obj = payload as Record<string, unknown>;
+  return (
+    (typeof obj.message === 'string' && obj.message) ||
+    (typeof obj.error === 'string' && obj.error) ||
+    fallback
+  );
+}
+
+async function edgeJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const session = await supabase.auth.getSession();
+  const token = session.data.session?.access_token;
+  if (!token) throw new Error('auth_session_missing');
+
+  const base = resolveEdgeBase();
+  const response = await fetch(`${base}/functions/v1/main${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      ...(init?.headers ?? {})
+    }
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(extractEdgeError(payload, `edge_${response.status}`));
+  return payload as T;
+}
+
 export const DEFAULT_PREVIEW_APPEARANCE: PreviewAppearanceRecord = {
   scope: 'global',
   exposure: 1.9,
@@ -341,6 +399,21 @@ export async function setUserWalletBalance(username: string, balanceBb: number) 
   return row;
 }
 
+export async function setUserWalletBalanceById(userId: string, balanceBb: number) {
+  const value = Math.max(0, Math.floor(balanceBb));
+  const cleanUserId = userId.trim();
+  const { data, error } = await supabase.rpc('commerce_set_user_wallet_balance_by_id', {
+    p_user_id: cleanUserId,
+    p_balance_bb: value
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? ((data as WalletRecord[])[0] ?? null) : ((data as WalletRecord | null) ?? null);
+  if (!row) {
+    throw new Error('profile_not_found_or_wallet_update_failed');
+  }
+  return row;
+}
+
 export async function setUserRole(username: string, role: 'user' | 'owner') {
   const cleanUsername = username.trim();
   const cleanRole = role === 'owner' ? 'owner' : 'user';
@@ -352,6 +425,27 @@ export async function setUserRole(username: string, role: 'user' | 'owner') {
   const row = Array.isArray(data) ? ((data as CommerceProfile[])[0] ?? null) : ((data as CommerceProfile | null) ?? null);
   if (!row) {
     throw new Error('profile_not_found_or_role_update_failed');
+  }
+  return row;
+}
+
+export async function loadOwnerMembers() {
+  const { data, error } = await supabase.rpc('commerce_owner_list_members');
+  if (error) throw error;
+  return (data ?? []) as OwnerMemberRecord[];
+}
+
+export async function ownerGrantCapeToUser(userId: string, capeNameOrSlug: string) {
+  const targetUserId = userId.trim();
+  const targetCape = capeNameOrSlug.trim();
+  const { data, error } = await supabase.rpc('commerce_owner_grant_cape_to_user', {
+    p_user_id: targetUserId,
+    p_cape_name_or_slug: targetCape
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? ((data as OwnerGrantCapeResult[])[0] ?? null) : ((data as OwnerGrantCapeResult | null) ?? null);
+  if (!row) {
+    throw new Error('grant_failed');
   }
   return row;
 }
@@ -404,6 +498,21 @@ export async function createPendingCurrencyPurchase(email: string, packageSlug: 
   });
   if (error) throw error;
   return data as PendingCurrencyPurchaseRecord | null;
+}
+
+export async function createStripeCheckoutSession(packageSlug: string) {
+  const payload = await edgeJson<{ ok: true; checkout_url: string | null; session_id: string | null }>('/stripe/create-checkout', {
+    method: 'POST',
+    body: JSON.stringify({ package_slug: packageSlug })
+  });
+  if (!payload.checkout_url) {
+    throw new Error('stripe_checkout_url_missing');
+  }
+  return {
+    ok: true as const,
+    checkout_url: payload.checkout_url,
+    session_id: payload.session_id
+  };
 }
 
 export async function updateCapeListing(capeId: string, patch: UpdateCapeInput) {

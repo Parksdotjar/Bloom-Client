@@ -11,6 +11,7 @@ import { capeTextureLoader } from '../services/capeTextures';
 import {
   createPartnerGroup,
   createPendingCurrencyPurchase,
+  createStripeCheckoutSession,
   ensureCommerceIdentity,
   getSupabaseUserId,
   loadCurrencyPacks,
@@ -1381,7 +1382,7 @@ export function CosmeticLocker() {
     }
     setGuardState({ ...guardState, saving: true, error: null });
     try {
-      const pending = await createPendingCurrencyPurchase(email, guardState.pack.slug, 1800);
+      const pending = await createPendingCurrencyPurchase(email, guardState.pack.slug, 604800);
       if (!pending) throw new Error('Failed to create pending purchase.');
       setApprovedByPack((current) => ({
         ...current,
@@ -1412,6 +1413,18 @@ export function CosmeticLocker() {
       await openUrl(pack.kofi_url);
     } catch {
       window.open(pack.kofi_url, '_blank', 'noopener,noreferrer');
+    }
+  };
+
+  const handleOpenStripe = async (pack: CurrencyPackRecord) => {
+    try {
+      setErrorMessage(null);
+      const session = await createStripeCheckoutSession(pack.slug);
+      await openUrl(session.checkout_url);
+      setStatusMessage(`Opened Stripe checkout for ${pack.name}.`);
+    } catch (error) {
+      const message = formatUiError(error);
+      setErrorMessage(`Stripe checkout failed: ${message}`);
     }
   };
 
@@ -1834,19 +1847,29 @@ export function CosmeticLocker() {
                       {ready ? (
                         <p className="mt-2 text-[11px] text-emerald-200 font-bold">Approved email: {approved.email}</p>
                       ) : (
-                        <p className="mt-2 text-[11px] text-white/50">Requires warning + exact email confirmation.</p>
+                        <p className="mt-2 text-[11px] text-white/50">Stripe is instant. Ko-fi fallback requires warning + exact email confirmation.</p>
                       )}
-                      <button
-                        onClick={() => {
-                          void handleOpenKofi(pack);
-                        }}
-                        className={clsx(
-                          'mt-3 h-9 w-full rounded-lg border text-[11px] font-extrabold uppercase tracking-[0.12em]',
-                          ready ? 'g-btn-accent' : 'g-btn'
-                        )}
-                      >
-                        {ready ? 'Open Ko-fi Checkout' : 'Start Purchase Flow'}
-                      </button>
+                      <div className="mt-3 grid grid-cols-1 gap-2">
+                        <button
+                          onClick={() => {
+                            void handleOpenStripe(pack);
+                          }}
+                          className="h-9 w-full rounded-lg border text-[11px] font-extrabold uppercase tracking-[0.12em] g-btn-accent"
+                        >
+                          Pay With Stripe
+                        </button>
+                        <button
+                          onClick={() => {
+                            void handleOpenKofi(pack);
+                          }}
+                          className={clsx(
+                            'h-9 w-full rounded-lg border text-[11px] font-extrabold uppercase tracking-[0.12em]',
+                            ready ? 'g-btn-accent' : 'g-btn'
+                          )}
+                        >
+                          {ready ? 'Open Ko-fi (Fallback)' : 'Ko-fi Fallback Setup'}
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
