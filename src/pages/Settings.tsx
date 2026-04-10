@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type PointerEventHandler, type ReactNode, type WheelEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEventHandler, type ReactNode, type WheelEvent } from 'react';
 import { clsx } from 'clsx';
 import { APP_VERSION } from '../constants/version';
 import { TauriApi } from '../services/tauri';
@@ -30,10 +30,23 @@ import {
 import {
   checkForLauncherUpdate,
   downloadAndInstallLauncherUpdate,
+  publishSupabaseLauncherUpdate,
   readUpdatePreferences,
   writeUpdatePreferences,
   type ExternalUpdate
 } from '../services/updater';
+import {
+  isCurrentUserOwner,
+  loadOwnerMembers,
+  ownerGrantCapeToUser,
+  setUserWalletBalanceById,
+  type OwnerMemberRecord
+} from '../services/cosmetics';
+import {
+  FART_KEYBIND_UNLOCK_EVENT,
+  FART_KEYBIND_UNLOCK_KEY,
+  readFartKeybindUnlocked
+} from '../constants/fartKeybind';
 
 type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'custom';
@@ -98,7 +111,7 @@ type AppearancePresetExportFileV1 = {
   preset: AppearancePresetRecord;
 };
 
-type SettingsTab = 'general' | 'appearance' | 'keybinds' | 'widgets' | 'updates' | 'extra';
+type SettingsTab = 'general' | 'appearance' | 'keybinds' | 'widgets' | 'updates' | 'owner-utility' | 'extra';
 type AppearanceSection = 'animation' | 'background' | 'sidebar' | 'style' | 'presets' | 'shop';
 type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help' | 'information';
 type SidebarTabsVisibility = Record<SidebarTabId, boolean>;
@@ -258,7 +271,28 @@ const STARTUP_SCENE_THEMES: { id: StartupSceneTheme; label: string; description:
   { id: 'matrix', label: 'Matrix', description: 'Grid pulse style.' }
 ];
 
-const KEYBIND_GROUPS = [
+type KeybindDefinition = {
+  id: string;
+  label: string;
+  description: string;
+  defaultValue: string;
+  wired: boolean;
+};
+
+type KeybindGroup = {
+  title: string;
+  bindings: KeybindDefinition[];
+};
+
+const HIDDEN_FART_KEYBIND: KeybindDefinition = {
+  id: 'fart',
+  label: 'Fart',
+  description: 'Play a secret fart sound effect.',
+  defaultValue: '',
+  wired: true
+};
+
+const BASE_KEYBIND_GROUPS: KeybindGroup[] = [
   {
     title: 'Global',
     bindings: [
@@ -295,7 +329,17 @@ const KEYBIND_GROUPS = [
       { id: 'open-downloads', label: 'Open Downloads', description: 'Open the downloads/import page.', defaultValue: '', wired: true }
     ]
   }
-] as const;
+];
+
+function resolveKeybindGroups(fartUnlocked: boolean): KeybindGroup[] {
+  if (!fartUnlocked) return BASE_KEYBIND_GROUPS;
+  return BASE_KEYBIND_GROUPS.map((group) => {
+    if (group.title !== 'Global') return group;
+    const hasFart = group.bindings.some((binding) => binding.id === HIDDEN_FART_KEYBIND.id);
+    if (hasFart) return group;
+    return { ...group, bindings: [...group.bindings, HIDDEN_FART_KEYBIND] };
+  });
+}
 
 const STARTUP_SCENE_SOUND_PROFILES: { id: StartupSceneSoundProfile; label: string; description: string }[] = [
   { id: 'off', label: 'Off', description: 'Silent startup.' },
@@ -803,6 +847,7 @@ export function Settings() {
   const [shortcutSettings, setShortcutSettings] = useState<string>(() => localStorage.getItem(SHORTCUT_SETTINGS_KEY) || 'Ctrl+,');
   const [shortcutConsole, setShortcutConsole] = useState<string>(() => localStorage.getItem(SHORTCUT_CONSOLE_KEY) || CONSOLE_HOTKEY_DEFAULT);
   const [shortcutReplayStartupScene, setShortcutReplayStartupScene] = useState<string>(() => localStorage.getItem(SHORTCUT_REPLAY_STARTUP_SCENE_KEY) || 'Ctrl+Shift+J');
+  const [fartKeybindUnlocked, setFartKeybindUnlocked] = useState<boolean>(() => readFartKeybindUnlocked());
   const [draftShortcutSearch, setDraftShortcutSearch] = useState<string>(() => localStorage.getItem(SHORTCUT_SEARCH_KEY) || 'Ctrl+K');
   const [draftShortcutInstanceLauncher, setDraftShortcutInstanceLauncher] = useState<string>(() => localStorage.getItem(SHORTCUT_INSTANCE_LAUNCHER_KEY) || 'Ctrl+Shift+K');
   const [draftShortcutCreateInstance, setDraftShortcutCreateInstance] = useState<string>(() => localStorage.getItem(SHORTCUT_CREATE_INSTANCE_KEY) || 'Ctrl+N');
@@ -847,6 +892,22 @@ export function Settings() {
   const [updaterProgress, setUpdaterProgress] = useState<number | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [updateOwnerAccess, setUpdateOwnerAccess] = useState(false);
+  const [updateOwnerChecking, setUpdateOwnerChecking] = useState(true);
+  const [updatePublishVersion, setUpdatePublishVersion] = useState('');
+  const [updatePublishInstaller, setUpdatePublishInstaller] = useState<File | null>(null);
+  const [publishingUpdate, setPublishingUpdate] = useState(false);
+  const [publishStatus, setPublishStatus] = useState<string | null>(null);
+  const [ownerUtilityOpen, setOwnerUtilityOpen] = useState(false);
+  const [ownerMembers, setOwnerMembers] = useState<OwnerMemberRecord[]>([]);
+  const [ownerMembersLoading, setOwnerMembersLoading] = useState(false);
+  const [ownerMembersError, setOwnerMembersError] = useState<string | null>(null);
+  const [ownerMemberSearch, setOwnerMemberSearch] = useState('');
+  const [selectedOwnerMemberId, setSelectedOwnerMemberId] = useState<string | null>(null);
+  const [ownerBalanceDraft, setOwnerBalanceDraft] = useState('');
+  const [ownerCapeGrantInput, setOwnerCapeGrantInput] = useState('');
+  const [ownerUtilityBusy, setOwnerUtilityBusy] = useState(false);
+  const [ownerUtilityStatus, setOwnerUtilityStatus] = useState<string | null>(null);
   const [updateAutoCheckEnabled, setUpdateAutoCheckEnabled] = useState<boolean>(() => readUpdatePreferences().autoCheck);
   const [updateNotificationsEnabled, setUpdateNotificationsEnabled] = useState<boolean>(() => readUpdatePreferences().notifications);
   const [themeMode, setThemeMode] = useState<LauncherTheme>(() => {
@@ -888,6 +949,7 @@ export function Settings() {
   const [appearancePresetError, setAppearancePresetError] = useState<string | null>(null);
   const [shopRarityTheme, setShopRarityTheme] = useState<ShopRarityThemeSettings>(() => readShopRarityThemeSettings());
   const appearanceImportRef = useRef<HTMLInputElement | null>(null);
+  const publishInstallerInputRef = useRef<HTMLInputElement | null>(null);
   const [backgroundVisualOpacity, setBackgroundVisualOpacity] = useState<number>(() => {
     const stored = Number(localStorage.getItem(BACKGROUND_VISUAL_OPACITY_KEY));
     if (Number.isFinite(stored)) return clampBackgroundOpacity(stored);
@@ -1001,6 +1063,7 @@ export function Settings() {
     || draftShortcutConsole !== shortcutConsole
     || draftShortcutReplayStartupScene !== shortcutReplayStartupScene
     || serializeKeybindMap(draftExtraKeybinds) !== serializeKeybindMap(extraKeybinds);
+  const keybindGroups = resolveKeybindGroups(fartKeybindUnlocked);
   const applyTheme = (next: LauncherTheme) => {
     setThemeMode(next);
     localStorage.setItem(THEME_STORAGE_KEY, next);
@@ -1492,6 +1555,184 @@ export function Settings() {
     }
   };
 
+  const runPublishUpdate = async () => {
+    if (!updateOwnerAccess) {
+      setPublishStatus('Owner access required.');
+      return;
+    }
+    if (!updatePublishInstaller) {
+      setPublishStatus('Select a Windows setup .exe first.');
+      return;
+    }
+
+    setPublishingUpdate(true);
+    setPublishStatus('Uploading installer and writing latest.json...');
+    try {
+      const result = await publishSupabaseLauncherUpdate(updatePublishVersion, updatePublishInstaller);
+      setPublishStatus(`Published v${result.version}. updates/latest.json now points to ${result.installerObjectPath}.`);
+      setUpdatePublishVersion('');
+      setUpdatePublishInstaller(null);
+      if (publishInstallerInputRef.current) {
+        publishInstallerInputRef.current.value = '';
+      }
+      setUpdaterStatus(`Published new update manifest: v${result.version}`);
+      setAvailableUpdate(null);
+    } catch (error) {
+      setPublishStatus(`Publish failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setPublishingUpdate(false);
+    }
+  };
+
+  const filteredOwnerMembers = useMemo(() => {
+    const query = ownerMemberSearch.trim().toLowerCase();
+    if (!query) return ownerMembers;
+    return ownerMembers.filter((member) => {
+      const username = (member.username ?? '').toLowerCase();
+      const displayName = (member.display_name ?? '').toLowerCase();
+      const uuid = (member.mc_uuid ?? '').toLowerCase();
+      return username.includes(query) || displayName.includes(query) || uuid.includes(query);
+    });
+  }, [ownerMemberSearch, ownerMembers]);
+
+  const selectedOwnerMember = useMemo(
+    () => ownerMembers.find((member) => member.user_id === selectedOwnerMemberId) ?? null,
+    [ownerMembers, selectedOwnerMemberId]
+  );
+
+  const refreshOwnerMembers = async () => {
+    if (!updateOwnerAccess) return;
+    setOwnerMembersLoading(true);
+    setOwnerMembersError(null);
+    try {
+      const rows = await loadOwnerMembers();
+      setOwnerMembers(rows);
+      if (rows.length === 0) {
+        setSelectedOwnerMemberId(null);
+        setOwnerBalanceDraft('');
+      } else if (!selectedOwnerMemberId || !rows.some((member) => member.user_id === selectedOwnerMemberId)) {
+        setSelectedOwnerMemberId(rows[0].user_id);
+        setOwnerBalanceDraft(String(rows[0].balance_bb ?? 0));
+      }
+    } catch (error) {
+      setOwnerMembersError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setOwnerMembersLoading(false);
+    }
+  };
+
+  const openOwnerUtility = async () => {
+    setOwnerUtilityStatus(null);
+    setOwnerCapeGrantInput('');
+    setOwnerUtilityOpen(true);
+    await refreshOwnerMembers();
+  };
+
+  const handleOwnerSelectMember = (member: OwnerMemberRecord) => {
+    setSelectedOwnerMemberId(member.user_id);
+    setOwnerBalanceDraft(String(member.balance_bb ?? 0));
+    setOwnerUtilityStatus(null);
+  };
+
+  const handleOwnerApplyBalance = async () => {
+    if (!selectedOwnerMember) return;
+    const parsed = Number(ownerBalanceDraft);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setOwnerUtilityStatus('Balance must be a non-negative number.');
+      return;
+    }
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      const wallet = await setUserWalletBalanceById(selectedOwnerMember.user_id, Math.floor(parsed));
+      setOwnerMembers((current) =>
+        current.map((member) => (member.user_id === selectedOwnerMember.user_id ? { ...member, balance_bb: wallet.balance_bb } : member))
+      );
+      setOwnerBalanceDraft(String(wallet.balance_bb));
+      setOwnerUtilityStatus(`Updated balance for ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id}.`);
+    } catch (error) {
+      setOwnerUtilityStatus(`Balance update failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
+  const handleOwnerGrantCape = async () => {
+    if (!selectedOwnerMember) return;
+    const target = ownerCapeGrantInput.trim();
+    if (!target) {
+      setOwnerUtilityStatus('Enter a cape name or slug first.');
+      return;
+    }
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      const result = await ownerGrantCapeToUser(selectedOwnerMember.user_id, target);
+      setOwnerUtilityStatus(
+        result.already_owned
+          ? `${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id} already owns ${result.cape_slug}.`
+          : `Granted ${result.cape_slug} to ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id}.`
+      );
+      setOwnerCapeGrantInput('');
+    } catch (error) {
+      setOwnerUtilityStatus(`Grant failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    let mounted = true;
+    const loadOwnerAccess = async () => {
+      setUpdateOwnerChecking(true);
+      try {
+        const allowed = await isCurrentUserOwner();
+        if (!mounted) return;
+        setUpdateOwnerAccess(allowed);
+      } catch {
+        if (!mounted) return;
+        setUpdateOwnerAccess(false);
+      } finally {
+        if (mounted) setUpdateOwnerChecking(false);
+      }
+    };
+    void loadOwnerAccess();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedOwnerMember) return;
+    setOwnerBalanceDraft(String(selectedOwnerMember.balance_bb ?? 0));
+  }, [selectedOwnerMember?.user_id, selectedOwnerMember?.balance_bb]);
+
+  useEffect(() => {
+    const syncFartKeybind = () => {
+      setFartKeybindUnlocked(readFartKeybindUnlocked());
+    };
+    const onFartUnlockChange = (event: Event) => {
+      const custom = event as CustomEvent<{ unlocked?: boolean }>;
+      if (typeof custom.detail?.unlocked === 'boolean') {
+        setFartKeybindUnlocked(custom.detail.unlocked);
+        return;
+      }
+      syncFartKeybind();
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === FART_KEYBIND_UNLOCK_KEY) {
+        syncFartKeybind();
+      }
+    };
+
+    window.addEventListener(FART_KEYBIND_UNLOCK_EVENT, onFartUnlockChange as EventListener);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(FART_KEYBIND_UNLOCK_EVENT, onFartUnlockChange as EventListener);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
   useEffect(() => {
     if (!capturingShortcut) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1884,6 +2125,130 @@ export function Settings() {
         title="Universal Loading Screen"
         description="This style will be used for launch, install, import, and export actions."
       />
+      {ownerUtilityOpen && (
+        <div className="fixed inset-0 z-[200]">
+          <button
+            aria-label="Close Owner Utility"
+            onClick={() => setOwnerUtilityOpen(false)}
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+          />
+          <div className="absolute left-1/2 top-1/2 w-[min(1080px,96vw)] h-[min(760px,92vh)] -translate-x-1/2 -translate-y-1/2 rounded-[22px] border border-white/20 bg-[#07070b] p-4 md:p-5 flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between gap-3 pb-3 border-b border-white/10">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.16em] font-black g-accent-text">Owner Utility</p>
+                <h3 className="text-2xl font-extrabold text-white mt-1">Members & Economy</h3>
+              </div>
+              <button
+                onClick={() => setOwnerUtilityOpen(false)}
+                className="g-btn h-10 px-3 text-xs font-extrabold uppercase tracking-[0.12em]"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 mt-3 grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-3">
+              <aside className="min-h-0 rounded-xl border border-white/10 bg-white/[0.02] p-3 flex flex-col gap-2">
+                <input
+                  value={ownerMemberSearch}
+                  onChange={(event) => setOwnerMemberSearch(event.target.value)}
+                  placeholder="Search members..."
+                  className="g-input h-10 text-sm"
+                />
+                <button
+                  onClick={() => { void refreshOwnerMembers(); }}
+                  disabled={ownerMembersLoading}
+                  className="g-btn h-9 text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                >
+                  {ownerMembersLoading ? 'Refreshing...' : 'Refresh Members'}
+                </button>
+                <div className="min-h-0 flex-1 overflow-auto space-y-1 pr-1">
+                  {filteredOwnerMembers.map((member) => {
+                    const active = member.user_id === selectedOwnerMemberId;
+                    const title = member.username || member.display_name || member.user_id;
+                    return (
+                      <button
+                        key={member.user_id}
+                        onClick={() => handleOwnerSelectMember(member)}
+                        className={clsx(
+                          'w-full rounded-lg border px-3 py-2 text-left transition',
+                          active ? 'border-[var(--g-accent)] bg-[color:color-mix(in_srgb,var(--g-accent)_14%,transparent)]' : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.05]'
+                        )}
+                      >
+                        <p className="text-sm font-bold text-white truncate">{title}</p>
+                        <p className="text-[10px] text-white/55 mt-0.5 truncate">{member.mc_uuid || 'No MC UUID'}</p>
+                        <p className="text-[10px] text-white/60 mt-1">{member.balance_bb.toLocaleString()} BB</p>
+                      </button>
+                    );
+                  })}
+                  {!ownerMembersLoading && filteredOwnerMembers.length === 0 && (
+                    <p className="text-xs text-white/55 px-1 py-2">No members found.</p>
+                  )}
+                </div>
+              </aside>
+
+              <section className="min-h-0 rounded-xl border border-white/10 bg-white/[0.02] p-4 overflow-auto space-y-4">
+                {selectedOwnerMember ? (
+                  <>
+                    <div className="rounded-lg border border-white/10 bg-black/40 p-3">
+                      <p className="text-[11px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Selected Member</p>
+                      <p className="text-xl font-extrabold text-white mt-1">{selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id}</p>
+                      <p className="text-xs text-white/55 mt-1">MC UUID: {selectedOwnerMember.mc_uuid || 'not linked'}</p>
+                      <p className="text-xs text-white/55 mt-1">Role: {selectedOwnerMember.role}</p>
+                    </div>
+
+                    <div className="rounded-lg border border-white/10 bg-black/40 p-3 space-y-3">
+                      <p className="text-[11px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Set Balance</p>
+                      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                        <input
+                          value={ownerBalanceDraft}
+                          onChange={(event) => setOwnerBalanceDraft(event.target.value)}
+                          placeholder="Balance BB"
+                          className="g-input h-10 text-sm"
+                        />
+                        <button
+                          onClick={() => { void handleOwnerApplyBalance(); }}
+                          disabled={ownerUtilityBusy}
+                          className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                        >
+                          Apply Balance
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-white/10 bg-black/40 p-3 space-y-3">
+                      <p className="text-[11px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Grant Cape For Free</p>
+                      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                        <input
+                          value={ownerCapeGrantInput}
+                          onChange={(event) => setOwnerCapeGrantInput(event.target.value)}
+                          placeholder="Cape name or slug"
+                          className="g-input h-10 text-sm"
+                        />
+                        <button
+                          onClick={() => { void handleOwnerGrantCape(); }}
+                          disabled={ownerUtilityBusy}
+                          className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                        >
+                          Grant Cape
+                        </button>
+                      </div>
+                    </div>
+
+                    {ownerUtilityStatus && (
+                      <p className="text-xs text-white/70">{ownerUtilityStatus}</p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-white/60">Select a member from the left panel.</p>
+                )}
+                {ownerMembersError && (
+                  <p className="text-xs text-red-300">{ownerMembersError}</p>
+                )}
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
       <section className="g-panel-strong p-6">
         <p className="text-[10px] uppercase tracking-[0.2em] font-extrabold g-accent-text">Settings</p>
         <h1 className="text-5xl font-extrabold text-white mt-1">Launcher Control</h1>
@@ -1896,6 +2261,9 @@ export function Settings() {
         <button onClick={() => setTab('keybinds')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'keybinds' ? 'bg-white/15 text-white' : 'text-white/55')}>Keybinds</button>
         <button onClick={() => setTab('widgets')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'widgets' ? 'bg-white/15 text-white' : 'text-white/55')}>Widgets</button>
         <button onClick={() => setTab('updates')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'updates' ? 'bg-white/15 text-white' : 'text-white/55')}>Updates</button>
+        {updateOwnerAccess && (
+          <button onClick={() => setTab('owner-utility')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'owner-utility' ? 'bg-white/15 text-white' : 'text-white/55')}>Owner Utility</button>
+        )}
         <button onClick={() => setTab('extra')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'extra' ? 'bg-white/15 text-white' : 'text-white/55')}>Extra</button>
       </section>
 
@@ -2709,7 +3077,7 @@ export function Settings() {
             <p className="text-[11px] text-white/40">These settings affect the in-app Bloom Console overlay in real time.</p>
           </div>
 
-          {KEYBIND_GROUPS.map((group) => (
+          {keybindGroups.map((group) => (
             <div key={group.title} className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
               <div>
                 <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">{group.title}</p>
@@ -2833,7 +3201,7 @@ export function Settings() {
               <div>
                 <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Launcher Version</p>
                 <p className="text-2xl font-extrabold text-white mt-1">{APP_VERSION}</p>
-                <p className="text-xs g-muted mt-1">Bloom checks GitHub Releases for the newest Windows installer.</p>
+                <p className="text-xs g-muted mt-1">Bloom checks your Supabase update manifest for the newest Windows installer.</p>
               </div>
               <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 min-w-[220px]">
                 <p className="text-[11px] uppercase tracking-[0.12em] font-extrabold text-white/55">Status</p>
@@ -2866,8 +3234,61 @@ export function Settings() {
                 {installingUpdate ? 'Installing...' : availableUpdate ? `Install v${availableUpdate.version}` : 'No Update'}
               </button>
             </div>
-            <p className="text-[10px] g-muted">Release assets are pulled from the latest GitHub Release installer asset (`*-setup.exe` or `.msi`).</p>
+            <p className="text-[10px] g-muted">Update assets are pulled from Supabase Storage using `updates/latest.json`.</p>
           </div>
+
+          {!updateOwnerChecking && updateOwnerAccess && (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Owner Update Publisher</p>
+                <p className="text-xs g-muted mt-1">Upload one new `.exe` and Bloom will replace `updates/BloomClient-latest-x64-setup.exe` and regenerate `updates/latest.json` automatically.</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                <input
+                  value={updatePublishVersion}
+                  onChange={(event) => setUpdatePublishVersion(event.target.value)}
+                  placeholder="Version (example: 1.4.2)"
+                  className="g-input h-10 text-sm"
+                />
+                <button
+                  onClick={() => publishInstallerInputRef.current?.click()}
+                  disabled={publishingUpdate}
+                  className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                >
+                  {updatePublishInstaller ? 'Change .exe' : 'Choose .exe'}
+                </button>
+              </div>
+
+              <input
+                ref={publishInstallerInputRef}
+                type="file"
+                accept=".exe,application/x-msdownload,application/vnd.microsoft.portable-executable"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  setUpdatePublishInstaller(file);
+                }}
+              />
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] text-white/65">
+                  {updatePublishInstaller ? `Selected: ${updatePublishInstaller.name}` : 'No installer selected.'}
+                </p>
+                <button
+                  onClick={() => { void runPublishUpdate(); }}
+                  disabled={publishingUpdate || !updatePublishInstaller || !updatePublishVersion.trim()}
+                  className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                >
+                  {publishingUpdate ? 'Publishing...' : 'Publish Update'}
+                </button>
+              </div>
+
+              {publishStatus && (
+                <p className="text-[11px] text-white/70">{publishStatus}</p>
+              )}
+            </div>
+          )}
 
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
@@ -2896,6 +3317,26 @@ export function Settings() {
               />
             </div>
           </div>
+        </section>
+      ) : tab === 'owner-utility' ? (
+        <section className="g-panel p-6 space-y-4">
+          {!updateOwnerAccess ? (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Owner Utility</p>
+              <p className="text-xs g-muted mt-1">Owner role required.</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+              <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Owner Utility</p>
+              <p className="text-xs g-muted mt-1">Manage Bloom members. Set balances and grant capes for free from one panel.</p>
+              <button
+                onClick={() => { void openOwnerUtility(); }}
+                className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]"
+              >
+                Open Owner Utility
+              </button>
+            </div>
+          )}
         </section>
       ) : (
         <section className="g-panel p-6 space-y-4">

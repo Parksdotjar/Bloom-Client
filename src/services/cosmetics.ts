@@ -1,11 +1,13 @@
 import { supabase } from './supabase';
 
+export type CommerceRole = 'user' | 'partner' | 'owner';
+
 export type CommerceProfile = {
   user_id: string;
   username: string | null;
   display_name: string | null;
   mc_uuid: string | null;
-  role: 'user' | 'owner';
+  role: CommerceRole;
   created_at: string;
   updated_at: string;
 };
@@ -16,6 +18,7 @@ export type CapeRecord = {
   name: string;
   description: string | null;
   partner_group: string | null;
+  partner_for_profits: boolean;
   texture_url: string;
   preview_url: string | null;
   price_bb: number;
@@ -48,6 +51,7 @@ export type OwnedCapeRecord = {
   name: string;
   description: string | null;
   partner_group: string | null;
+  partner_for_profits?: boolean;
   texture_url: string;
   preview_url: string | null;
   rarity: string;
@@ -85,7 +89,7 @@ export type OwnerMemberRecord = {
   username: string | null;
   display_name: string | null;
   mc_uuid: string | null;
-  role: 'user' | 'owner';
+  role: CommerceRole;
   balance_bb: number;
   profile_updated_at: string;
   wallet_updated_at: string | null;
@@ -119,9 +123,104 @@ export type CurrencyPackRecord = {
   base_bb: number;
   bonus_bb: number;
   total_bb: number;
-  kofi_url: string;
+  tebex_package_id: string | null;
   is_active: boolean;
   sort_order: number;
+};
+
+export type OwnerCapeLiteRecord = {
+  id: string;
+  slug: string;
+  name: string;
+  rarity: string;
+  partner_group: string | null;
+  partner_for_profits: boolean;
+  is_active: boolean;
+};
+
+export type OwnerPartnerCapeMappingRecord = {
+  cape_id: string;
+  cape_slug: string;
+  cape_name: string;
+  partner_group: string | null;
+  partner_user_id: string | null;
+  partner_username: string | null;
+  partner_display_name: string | null;
+  is_active: boolean;
+  updated_at: string | null;
+};
+
+export type PartnerWalletRecord = {
+  user_id: string;
+  balance_bb: number;
+  updated_at: string;
+};
+
+export type PartnerWalletLedgerRecord = {
+  id: string;
+  user_id: string;
+  entry_type: string;
+  amount_bb: number;
+  balance_after: number | null;
+  reference_type: string | null;
+  reference_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type PartnerCashoutRequestRecord = {
+  id: string;
+  user_id: string;
+  username: string | null;
+  display_name: string | null;
+  requested_bb: number;
+  status: 'pending' | 'approved' | 'paid' | 'rejected' | 'cancelled';
+  note: string | null;
+  requested_at: string;
+  processed_at: string | null;
+  processed_by: string | null;
+  processed_note: string | null;
+};
+
+export type PartnerGiftResult = {
+  gifted_to_user_id: string;
+  gifted_to_username: string | null;
+  cape_id: string;
+  cape_slug: string;
+  partner_wallet_balance_bb: number;
+};
+
+export type PartnerWalletPurchaseResult = {
+  cape_id: string;
+  cape_slug: string;
+  partner_wallet_balance_bb: number;
+  equipped_cape_id: string | null;
+  already_owned: boolean;
+};
+
+export type PromoCodeRecord = {
+  id: string;
+  code: string;
+  description: string | null;
+  is_active: boolean;
+  hidden_in_shop: boolean;
+  max_redemptions: number | null;
+  per_user_limit: number;
+  expires_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PromoCodeCapeLinkRecord = {
+  promo_code_id: string;
+  cape_id: string;
+};
+
+export type PromoRedeemResult = {
+  code: string;
+  granted_cape_slugs: string[];
+  already_owned_cape_slugs: string[];
 };
 
 export type PartnerGroupRecord = {
@@ -132,18 +231,6 @@ export type PartnerGroupRecord = {
   is_active: boolean;
   created_at: string;
   updated_at: string;
-};
-
-export type PendingCurrencyPurchaseRecord = {
-  id: string;
-  user_id: string;
-  email: string;
-  package_slug: string;
-  status: string;
-  created_at: string;
-  updated_at: string;
-  expires_at: string;
-  matched_kofi_event_id: string | null;
 };
 
 export type PurchaseCapeResult = {
@@ -159,6 +246,7 @@ export type UpdateCapeInput = {
   name: string;
   description: string | null;
   partner_group: string | null;
+  partner_for_profits: boolean;
   texture_url: string;
   preview_url: string | null;
   price_bb: number;
@@ -251,6 +339,14 @@ export type FinalizeCustomCapeExportResult = {
   transaction_status: string;
 };
 
+type TebexCheckoutCreateResponse = {
+  ok: boolean;
+  ident?: string | null;
+  checkout_url?: string | null;
+  error?: string;
+  message?: string;
+};
+
 function resolveEdgeBase() {
   const raw = String(import.meta.env.VITE_SUPABASE_URL || 'https://sb.bloomclient.org').trim();
   try {
@@ -268,26 +364,6 @@ function extractEdgeError(payload: unknown, fallback = 'edge_request_failed') {
     (typeof obj.error === 'string' && obj.error) ||
     fallback
   );
-}
-
-async function edgeJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const session = await supabase.auth.getSession();
-  const token = session.data.session?.access_token;
-  if (!token) throw new Error('auth_session_missing');
-
-  const base = resolveEdgeBase();
-  const response = await fetch(`${base}/functions/v1/main${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {})
-    }
-  });
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(extractEdgeError(payload, `edge_${response.status}`));
-  return payload as T;
 }
 
 export const DEFAULT_PREVIEW_APPEARANCE: PreviewAppearanceRecord = {
@@ -327,7 +403,7 @@ export async function loadShopCapes(search: string, rarity: string | null) {
   let query = supabase
     .from('commerce_capes')
     .select(
-      'id,slug,name,description,partner_group,texture_url,preview_url,price_bb,rarity,rarity_label,rarity_color_start,rarity_color_end,rarity_glow,render_pos_x,render_pos_y,render_pos_z,render_rot_x,render_rot_y,render_rot_z,render_depth_z,render_brightness,sort_order,is_active,is_featured,created_at,updated_at'
+      'id,slug,name,description,partner_group,partner_for_profits,texture_url,preview_url,price_bb,rarity,rarity_label,rarity_color_start,rarity_color_end,rarity_glow,render_pos_x,render_pos_y,render_pos_z,render_rot_x,render_rot_y,render_rot_z,render_depth_z,render_brightness,sort_order,is_active,is_featured,created_at,updated_at'
     )
     .eq('is_active', true)
     .order('is_featured', { ascending: false })
@@ -414,11 +490,26 @@ export async function setUserWalletBalanceById(userId: string, balanceBb: number
   return row;
 }
 
-export async function setUserRole(username: string, role: 'user' | 'owner') {
+export async function setUserRole(username: string, role: CommerceRole) {
   const cleanUsername = username.trim();
-  const cleanRole = role === 'owner' ? 'owner' : 'user';
+  const cleanRole: CommerceRole = role === 'owner' ? 'owner' : role === 'partner' ? 'partner' : 'user';
   const { data, error } = await supabase.rpc('commerce_set_user_role', {
     p_username: cleanUsername,
+    p_role: cleanRole
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? ((data as CommerceProfile[])[0] ?? null) : ((data as CommerceProfile | null) ?? null);
+  if (!row) {
+    throw new Error('profile_not_found_or_role_update_failed');
+  }
+  return row;
+}
+
+export async function setUserRoleById(userId: string, role: CommerceRole) {
+  const cleanUserId = userId.trim();
+  const cleanRole: CommerceRole = role === 'owner' ? 'owner' : role === 'partner' ? 'partner' : 'user';
+  const { data, error } = await supabase.rpc('commerce_set_user_role_by_id', {
+    p_user_id: cleanUserId,
     p_role: cleanRole
   });
   if (error) throw error;
@@ -450,6 +541,233 @@ export async function ownerGrantCapeToUser(userId: string, capeNameOrSlug: strin
   return row;
 }
 
+export async function loadOwnerCapesLite() {
+  const { data, error } = await supabase
+    .from('commerce_capes')
+    .select('id,slug,name,rarity,partner_group,partner_for_profits,is_active')
+    .order('name', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as OwnerCapeLiteRecord[];
+}
+
+export async function loadOwnerPartnerCapeMappings() {
+  const { data, error } = await supabase.rpc('commerce_owner_list_partner_cape_mappings');
+  if (error) throw error;
+  return (data ?? []) as OwnerPartnerCapeMappingRecord[];
+}
+
+export async function setOwnerPartnerCapeMapping(capeId: string, partnerUserId: string, isActive = true) {
+  const { data, error } = await supabase.rpc('commerce_owner_set_partner_cape_mapping', {
+    p_cape_id: capeId.trim(),
+    p_partner_user_id: partnerUserId.trim(),
+    p_is_active: isActive
+  });
+  if (error) throw error;
+  return Array.isArray(data) ? data[0] ?? null : data ?? null;
+}
+
+export async function clearOwnerPartnerCapeMapping(capeId: string) {
+  const { data, error } = await supabase.rpc('commerce_owner_clear_partner_cape_mapping', {
+    p_cape_id: capeId.trim()
+  });
+  if (error) throw error;
+  return Boolean(data);
+}
+
+export async function loadOwnerPartnerWallets() {
+  const { data, error } = await supabase
+    .from('commerce_partner_wallets')
+    .select('user_id,balance_bb,updated_at')
+    .order('balance_bb', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as PartnerWalletRecord[];
+}
+
+export async function loadOwnerPartnerWalletLedger(limit = 100) {
+  const safeLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+  const { data, error } = await supabase
+    .from('commerce_partner_wallet_ledger')
+    .select('id,user_id,entry_type,amount_bb,balance_after,reference_type,reference_id,metadata,created_at')
+    .order('created_at', { ascending: false })
+    .limit(safeLimit);
+  if (error) throw error;
+  return (data ?? []) as PartnerWalletLedgerRecord[];
+}
+
+export async function loadOwnPartnerWallet() {
+  const { data, error } = await supabase
+    .from('commerce_partner_wallets')
+    .select('user_id,balance_bb,updated_at')
+    .maybeSingle();
+  if (error) throw error;
+  return data as PartnerWalletRecord | null;
+}
+
+export async function loadOwnPartnerWalletLedger(limit = 25) {
+  const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+  const { data, error } = await supabase.rpc('commerce_list_own_partner_wallet_ledger', {
+    p_limit: safeLimit
+  });
+  if (error) throw error;
+  return (data ?? []) as PartnerWalletLedgerRecord[];
+}
+
+export async function purchaseCapeWithPartnerWallet(slug: string, autoEquip = false) {
+  const { data, error } = await supabase.rpc('commerce_purchase_cape_with_partner_wallet', {
+    p_cape_slug: slug,
+    p_auto_equip: autoEquip
+  });
+  if (error) throw error;
+  const rows = (data ?? []) as PartnerWalletPurchaseResult[];
+  return rows[0] ?? null;
+}
+
+export async function giftCapeWithPartnerWallet(slug: string, targetIdentifier: string, note?: string | null) {
+  const { data, error } = await supabase.rpc('commerce_partner_gift_cape_from_wallet', {
+    p_cape_slug: slug,
+    p_target_identifier: targetIdentifier.trim(),
+    p_note: note?.trim() || null
+  });
+  if (error) throw error;
+  const rows = (data ?? []) as PartnerGiftResult[];
+  return rows[0] ?? null;
+}
+
+export async function requestPartnerCashout(amountBb: number, note?: string | null) {
+  const { data, error } = await supabase.rpc('commerce_partner_request_cashout', {
+    p_amount_bb: Math.max(0, Math.floor(amountBb)),
+    p_note: note?.trim() || null
+  });
+  if (error) throw error;
+  return (data as PartnerCashoutRequestRecord | null) ?? null;
+}
+
+export async function loadOwnerPartnerCashoutRequests() {
+  const { data, error } = await supabase.rpc('commerce_owner_list_partner_cashout_requests');
+  if (error) throw error;
+  return (data ?? []) as PartnerCashoutRequestRecord[];
+}
+
+export async function processOwnerPartnerCashout(
+  requestId: string,
+  action: 'approve' | 'paid' | 'reject',
+  note?: string | null
+) {
+  const { data, error } = await supabase.rpc('commerce_owner_process_partner_cashout', {
+    p_request_id: requestId.trim(),
+    p_action: action,
+    p_note: note?.trim() || null
+  });
+  if (error) throw error;
+  return (data as PartnerCashoutRequestRecord | null) ?? null;
+}
+
+export async function loadOwnerPromoCodes() {
+  const { data, error } = await supabase
+    .from('commerce_promo_codes')
+    .select('id,code,description,is_active,hidden_in_shop,max_redemptions,per_user_limit,expires_at,created_by,created_at,updated_at')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as PromoCodeRecord[];
+}
+
+export async function createOwnerPromoCode(input: {
+  code: string;
+  description?: string | null;
+  is_active?: boolean;
+  hidden_in_shop?: boolean;
+  max_redemptions?: number | null;
+  per_user_limit?: number;
+  expires_at?: string | null;
+}) {
+  const cleanCode = input.code.trim().toLowerCase();
+  const { data, error } = await supabase
+    .from('commerce_promo_codes')
+    .insert({
+      code: cleanCode,
+      description: input.description?.trim() || null,
+      is_active: input.is_active ?? true,
+      hidden_in_shop: input.hidden_in_shop ?? true,
+      max_redemptions: input.max_redemptions ?? null,
+      per_user_limit: Math.max(1, Math.floor(input.per_user_limit ?? 1)),
+      expires_at: input.expires_at ?? null
+    })
+    .select('id,code,description,is_active,hidden_in_shop,max_redemptions,per_user_limit,expires_at,created_by,created_at,updated_at')
+    .single();
+  if (error) throw error;
+  return data as PromoCodeRecord;
+}
+
+export async function updateOwnerPromoCode(
+  promoCodeId: string,
+  patch: Partial<{
+    code: string;
+    description: string | null;
+    is_active: boolean;
+    hidden_in_shop: boolean;
+    max_redemptions: number | null;
+    per_user_limit: number;
+    expires_at: string | null;
+  }>
+) {
+  const payload: Record<string, unknown> = {};
+  if (typeof patch.code === 'string') payload.code = patch.code.trim().toLowerCase();
+  if (patch.description !== undefined) payload.description = patch.description?.trim() || null;
+  if (typeof patch.is_active === 'boolean') payload.is_active = patch.is_active;
+  if (typeof patch.hidden_in_shop === 'boolean') payload.hidden_in_shop = patch.hidden_in_shop;
+  if (patch.max_redemptions !== undefined) payload.max_redemptions = patch.max_redemptions;
+  if (patch.per_user_limit !== undefined) payload.per_user_limit = Math.max(1, Math.floor(patch.per_user_limit));
+  if (patch.expires_at !== undefined) payload.expires_at = patch.expires_at;
+  const { data, error } = await supabase
+    .from('commerce_promo_codes')
+    .update(payload)
+    .eq('id', promoCodeId)
+    .select('id,code,description,is_active,hidden_in_shop,max_redemptions,per_user_limit,expires_at,created_by,created_at,updated_at')
+    .single();
+  if (error) throw error;
+  return data as PromoCodeRecord;
+}
+
+export async function deleteOwnerPromoCode(promoCodeId: string) {
+  const { error } = await supabase.from('commerce_promo_codes').delete().eq('id', promoCodeId);
+  if (error) throw error;
+}
+
+export async function loadOwnerPromoCodeCapeLinks() {
+  const { data, error } = await supabase
+    .from('commerce_promo_code_capes')
+    .select('promo_code_id,cape_id');
+  if (error) throw error;
+  return (data ?? []) as PromoCodeCapeLinkRecord[];
+}
+
+export async function setOwnerPromoCodeCapeLinks(promoCodeId: string, capeIds: string[]) {
+  const uniqueCapeIds = Array.from(new Set(capeIds.map((id) => id.trim()).filter(Boolean)));
+  const { error: deleteError } = await supabase
+    .from('commerce_promo_code_capes')
+    .delete()
+    .eq('promo_code_id', promoCodeId);
+  if (deleteError) throw deleteError;
+  if (uniqueCapeIds.length === 0) return;
+  const { error: insertError } = await supabase.from('commerce_promo_code_capes').insert(
+    uniqueCapeIds.map((capeId) => ({
+      promo_code_id: promoCodeId,
+      cape_id: capeId
+    }))
+  );
+  if (insertError) throw insertError;
+}
+
+export async function redeemPromoCode(code: string) {
+  const { data, error } = await supabase.rpc('commerce_redeem_promo_code', {
+    p_code: code.trim()
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? ((data as PromoRedeemResult[])[0] ?? null) : ((data as PromoRedeemResult | null) ?? null);
+  if (!row) throw new Error('promo_redeem_failed');
+  return row;
+}
+
 export async function loadWalletLedger(limit = 20) {
   const { data, error } = await supabase.rpc('commerce_list_wallet_ledger', {
     p_limit: Math.max(1, Math.min(200, Math.round(limit)))
@@ -461,11 +779,36 @@ export async function loadWalletLedger(limit = 20) {
 export async function loadCurrencyPacks() {
   const { data, error } = await supabase
     .from('commerce_currency_packs')
-    .select('id,slug,name,price_usd,base_bb,bonus_bb,total_bb,kofi_url,is_active,sort_order')
+    .select('id,slug,name,price_usd,base_bb,bonus_bb,total_bb,tebex_package_id,is_active,sort_order')
     .eq('is_active', true)
     .order('sort_order', { ascending: true });
   if (error) throw error;
   return (data ?? []) as CurrencyPackRecord[];
+}
+
+export async function createTebexCheckoutSession(packageSlug: string) {
+  const session = await supabase.auth.getSession();
+  const token = session.data.session?.access_token;
+  if (!token) throw new Error('auth_session_missing');
+
+  const response = await fetch(`${resolveEdgeBase()}/functions/v1/main/tebex/create-checkout`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ package_slug: packageSlug })
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as TebexCheckoutCreateResponse;
+  if (!response.ok || !payload.ok) {
+    throw new Error(extractEdgeError(payload, `tebex_checkout_${response.status}`));
+  }
+
+  return {
+    ident: (payload.ident ?? '').trim() || null,
+    checkoutUrl: (payload.checkout_url ?? '').trim() || null
+  };
 }
 
 export async function purchaseCape(slug: string, autoEquip = false) {
@@ -490,31 +833,6 @@ export async function setCapeLoadout(slug: string | null) {
   return (data as LoadoutRecord | null) ?? null;
 }
 
-export async function createPendingCurrencyPurchase(email: string, packageSlug: string, ttlSeconds = 1800) {
-  const { data, error } = await supabase.rpc('commerce_create_pending_currency_purchase', {
-    p_email: email,
-    p_package_slug: packageSlug,
-    p_ttl_seconds: ttlSeconds
-  });
-  if (error) throw error;
-  return data as PendingCurrencyPurchaseRecord | null;
-}
-
-export async function createStripeCheckoutSession(packageSlug: string) {
-  const payload = await edgeJson<{ ok: true; checkout_url: string | null; session_id: string | null }>('/stripe/create-checkout', {
-    method: 'POST',
-    body: JSON.stringify({ package_slug: packageSlug })
-  });
-  if (!payload.checkout_url) {
-    throw new Error('stripe_checkout_url_missing');
-  }
-  return {
-    ok: true as const,
-    checkout_url: payload.checkout_url,
-    session_id: payload.session_id
-  };
-}
-
 export async function updateCapeListing(capeId: string, patch: UpdateCapeInput) {
   const { data, error } = await supabase
     .from('commerce_capes')
@@ -523,6 +841,7 @@ export async function updateCapeListing(capeId: string, patch: UpdateCapeInput) 
       name: patch.name,
       description: patch.description,
       partner_group: patch.partner_group,
+      partner_for_profits: patch.partner_for_profits,
       texture_url: patch.texture_url,
       preview_url: patch.preview_url,
       price_bb: patch.price_bb,
@@ -545,7 +864,7 @@ export async function updateCapeListing(capeId: string, patch: UpdateCapeInput) 
     })
     .eq('id', capeId)
     .select(
-      'id,slug,name,description,partner_group,texture_url,preview_url,price_bb,rarity,rarity_label,rarity_color_start,rarity_color_end,rarity_glow,render_pos_x,render_pos_y,render_pos_z,render_rot_x,render_rot_y,render_rot_z,render_depth_z,render_brightness,sort_order,is_active,is_featured,created_at,updated_at'
+      'id,slug,name,description,partner_group,partner_for_profits,texture_url,preview_url,price_bb,rarity,rarity_label,rarity_color_start,rarity_color_end,rarity_glow,render_pos_x,render_pos_y,render_pos_z,render_rot_x,render_rot_y,render_rot_z,render_depth_z,render_brightness,sort_order,is_active,is_featured,created_at,updated_at'
     )
     .single();
   if (error) throw error;
