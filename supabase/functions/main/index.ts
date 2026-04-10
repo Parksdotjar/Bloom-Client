@@ -38,12 +38,11 @@ const CORS_HEADERS = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
-const KOFI_VERIFICATION_TOKEN = Deno.env.get("KOFI_VERIFICATION_TOKEN") ?? "";
 const CURSEFORGE_API_KEY = Deno.env.get("CURSEFORGE_API_KEY") ?? "";
-const STRIPE_SECRET_KEY = Deno.env.get("STRIPE_SECRET_KEY") ?? "";
-const STRIPE_WEBHOOK_SECRET = Deno.env.get("STRIPE_WEBHOOK_SECRET") ?? "";
-const STRIPE_SUCCESS_URL = Deno.env.get("STRIPE_SUCCESS_URL") ?? "";
-const STRIPE_CANCEL_URL = Deno.env.get("STRIPE_CANCEL_URL") ?? "";
+const TEBEX_CHECKOUT_API_KEY = Deno.env.get("TEBEX_CHECKOUT_API_KEY") ?? "";
+const TEBEX_COMPLETE_URL = Deno.env.get("TEBEX_COMPLETE_URL") ?? "";
+const TEBEX_CANCEL_URL = Deno.env.get("TEBEX_CANCEL_URL") ?? "";
+const TEBEX_WEBHOOK_SECRET = Deno.env.get("TEBEX_WEBHOOK_SECRET") ?? "";
 
 const DRAFT_BUCKET = Deno.env.get("BLOOM_CAPE_DRAFT_BUCKET") ?? "cape-drafts";
 const PUBLISHED_BUCKET = Deno.env.get("BLOOM_CAPE_PUBLISHED_BUCKET") ?? "cape-published";
@@ -151,22 +150,6 @@ async function relayCurseforge(request: Request, path: string, query: URLSearchP
   });
 }
 
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
-    a.localeCompare(b),
-  );
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
-}
-
-async function sha256(input: string): Promise<string> {
-  const bytes = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  return hex;
-}
-
 async function readPayload(request: Request): Promise<JsonObject> {
   const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
   const rawBody = await request.text();
@@ -198,51 +181,6 @@ async function readPayload(request: Request): Promise<JsonObject> {
   const nestedData = params.get("data");
   if (nestedData) return JSON.parse(nestedData) as JsonObject;
   return Object.fromEntries(params.entries());
-}
-
-function toFormUrlEncoded(input: Record<string, string>) {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(input)) {
-    params.set(key, value);
-  }
-  return params.toString();
-}
-
-function timingSafeEqualHex(a: string, b: string) {
-  const left = a.trim().toLowerCase();
-  const right = b.trim().toLowerCase();
-  if (!left || !right || left.length !== right.length) return false;
-  let result = 0;
-  for (let i = 0; i < left.length; i += 1) {
-    result |= left.charCodeAt(i) ^ right.charCodeAt(i);
-  }
-  return result === 0;
-}
-
-async function hmacSha256Hex(secret: string, payload: string) {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
-  return [...new Uint8Array(signature)].map((value) => value.toString(16).padStart(2, "0")).join("");
-}
-
-function parseStripeSignature(header: string | null) {
-  const out: { timestamp: string | null; signatures: string[] } = { timestamp: null, signatures: [] };
-  if (!header) return out;
-  for (const part of header.split(",")) {
-    const [rawKey, rawValue] = part.split("=", 2);
-    const key = (rawKey ?? "").trim();
-    const value = (rawValue ?? "").trim();
-    if (!key || !value) continue;
-    if (key === "t") out.timestamp = value;
-    if (key === "v1") out.signatures.push(value);
-  }
-  return out;
 }
 
 function getBearerToken(request: Request): string | null {
@@ -1167,76 +1105,47 @@ async function handleCustomCapeFinalize(request: Request) {
   return jsonResponse(200, { ok: true, result: rows[0] ?? null });
 }
 
-async function resolvePackageSlug(payload: JsonObject): Promise<{ slug: string | null; reason?: string }> {
-  const explicitSlug = asString(payload.package_slug);
-  if (explicitSlug) return { slug: explicitSlug.toLowerCase() };
-  const payloadUrl = normalizeUrl(payload.url ?? payload.kofi_url);
-  const amountRaw = asString(payload.amount ?? payload.total_amount ?? payload.price);
-  const amount = amountRaw ? Number.parseFloat(amountRaw) : Number.NaN;
-  const { data, error } = await admin
-    .from("commerce_currency_packs")
-    .select("slug,kofi_url,price_usd,is_active")
-    .eq("is_active", true);
-  if (error) return { slug: null, reason: `pack_query_failed:${error.message}` };
-  const packs = data ?? [];
-  if (payloadUrl) {
-    const matches = packs.filter((pack) => normalizeUrl(pack.kofi_url) === payloadUrl);
-    if (matches.length === 1) return { slug: matches[0].slug };
-    if (matches.length > 1) return { slug: null, reason: "ambiguous_kofi_url_match" };
-  }
-  if (Number.isFinite(amount)) {
-    const matches = packs.filter((pack) => Number(pack.price_usd) === amount);
-    if (matches.length === 1) return { slug: matches[0].slug };
-    if (matches.length > 1) return { slug: null, reason: "ambiguous_amount_match" };
-  }
-  return { slug: null, reason: "no_package_match" };
+function resolveTebexAuthHeader() {
+  const raw = TEBEX_CHECKOUT_API_KEY.trim();
+  if (!raw) return null;
+  if (raw.toLowerCase().startsWith("basic ")) return raw;
+  if (raw.includes(":")) return `Basic ${btoa(raw)}`;
+  return `Basic ${raw}`;
 }
 
-function resolveRawEventId(payload: JsonObject): Promise<string> {
-  const direct =
-    asString(payload.kofi_transaction_id) ??
-    asString(payload.transaction_id) ??
-    asString(payload.id) ??
-    asString(payload.message_id);
-  if (direct) return Promise.resolve(direct);
-  return sha256(stableStringify(payload)).then((hash) => `hash_${hash}`);
+function timingSafeEqualHex(a: string, b: string) {
+  const left = a.trim().toLowerCase();
+  const right = b.trim().toLowerCase();
+  if (!left || !right || left.length !== right.length) return false;
+  let result = 0;
+  for (let i = 0; i < left.length; i += 1) {
+    result |= left.charCodeAt(i) ^ right.charCodeAt(i);
+  }
+  return result === 0;
 }
 
-async function handleKofiWebhook(request: Request) {
-  if (!KOFI_VERIFICATION_TOKEN) {
-    return jsonResponse(503, { ok: false, error: "kofi_token_not_configured" });
-  }
-  const payload = await readPayload(request);
-  const incomingToken = asString(payload.verification_token);
-  if (!incomingToken || incomingToken !== KOFI_VERIFICATION_TOKEN) {
-    return jsonResponse(401, { ok: false, error: "invalid_verification_token" });
-  }
-  const rawEventId = await resolveRawEventId(payload);
-  const email = normalizeEmail(payload.email);
-  const packageResolution = await resolvePackageSlug(payload);
-  const packageSlug = packageResolution.slug ?? "";
-  const payloadWithMeta = {
-    ...payload,
-    _resolved_package_slug: packageSlug || null,
-    _resolve_reason: packageResolution.reason ?? null,
-  };
-  const { data, error } = await admin.rpc("commerce_process_kofi_event", {
-    p_raw_event_id: rawEventId,
-    p_email: email,
-    p_package_slug: packageSlug,
-    p_payload: payloadWithMeta,
-  });
-  if (error) return jsonResponse(500, { ok: false, error: "kofi_rpc_failed", message: error.message });
-  const result = Array.isArray(data) && data.length > 0 ? data[0] : null;
-  return jsonResponse(200, { ok: true, raw_event_id: rawEventId, result });
+async function sha256Hex(input: string) {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-async function handleStripeCreateCheckout(request: Request) {
-  if (!STRIPE_SECRET_KEY) {
-    return jsonResponse(503, { ok: false, error: "stripe_secret_not_configured" });
-  }
-  if (!STRIPE_SUCCESS_URL || !STRIPE_CANCEL_URL) {
-    return jsonResponse(503, { ok: false, error: "stripe_redirect_urls_not_configured" });
+async function hmacSha256Hex(secret: string, payload: string) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  return [...new Uint8Array(signature)].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function handleTebexCreateCheckout(request: Request) {
+  const tebexAuthHeader = resolveTebexAuthHeader();
+  if (!tebexAuthHeader) {
+    return jsonResponse(503, { ok: false, error: "tebex_checkout_api_key_not_configured" });
   }
 
   const auth = await requireAuth(request);
@@ -1246,109 +1155,112 @@ async function handleStripeCreateCheckout(request: Request) {
 
   const { data: pack, error: packError } = await admin
     .from("commerce_currency_packs")
-    .select("slug,name,is_active,stripe_price_id")
+    .select("slug,name,is_active,tebex_package_id")
     .eq("slug", packageSlug)
     .maybeSingle();
   if (packError) return jsonResponse(500, { ok: false, error: "pack_lookup_failed", message: packError.message });
   if (!pack || !pack.is_active) return jsonResponse(404, { ok: false, error: "package_not_found" });
-  const stripePriceId = asString((pack as { stripe_price_id?: string | null }).stripe_price_id ?? null);
-  if (!stripePriceId) return jsonResponse(400, { ok: false, error: "stripe_price_not_configured_for_package" });
+  const tebexPackageId = asString((pack as { tebex_package_id?: string | null }).tebex_package_id ?? null);
+  if (!tebexPackageId) return jsonResponse(400, { ok: false, error: "tebex_package_not_configured_for_package" });
 
   const { data: userRes, error: userError } = await admin.auth.admin.getUserById(auth.userId);
   if (userError) return jsonResponse(500, { ok: false, error: "user_lookup_failed", message: userError.message });
   const userEmail = normalizeEmail(userRes.user?.email ?? null);
 
-  const body = toFormUrlEncoded({
-    mode: "payment",
-    "line_items[0][price]": stripePriceId,
-    "line_items[0][quantity]": "1",
-    success_url: STRIPE_SUCCESS_URL,
-    cancel_url: STRIPE_CANCEL_URL,
-    "metadata[user_id]": auth.userId,
-    "metadata[package_slug]": packageSlug,
-    ...(userEmail ? { customer_email: userEmail } : {}),
-  });
+  const checkoutBody = {
+    complete_url: normalizeUrl(TEBEX_COMPLETE_URL) ?? undefined,
+    cancel_url: normalizeUrl(TEBEX_CANCEL_URL) ?? undefined,
+    complete_auto_redirect: true,
+    email: userEmail ?? undefined,
+    custom: {
+      user_id: auth.userId,
+      package_slug: packageSlug,
+    },
+    items: [
+      {
+        package: {
+          id: tebexPackageId,
+        },
+        quantity: 1,
+      },
+    ],
+  };
 
-  const response = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+  const response = await fetch("https://checkout.tebex.io/api/checkout", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${STRIPE_SECRET_KEY}`,
-      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: tebexAuthHeader,
+      "Content-Type": "application/json",
+      Accept: "application/json",
     },
-    body,
+    body: JSON.stringify(checkoutBody),
   });
 
-  const stripePayload = await response.json().catch(() => ({}));
+  const tebexPayload = await response.json().catch(() => ({}));
   if (!response.ok) {
     return jsonResponse(response.status, {
       ok: false,
-      error: "stripe_checkout_session_create_failed",
-      stripe: stripePayload,
+      error: "tebex_checkout_create_failed",
+      tebex: tebexPayload,
     });
   }
 
+  const payloadObj = tebexPayload as Record<string, unknown>;
+  const ident = asString(payloadObj.ident);
+  const links = (payloadObj.links ?? {}) as Record<string, unknown>;
+  const checkoutUrl = asString(links.checkout);
+
   return jsonResponse(200, {
     ok: true,
-    checkout_url: (stripePayload as { url?: string }).url ?? null,
-    session_id: (stripePayload as { id?: string }).id ?? null,
+    ident,
+    checkout_url: checkoutUrl,
+    package_slug: packageSlug,
   });
 }
 
-async function handleStripeWebhook(request: Request) {
-  if (!STRIPE_SECRET_KEY || !STRIPE_WEBHOOK_SECRET) {
-    return jsonResponse(503, { ok: false, error: "stripe_webhook_not_configured" });
-  }
-
+async function handleTebexWebhook(request: Request) {
   const rawBody = await request.text();
-  const signatureHeader = request.headers.get("stripe-signature");
-  const parsed = parseStripeSignature(signatureHeader);
-  if (!parsed.timestamp || parsed.signatures.length === 0) {
-    return jsonResponse(401, { ok: false, error: "stripe_signature_missing" });
+  let payload: JsonObject = {};
+  try {
+    payload = (JSON.parse(rawBody || "{}") as JsonObject) ?? {};
+  } catch {
+    const params = new URLSearchParams(rawBody);
+    const nested = params.get("data");
+    if (nested) {
+      try {
+        payload = JSON.parse(nested) as JsonObject;
+      } catch {
+        payload = Object.fromEntries(params.entries());
+      }
+    } else {
+      payload = Object.fromEntries(params.entries());
+    }
+  }
+  const eventType = asString(payload.type) ?? "";
+
+  // Tebex webhook validation challenge.
+  if (eventType === "validation.webhook") {
+    const eventId = asString(payload.id);
+    if (!eventId) return jsonResponse(400, { ok: false, error: "tebex_validation_id_missing" });
+    return jsonResponse(200, { id: eventId });
   }
 
-  const signedPayload = `${parsed.timestamp}.${rawBody}`;
-  const expected = await hmacSha256Hex(STRIPE_WEBHOOK_SECRET, signedPayload);
-  const valid = parsed.signatures.some((candidate) => timingSafeEqualHex(candidate, expected));
-  if (!valid) {
-    return jsonResponse(401, { ok: false, error: "stripe_signature_invalid" });
+  const signatureHeader =
+    request.headers.get("x-signature") ??
+    request.headers.get("X-Signature") ??
+    request.headers.get("x-tebex-signature");
+
+  if (TEBEX_WEBHOOK_SECRET.trim()) {
+    if (!signatureHeader) return jsonResponse(401, { ok: false, error: "tebex_signature_missing" });
+    const contentHash = await sha256Hex(rawBody);
+    const expected = await hmacSha256Hex(TEBEX_WEBHOOK_SECRET.trim(), contentHash);
+    if (!timingSafeEqualHex(signatureHeader, expected)) {
+      return jsonResponse(401, { ok: false, error: "tebex_signature_invalid" });
+    }
   }
 
-  const event = JSON.parse(rawBody) as JsonObject;
-  const eventType = asString(event.type) ?? "";
-  const eventId = asString(event.id) ?? "";
-  if (!eventId) return jsonResponse(400, { ok: false, error: "stripe_event_id_missing" });
-
-  if (eventType !== "checkout.session.completed" && eventType !== "checkout.session.async_payment_succeeded") {
-    return jsonResponse(200, { ok: true, ignored: true, event_type: eventType });
-  }
-
-  const eventData = (event.data as JsonObject | undefined)?.object as JsonObject | undefined;
-  if (!eventData) return jsonResponse(400, { ok: false, error: "stripe_event_data_missing" });
-
-  const paymentStatus = asString(eventData.payment_status);
-  if (paymentStatus && paymentStatus !== "paid") {
-    return jsonResponse(200, { ok: true, ignored: true, reason: "payment_not_paid", payment_status: paymentStatus });
-  }
-
-  const metadata = (eventData.metadata as JsonObject | undefined) ?? {};
-  const packageSlug = asString(metadata.package_slug) ?? "";
-  const userIdRaw = asString(metadata.user_id);
-  const stripeSessionId = asString(eventData.id);
-  const email = normalizeEmail(eventData.customer_details && typeof eventData.customer_details === "object"
-    ? (eventData.customer_details as JsonObject).email
-    : (eventData.customer_email ?? null));
-
-  const { data, error } = await admin.rpc("commerce_process_stripe_event", {
-    p_stripe_event_id: eventId,
-    p_stripe_session_id: stripeSessionId,
-    p_email: email,
-    p_package_slug: packageSlug,
-    p_user_id: userIdRaw,
-    p_payload: event,
-  });
-  if (error) return jsonResponse(500, { ok: false, error: "stripe_process_rpc_failed", message: error.message });
-  const result = Array.isArray(data) && data.length > 0 ? data[0] : null;
-  return jsonResponse(200, { ok: true, event_id: eventId, result });
+  // TODO: add payment crediting flow for payment.completed using your wallet ledger pipeline.
+  return jsonResponse(200, { ok: true, received: true, type: eventType || null });
 }
 
 Deno.serve(async (request) => {
@@ -1375,9 +1287,9 @@ Deno.serve(async (request) => {
     if (request.method === "GET" && route === "/custom-cape/draft/latest") return handleCustomCapeDraftLatest(request);
     if (request.method === "POST" && route === "/custom-cape/draft") return handleCustomCapeDraft(request);
     if (request.method === "POST" && route === "/custom-cape/finalize") return handleCustomCapeFinalize(request);
+    if (request.method === "POST" && route === "/tebex/create-checkout") return handleTebexCreateCheckout(request);
+    if (request.method === "POST" && route === "/tebex/webhook") return handleTebexWebhook(request);
 
-    if (request.method === "POST" && route === "/stripe/create-checkout") return handleStripeCreateCheckout(request);
-    if (request.method === "POST" && route === "/stripe/webhook") return handleStripeWebhook(request);
 
     if (request.method === "GET" && route === "/curseforge/categories") {
       const params = new URLSearchParams();
@@ -1474,7 +1386,6 @@ Deno.serve(async (request) => {
     if (playerMatch && request.method === "GET") return handleGifCapeGetPlayerCape(request, playerMatch[1]);
 
     if (request.method === "GET") return jsonResponse(200, { ok: true, service: "bloom-main", route: url.pathname, timestamp: new Date().toISOString() });
-    if (request.method === "POST" && route === "/kofi-webhook") return handleKofiWebhook(request);
     if (request.method !== "POST") {
       return jsonResponse(405, {
         ok: false,

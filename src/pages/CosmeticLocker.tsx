@@ -1,7 +1,7 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { clsx } from 'clsx';
-import { AlertTriangle, ChevronDown, Coins, Search, Trash2 } from 'lucide-react';
+import { ChevronDown, Coins, Search, Ticket, Trash2 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { COSMETICS_MOD_MENU_EVENT, consumeCosmeticsModMenuRequest } from '../constants/cosmeticsModMenu';
@@ -9,14 +9,15 @@ import { CapeMeshRenderer } from '../components/cosmetics/CapeMeshRenderer';
 import { MinecraftPlayerPreview } from '../components/cosmetics/MinecraftPlayerPreview';
 import { capeTextureLoader } from '../services/capeTextures';
 import {
+  createTebexCheckoutSession,
   createPartnerGroup,
-  createPendingCurrencyPurchase,
-  createStripeCheckoutSession,
   ensureCommerceIdentity,
   getSupabaseUserId,
   loadCurrencyPacks,
   loadCurrentLoadout,
   loadOwnedCapes,
+  loadOwnPartnerWallet,
+  loadOwnPartnerWalletLedger,
   loadPartnerGroups,
   loadAllCapeIdsForOwner,
   loadPreviewAppearance,
@@ -24,9 +25,12 @@ import {
   loadWallet,
   loadWalletLedger,
   purchaseCape,
+  purchaseCapeWithPartnerWallet,
+  requestPartnerCashout,
+  giftCapeWithPartnerWallet,
+  redeemPromoCode,
   setCapeLoadout,
   deactivateCapeListing,
-  deleteOwnCustomCape,
   subscribePartnerGroups,
   subscribePreviewAppearance,
   subscribeOwnLoadout,
@@ -41,6 +45,8 @@ import {
   type CurrencyPackRecord,
   type OwnedCapeRecord,
   type PartnerGroupRecord,
+  type PartnerWalletLedgerRecord,
+  type PartnerWalletPurchaseResult,
   type PreviewAppearanceRecord,
   type UpdateCapeInput,
   type WalletLedgerRecord
@@ -61,6 +67,7 @@ type DisplayCape = {
   name: string;
   description: string | null;
   partner_group: string | null;
+  partner_for_profits: boolean;
   texture_url: string;
   preview_url: string | null;
   price_bb: number;
@@ -100,15 +107,6 @@ type CapeSection = {
   label: string;
   color: string;
   items: DisplayCape[];
-};
-
-type PurchaseGuardState = {
-  pack: CurrencyPackRecord;
-  countdown: number;
-  step: 'warning' | 'email';
-  email: string;
-  saving: boolean;
-  error: string | null;
 };
 
 type OwnerCapeSqlDraft = {
@@ -168,11 +166,6 @@ type BloomDialogState =
   | {
       kind: 'confirm-delete-shop';
       cape: DisplayCape;
-    }
-  | {
-      kind: 'confirm-delete-custom';
-      cape: DisplayCape;
-      input: string;
     };
 
 type PreviewAppearanceKey =
@@ -203,6 +196,8 @@ const PREVIEW_APPEARANCE_SLIDERS: Array<{
 const OWNER_MOD_MENU_PASSPHRASE = 'flowers cant bloom without a bee';
 const TAG_PRESETS_STORAGE_KEY = 'bloom_cosmetic_tag_presets_v1';
 const CUSTOM_CAPE_TOS_ACCEPTED_STORAGE_KEY = 'bloom_custom_cape_tos_accepted_v1';
+const CAPE_NAME_MAX_LENGTH = 28;
+const HIDDEN_PARTNER_TABS = new Set(['grog', 'optimal smp', 'creator coaster']);
 const DEFAULT_OWNER_CAPE_SQL_DRAFT: OwnerCapeSqlDraft = {
   slug: '',
   name: '',
@@ -218,6 +213,16 @@ const DEFAULT_OWNER_CAPE_SQL_DRAFT: OwnerCapeSqlDraft = {
   sort_order: 0,
   is_active: true,
   is_featured: false
+};
+
+const BUILTIN_PROMO_TAG_PRESET: TagPreset = {
+  id: 'builtin:promo',
+  name: 'Tag - Promo (Hidden Code Unlock)',
+  rarity: 'promo',
+  rarity_label: 'PROMO',
+  rarity_color_start: '#35d19f',
+  rarity_color_end: '#0e4434',
+  rarity_glow: 'rgba(53, 209, 159, 0.42)'
 };
 
 function toSqlLiteral(value: string) {
@@ -236,6 +241,10 @@ function clamp01(value: number) {
 
 function clampNumber(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function clampCapeName(value: string) {
+  return value.slice(0, CAPE_NAME_MAX_LENGTH);
 }
 
 function hexToRgb(hex: string) {
@@ -426,6 +435,7 @@ function formatCapeSectionLabel(key: CapeSectionKey) {
 
 function pickCapeSectionColor(key: CapeSectionKey, items: DisplayCape[], shopRarityTheme: ShopRarityThemeSettings) {
   const first = items[0];
+  const rarityThemeKey = key === 'partners' ? 'partner' : key;
   const fallback = {
     start:
       first?.rarity_color_start ||
@@ -449,7 +459,7 @@ function pickCapeSectionColor(key: CapeSectionKey, items: DisplayCape[], shopRar
     end: first?.rarity_color_end || 'rgba(18, 18, 24, 0.92)',
     glow: first?.rarity_glow || 'rgba(255, 255, 255, 0.18)'
   };
-  return resolveShopRarityColors(key, fallback, shopRarityTheme).start;
+  return resolveShopRarityColors(rarityThemeKey, fallback, shopRarityTheme).start;
 }
 
 function groupCapesForDisplay(capes: DisplayCape[], shopRarityTheme: ShopRarityThemeSettings) {
@@ -486,6 +496,7 @@ function toDisplayFromOwned(owned: OwnedCapeRecord): DisplayCape {
     name: owned.name,
     description: owned.description,
     partner_group: owned.partner_group,
+    partner_for_profits: Boolean(owned.partner_for_profits),
     texture_url: owned.texture_url,
     preview_url: owned.preview_url,
     price_bb: 0,
@@ -517,6 +528,12 @@ function normalizeRarityDisplay(value: string) {
   return lower;
 }
 
+function isPromoCape(cape: DisplayCape) {
+  const rarity = (cape.rarity || '').trim().toLowerCase();
+  const label = (cape.rarity_label || '').trim().toLowerCase();
+  return rarity === 'promo' || label === 'promo';
+}
+
 function toDisplayFromShop(shop: CapeRecord, ownedSourcesByCapeId: Map<string, string>): DisplayCape {
   return {
     ...shop,
@@ -532,6 +549,7 @@ function toOwnerCapeEditDraft(cape: DisplayCape): OwnerCapeEditDraft {
     name: cape.name,
     description: cape.description,
     partner_group: cape.partner_group,
+    partner_for_profits: Boolean(cape.partner_for_profits),
     texture_url: cape.texture_url,
     preview_url: cape.preview_url,
     price_bb: cape.price_bb,
@@ -573,6 +591,7 @@ function toUpdateCapeInput(cape: DisplayCape, poseOverride?: ReturnType<typeof t
     name: cape.name.trim(),
     description: cape.description?.trim() || null,
     partner_group: cape.partner_group?.trim() || null,
+    partner_for_profits: Boolean(cape.partner_for_profits),
     texture_url: cape.texture_url.trim(),
     preview_url: cape.preview_url?.trim() || null,
     price_bb: Math.max(0, Number(cape.price_bb) || 0),
@@ -658,16 +677,23 @@ export function CosmeticLocker() {
   const [ownedCapes, setOwnedCapes] = useState<OwnedCapeRecord[]>([]);
   const [walletBalance, setWalletBalance] = useState<number>(0);
   const [walletLedger, setWalletLedger] = useState<WalletLedgerRecord[]>([]);
+  const [partnerWalletBalance, setPartnerWalletBalance] = useState<number>(0);
+  const [partnerWalletLedger, setPartnerWalletLedger] = useState<PartnerWalletLedgerRecord[]>([]);
+  const [partnerGiftTarget, setPartnerGiftTarget] = useState('');
+  const [partnerGiftNote, setPartnerGiftNote] = useState('');
+  const [partnerCashoutAmount, setPartnerCashoutAmount] = useState('');
+  const [partnerCashoutNote, setPartnerCashoutNote] = useState('');
   const [currencyPacks, setCurrencyPacks] = useState<CurrencyPackRecord[]>([]);
   const [equippedCapeId, setEquippedCapeId] = useState<string | null>(null);
   const [selectedCapeId, setSelectedCapeId] = useState<string | null>(null);
-  const [approvedByPack, setApprovedByPack] = useState<Record<string, { email: string; expiresAt: string; pendingId: string }>>({});
-  const [guardState, setGuardState] = useState<PurchaseGuardState | null>(null);
   const [loading, setLoading] = useState(true);
   const [shopLoading, setShopLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [promoRedeemOpen, setPromoRedeemOpen] = useState(false);
+  const [promoCodeInput, setPromoCodeInput] = useState('');
+  const [promoRedeemBusy, setPromoRedeemBusy] = useState(false);
   const [supabaseUserId, setSupabaseUserId] = useState<string | null>(null);
   const [commerceProfile, setCommerceProfile] = useState<CommerceProfile | null>(null);
   const [ownerPassphraseInput, setOwnerPassphraseInput] = useState('');
@@ -771,6 +797,8 @@ export function CosmeticLocker() {
     }
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [ownedDisplay, shopDisplay]);
+  const isOwner = commerceProfile?.role === 'owner';
+  const isPartner = commerceProfile?.role === 'partner';
 
   const lockerList = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -781,19 +809,25 @@ export function CosmeticLocker() {
     });
   }, [ownedDisplay, rarityFilter, searchQuery]);
 
-  const shopList = useMemo(() => {
-    return shopDisplay;
-  }, [shopDisplay]);
+  const shopList = useMemo(
+    () => shopDisplay.filter((cape) => !isPromoCape(cape)),
+    [shopDisplay]
+  );
 
   const partnerGroups = useMemo(() => {
     const values = partnerGroupRecords.map((group) => group.name.trim()).filter(Boolean);
     values.sort((a, b) => a.localeCompare(b));
     return values;
   }, [partnerGroupRecords]);
+  const visiblePartnerGroups = useMemo(
+    () => partnerGroups.filter((group) => !HIDDEN_PARTNER_TABS.has(group.toLowerCase())),
+    [partnerGroups]
+  );
 
   const partnersList = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return shopDisplay.filter((cape) => {
+      if (isPromoCape(cape)) return false;
       const group = (cape.partner_group || '').trim();
       if (!group) return false;
       if (selectedPartnerGroup !== 'all' && group.toLowerCase() !== selectedPartnerGroup.toLowerCase()) {
@@ -806,9 +840,9 @@ export function CosmeticLocker() {
 
   useEffect(() => {
     if (selectedPartnerGroup === 'all') return;
-    const exists = partnerGroups.some((group) => group.toLowerCase() === selectedPartnerGroup.toLowerCase());
+    const exists = visiblePartnerGroups.some((group) => group.toLowerCase() === selectedPartnerGroup.toLowerCase());
     if (!exists) setSelectedPartnerGroup('all');
-  }, [partnerGroups, selectedPartnerGroup]);
+  }, [selectedPartnerGroup, visiblePartnerGroups]);
 
   const activeList = activeTab === 'locker' ? lockerList : activeTab === 'shop' ? shopList : activeTab === 'partners' ? partnersList : [];
   const activeSections = useMemo(() => groupCapesForDisplay(activeList, shopRarityTheme), [activeList, shopRarityTheme]);
@@ -871,7 +905,6 @@ export function CosmeticLocker() {
     };
   }, [activeSections]);
 
-  const isOwner = commerceProfile?.role === 'owner';
   const capeSqlReady =
     capeSqlDraft.slug.trim().length > 0 &&
     capeSqlDraft.name.trim().length > 0 &&
@@ -1004,6 +1037,7 @@ export function CosmeticLocker() {
 
   const allTagPresetOptions = useMemo<TagPreset[]>(() => {
     const map = new Map<string, TagPreset>();
+    map.set(BUILTIN_PROMO_TAG_PRESET.id, BUILTIN_PROMO_TAG_PRESET);
     for (const preset of tagPresets) {
       map.set(`custom:${preset.id}`, preset);
     }
@@ -1012,7 +1046,15 @@ export function CosmeticLocker() {
         map.set(`rarity:${preset.rarity}`, preset);
       }
     }
-    return Array.from(map.values());
+    const seenNames = new Set<string>();
+    const deduped: TagPreset[] = [];
+    for (const preset of map.values()) {
+      const key = preset.name.trim().toLowerCase();
+      if (seenNames.has(key)) continue;
+      seenNames.add(key);
+      deduped.push(preset);
+    }
+    return deduped;
   }, [derivedRarityPresets, tagPresets]);
 
   useEffect(() => {
@@ -1074,30 +1116,20 @@ export function CosmeticLocker() {
     }
   }, [activeList, equippedCapeId, ownedDisplay, selectedCapeId, shopDisplay]);
 
-  useEffect(() => {
-    if (!guardState || guardState.step !== 'warning' || guardState.countdown <= 0) return;
-    const timer = window.setInterval(() => {
-      setGuardState((current) => {
-        if (!current || current.step !== 'warning') return current;
-        if (current.countdown <= 1) return { ...current, countdown: 0 };
-        return { ...current, countdown: current.countdown - 1 };
-      });
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [guardState]);
-
   const bootstrap = async () => {
     if (!authState) return;
     setLoading(true);
     setErrorMessage(null);
     try {
       const profile = await ensureCommerceIdentity(authState.profile.id, authState.profile.name, authState.profile.name);
-      const [shopData, ownedData, loadoutData, walletData, ledgerData, packsData, userId, appearance, groups] = await Promise.all([
+      const [shopData, ownedData, loadoutData, walletData, ledgerData, partnerWalletData, partnerLedgerData, packsData, userId, appearance, groups] = await Promise.all([
         loadShopCapes(searchQuery, rarityFilter),
         loadOwnedCapes(),
         loadCurrentLoadout(),
         loadWallet(),
         loadWalletLedger(25),
+        loadOwnPartnerWallet(),
+        loadOwnPartnerWalletLedger(25),
         loadCurrencyPacks(),
         getSupabaseUserId(),
         loadPreviewAppearance(),
@@ -1110,6 +1142,8 @@ export function CosmeticLocker() {
       setEquippedCapeId(loadoutData?.equipped_cape_id ?? null);
       setWalletBalance(walletData?.balance_bb ?? 0);
       setWalletLedger(ledgerData);
+      setPartnerWalletBalance(partnerWalletData?.balance_bb ?? 0);
+      setPartnerWalletLedger(partnerLedgerData);
       setCurrencyPacks(packsData);
       setSupabaseUserId(userId);
       setPreviewAppearance(normalizePreviewAppearance(appearance));
@@ -1167,12 +1201,6 @@ export function CosmeticLocker() {
   }, [activeTab, authState]);
 
   useEffect(() => {
-    const preload = activeList.slice(0, 180);
-    if (!preload.length) return;
-    void Promise.allSettled(preload.map((cape) => capeTextureLoader.loadFull(cape.slug, cape.texture_url)));
-  }, [activeList]);
-
-  useEffect(() => {
     if (!authState || activeTab !== 'wallet') return;
     let cancelled = false;
     void loadCurrencyPacks()
@@ -1186,6 +1214,12 @@ export function CosmeticLocker() {
       cancelled = true;
     };
   }, [activeTab, authState]);
+
+  useEffect(() => {
+    const preload = activeList.slice(0, 180);
+    if (!preload.length) return;
+    void Promise.allSettled(preload.map((cape) => capeTextureLoader.loadFull(cape.slug, cape.texture_url)));
+  }, [activeList]);
 
   useEffect(() => {
     if (!authState) return;
@@ -1239,10 +1273,12 @@ export function CosmeticLocker() {
         .catch(() => {});
     });
     const unsubscribeWallet = subscribeOwnWallet(supabaseUserId, () => {
-      void Promise.all([loadWallet(), loadWalletLedger(25)])
-        .then(([wallet, ledger]) => {
+      void Promise.all([loadWallet(), loadWalletLedger(25), loadOwnPartnerWallet(), loadOwnPartnerWalletLedger(25)])
+        .then(([wallet, ledger, partnerWallet, partnerLedger]) => {
           setWalletBalance(wallet?.balance_bb ?? 0);
           setWalletLedger(ledger);
+          setPartnerWalletBalance(partnerWallet?.balance_bb ?? 0);
+          setPartnerWalletLedger(partnerLedger);
           setStatusMessage('Wallet updated from live sync.');
         })
         .catch(() => {});
@@ -1357,82 +1393,153 @@ export function CosmeticLocker() {
     }
   };
 
-  const openGuardForPack = (pack: CurrencyPackRecord) => {
-    setGuardState({
-      pack,
-      countdown: 10,
-      step: 'warning',
-      email: '',
-      saving: false,
-      error: null
-    });
+  const syncWalletsAfterPartnerAction = async (partnerPurchaseResult?: PartnerWalletPurchaseResult | null) => {
+    const [ownedData, walletData, ledgerData, partnerWalletData, partnerLedgerData, loadoutData] = await Promise.all([
+      loadOwnedCapes(),
+      loadWallet(),
+      loadWalletLedger(25),
+      loadOwnPartnerWallet(),
+      loadOwnPartnerWalletLedger(25),
+      loadCurrentLoadout()
+    ]);
+    setOwnedCapes(ownedData);
+    setWalletBalance(walletData?.balance_bb ?? 0);
+    setWalletLedger(ledgerData);
+    setPartnerWalletBalance(partnerWalletData?.balance_bb ?? partnerPurchaseResult?.partner_wallet_balance_bb ?? 0);
+    setPartnerWalletLedger(partnerLedgerData);
+    setEquippedCapeId(loadoutData?.equipped_cape_id ?? null);
   };
 
-  const closeGuard = () => {
-    if (guardState?.step === 'warning' && guardState.countdown > 0) return;
-    setGuardState(null);
-  };
-
-  const handleConfirmPending = async () => {
-    if (!guardState) return;
-    const email = guardState.email.trim().toLowerCase();
-    if (!email) {
-      setGuardState({ ...guardState, error: 'Enter the exact Ko-fi checkout email.' });
+  const handlePartnerBuy = async () => {
+    if (!selectedCape || selectedCape.owned) return;
+    if (!isPartner) {
+      setErrorMessage('Partner wallet purchases require a partner role.');
       return;
     }
-    setGuardState({ ...guardState, saving: true, error: null });
+    if (!customCapeTosAccepted) {
+      setErrorMessage('You must agree to the custom cape TOS before purchasing.');
+      return;
+    }
+    setActionBusy(true);
+    setErrorMessage(null);
     try {
-      const pending = await createPendingCurrencyPurchase(email, guardState.pack.slug, 604800);
-      if (!pending) throw new Error('Failed to create pending purchase.');
-      setApprovedByPack((current) => ({
-        ...current,
-        [guardState.pack.slug]: {
-          email,
-          expiresAt: pending.expires_at,
-          pendingId: pending.id
-        }
-      }));
-      setStatusMessage(`Pending purchase saved for ${email}. Continue with Ko-fi checkout.`);
-      setGuardState(null);
+      const result = await purchaseCapeWithPartnerWallet(selectedCape.slug, false);
+      await syncWalletsAfterPartnerAction(result);
+      setStatusMessage(`${selectedCape.name} purchased from partner wallet.`);
+      if (activeTab !== 'locker') setActiveTab('locker');
     } catch (error) {
-      setGuardState((current) =>
-        current
-          ? { ...current, saving: false, error: formatUiError(error) }
-          : current
-      );
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setActionBusy(false);
     }
   };
 
-  const handleOpenKofi = async (pack: CurrencyPackRecord) => {
-    const approved = approvedByPack[pack.slug];
-    if (!approved) {
-      openGuardForPack(pack);
+  const handlePartnerGift = async () => {
+    if (!selectedCape || selectedCape.owned) return;
+    if (!isPartner) {
+      setErrorMessage('Only partners can gift from partner wallet.');
       return;
     }
+    const target = partnerGiftTarget.trim();
+    if (!target) {
+      setErrorMessage('Enter a username/UUID target first.');
+      return;
+    }
+    setActionBusy(true);
+    setErrorMessage(null);
     try {
-      await openUrl(pack.kofi_url);
-    } catch {
-      window.open(pack.kofi_url, '_blank', 'noopener,noreferrer');
+      const gift = await giftCapeWithPartnerWallet(selectedCape.slug, target, partnerGiftNote);
+      await syncWalletsAfterPartnerAction();
+      setPartnerGiftTarget('');
+      setPartnerGiftNote('');
+      setStatusMessage(
+        `Gifted ${selectedCape.name} to ${gift?.gifted_to_username || gift?.gifted_to_user_id || target}.`
+      );
+    } catch (error) {
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setActionBusy(false);
     }
   };
 
-  const handleOpenStripe = async (pack: CurrencyPackRecord) => {
+  const handlePartnerCashoutRequest = async () => {
+    if (!isPartner) {
+      setErrorMessage('Only partners can request cashout.');
+      return;
+    }
+    const amount = Math.floor(Number(partnerCashoutAmount));
+    if (!Number.isFinite(amount) || amount < 900) {
+      setErrorMessage('Cashout minimum is 900 BB.');
+      return;
+    }
+    setActionBusy(true);
+    setErrorMessage(null);
+    try {
+      await requestPartnerCashout(amount, partnerCashoutNote);
+      const [partnerWalletData, partnerLedgerData] = await Promise.all([
+        loadOwnPartnerWallet(),
+        loadOwnPartnerWalletLedger(25)
+      ]);
+      setPartnerWalletBalance(partnerWalletData?.balance_bb ?? 0);
+      setPartnerWalletLedger(partnerLedgerData);
+      setPartnerCashoutAmount('');
+      setPartnerCashoutNote('');
+      setStatusMessage(`Cashout request submitted for ${amount.toLocaleString()} BB.`);
+    } catch (error) {
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleRedeemPromo = async () => {
+    const code = promoCodeInput.trim();
+    if (!code) {
+      setErrorMessage('Enter a promo code first.');
+      return;
+    }
+    setPromoRedeemBusy(true);
+    setErrorMessage(null);
+    try {
+      const result = await redeemPromoCode(code);
+      const [ownedData, loadoutData] = await Promise.all([loadOwnedCapes(), loadCurrentLoadout()]);
+      setOwnedCapes(ownedData);
+      setEquippedCapeId(loadoutData?.equipped_cape_id ?? null);
+      const granted = result.granted_cape_slugs ?? [];
+      const already = result.already_owned_cape_slugs ?? [];
+      if (granted.length > 0) {
+        setStatusMessage(`Promo redeemed: unlocked ${granted.join(', ')}.`);
+      } else if (already.length > 0) {
+        setStatusMessage(`Promo code already redeemed. You already own: ${already.join(', ')}.`);
+      } else {
+        setStatusMessage('Promo code redeemed.');
+      }
+      setPromoCodeInput('');
+      setPromoRedeemOpen(false);
+      if (activeTab !== 'locker') setActiveTab('locker');
+    } catch (error) {
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setPromoRedeemBusy(false);
+    }
+  };
+
+  const handleTebexCheckout = async (pack: CurrencyPackRecord) => {
     try {
       setErrorMessage(null);
-      const session = await createStripeCheckoutSession(pack.slug);
-      await openUrl(session.checkout_url);
-      setStatusMessage(`Opened Stripe checkout for ${pack.name}.`);
+      const checkout = await createTebexCheckoutSession(pack.slug);
+      if (checkout.checkoutUrl) {
+        await openUrl(checkout.checkoutUrl);
+        setStatusMessage(`Opened Tebex checkout for ${pack.name}.`);
+        return;
+      }
+      if (checkout.ident) {
+        setStatusMessage(`Tebex checkout created for ${pack.name}: ${checkout.ident}`);
+        return;
+      }
+      setStatusMessage('Tebex checkout path is configured, waiting for session launch wiring.');
     } catch (error) {
-      const message = formatUiError(error);
-      setErrorMessage(`Stripe checkout failed: ${message}`);
-    }
-  };
-
-  const handleCreateKofiAccount = async () => {
-    try {
-      await openUrl('https://ko-fi.com/');
-    } catch {
-      window.open('https://ko-fi.com/', '_blank', 'noopener,noreferrer');
+      setErrorMessage(formatUiError(error));
     }
   };
 
@@ -1655,6 +1762,7 @@ export function CosmeticLocker() {
         name: updatedCape.name,
         description: updatedCape.description,
         partner_group: updatedCape.partner_group,
+        partner_for_profits: Boolean(updatedCape.partner_for_profits),
         texture_url: updatedCape.texture_url,
         preview_url: updatedCape.preview_url,
         price_bb: updatedCape.price_bb,
@@ -1698,30 +1806,6 @@ export function CosmeticLocker() {
       if (selectedCapeId === cape.id) {
         setSelectedCapeId(refreshed[0]?.id ?? null);
       }
-    } catch (error) {
-      setErrorMessage(formatUiError(error));
-    } finally {
-      setActionBusy(false);
-      setDialogState(null);
-    }
-  };
-
-  const handleDeleteOwnCustomCape = async (cape: DisplayCape) => {
-    if (!cape.owned || cape.ownedSource !== 'custom_export') return;
-    setDialogState({ kind: 'confirm-delete-custom', cape, input: '' });
-  };
-
-  const confirmDeleteOwnCustomCape = async (cape: DisplayCape) => {
-    setActionBusy(true);
-    setErrorMessage(null);
-    try {
-      await deleteOwnCustomCape(cape.id);
-      const [nextOwned, nextShop] = await Promise.all([loadOwnedCapes(), loadShopCapes(searchQuery, rarityFilter)]);
-      setOwnedCapes(nextOwned);
-      setShopCapes(nextShop);
-      if (equippedCapeId === cape.id) setEquippedCapeId(null);
-      if (selectedCapeId === cape.id) setSelectedCapeId(nextOwned[0]?.cape_id ?? nextShop[0]?.id ?? null);
-      setStatusMessage(`Deleted custom cape forever: ${cape.name}`);
     } catch (error) {
       setErrorMessage(formatUiError(error));
     } finally {
@@ -1775,6 +1859,14 @@ export function CosmeticLocker() {
           ))}
           <span aria-hidden className="mx-1 h-6 w-px bg-white/20" />
           <button
+            onClick={() => setPromoRedeemOpen(true)}
+            className="h-10 w-10 rounded-xl border border-white/10 bg-white/[0.03] text-white/82 hover:bg-white/[0.06] inline-flex items-center justify-center"
+            title="Redeem promo code"
+            aria-label="Redeem promo code"
+          >
+            <Ticket size={15} />
+          </button>
+          <button
             onClick={() => navigate('/custom-cape')}
             className={clsx(
               'h-10 rounded-xl border px-4 text-[11px] font-extrabold uppercase tracking-[0.12em] transition',
@@ -1824,55 +1916,29 @@ export function CosmeticLocker() {
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/65">Buy Bloom Bucks</p>
-                <button
-                  onClick={() => {
-                    void handleCreateKofiAccount();
-                  }}
-                  className="g-btn h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]"
-                >
-                  Create Ko-fi Account
-                </button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {currencyPacks.map((pack) => {
-                  const approved = approvedByPack[pack.slug];
-                  const ready = approved && new Date(approved.expiresAt).getTime() > Date.now();
-                  return (
+              <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/65">Buy Bloom Bucks</p>
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-lg font-extrabold text-white">Comming soon</p>
+                <p className="mt-2 text-xs text-white/55">Wallet top-ups are temporarily disabled while Tebex checkout is being integrated.</p>
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {currencyPacks.map((pack) => (
                     <div key={pack.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                       <p className="text-[11px] uppercase tracking-[0.13em] font-extrabold text-white/62">{pack.name}</p>
                       <p className="text-xl font-extrabold text-white mt-1">{pack.total_bb.toLocaleString()} BB</p>
-                      <p className="text-xs text-white/55 mt-1">${Number(pack.price_usd).toFixed(2)} â€¢ base {pack.base_bb.toLocaleString()} + bonus {pack.bonus_bb.toLocaleString()}</p>
-                      {ready ? (
-                        <p className="mt-2 text-[11px] text-emerald-200 font-bold">Approved email: {approved.email}</p>
-                      ) : (
-                        <p className="mt-2 text-[11px] text-white/50">Stripe is instant. Ko-fi fallback requires warning + exact email confirmation.</p>
-                      )}
-                      <div className="mt-3 grid grid-cols-1 gap-2">
-                        <button
-                          onClick={() => {
-                            void handleOpenStripe(pack);
-                          }}
-                          className="h-9 w-full rounded-lg border text-[11px] font-extrabold uppercase tracking-[0.12em] g-btn-accent"
-                        >
-                          Pay With Stripe
-                        </button>
-                        <button
-                          onClick={() => {
-                            void handleOpenKofi(pack);
-                          }}
-                          className={clsx(
-                            'h-9 w-full rounded-lg border text-[11px] font-extrabold uppercase tracking-[0.12em]',
-                            ready ? 'g-btn-accent' : 'g-btn'
-                          )}
-                        >
-                          {ready ? 'Open Ko-fi (Fallback)' : 'Ko-fi Fallback Setup'}
-                        </button>
-                      </div>
+                      <p className="text-xs text-white/55 mt-1">
+                        ${Number(pack.price_usd).toFixed(2)} • base {pack.base_bb.toLocaleString()} + bonus {pack.bonus_bb.toLocaleString()}
+                      </p>
+                      <button
+                        onClick={() => {
+                          void handleTebexCheckout(pack);
+                        }}
+                        className="mt-3 h-9 w-full rounded-lg border text-[11px] font-extrabold uppercase tracking-[0.12em] g-btn-accent"
+                      >
+                        Pay With Tebex
+                      </button>
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -1901,6 +1967,67 @@ export function CosmeticLocker() {
               </div>
             </div>
           </div>
+
+          {isPartner && (
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+                <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/65">Partner Wallet</p>
+                <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+                  <p className="text-[10px] uppercase tracking-[0.12em] font-extrabold text-white/55">Balance</p>
+                  <p className="text-3xl font-extrabold text-white mt-1">{partnerWalletBalance.toLocaleString()} BB</p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-black/30 p-3 space-y-2">
+                  <p className="text-[10px] uppercase tracking-[0.12em] font-extrabold text-white/55">Request Cashout (min 900 BB)</p>
+                  <input
+                    value={partnerCashoutAmount}
+                    onChange={(event) => setPartnerCashoutAmount(event.target.value.replace(/[^\d]/g, ''))}
+                    placeholder="Amount BB..."
+                    className="g-input h-9 text-xs"
+                  />
+                  <input
+                    value={partnerCashoutNote}
+                    onChange={(event) => setPartnerCashoutNote(event.target.value)}
+                    placeholder="Cashout note (optional)..."
+                    className="g-input h-9 text-xs"
+                  />
+                  <button
+                    onClick={() => {
+                      void handlePartnerCashoutRequest();
+                    }}
+                    disabled={actionBusy || partnerCashoutAmount.trim().length === 0}
+                    className="g-btn-accent h-9 w-full text-[10px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-55"
+                  >
+                    Request Cashout
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/65">Partner Wallet Ledger</p>
+                <div className="mt-3 space-y-2 max-h-[320px] overflow-y-auto pr-1">
+                  {partnerWalletLedger.length === 0 ? (
+                    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs text-white/55">No partner wallet ledger entries yet.</div>
+                  ) : (
+                    partnerWalletLedger.map((entry) => (
+                      <div key={entry.id} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/76">{formatEntryType(entry.entry_type)}</p>
+                          <p className="text-[10px] text-white/50 mt-0.5">{new Date(entry.created_at).toLocaleString()}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className={clsx('text-sm font-extrabold', entry.amount_bb >= 0 ? 'text-emerald-200' : 'text-red-200')}>
+                            {entry.amount_bb >= 0 ? '+' : ''}
+                            {entry.amount_bb.toLocaleString()} BB
+                          </p>
+                          <p className="text-[10px] text-white/50">Balance: {(entry.balance_after ?? partnerWalletBalance).toLocaleString()}</p>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </section>
       ) : (
         <section className="grid grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)_340px] gap-4 min-h-0">
@@ -1928,7 +2055,7 @@ export function CosmeticLocker() {
                 >
                   All Partners
                 </button>
-                {partnerGroups.map((group) => (
+                {visiblePartnerGroups.map((group) => (
                   <button
                     key={group}
                     onClick={() => setSelectedPartnerGroup(group)}
@@ -1966,36 +2093,6 @@ export function CosmeticLocker() {
                     >
                       {creatingPartnerGroup ? 'Adding...' : 'Add Partner Tab'}
                     </button>
-                  </div>
-                )}
-                {activeSections.length > 0 && (
-                  <div className="mt-4 rounded-xl border border-[rgba(105,112,124,0.16)] bg-white/[0.02] p-2.5 shadow-none">
-                    <p className="text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/45">Jump To Tag</p>
-                    <div className="mt-2 space-y-1.5">
-                        {activeSections.map((section) => (
-                          <button
-                            key={section.key}
-                            onClick={() => jumpToSection(section.key)}
-                            className={clsx(
-                              'relative overflow-hidden rounded-lg px-3 py-2.5 text-left transition-all duration-200',
-                              activeVisibleSection === section.key
-                                ? 'w-[calc(100%+10px)] pr-6 bg-white/[0.055]'
-                                : 'w-full bg-white/[0.015] hover:bg-white/[0.04]'
-                            )}
-                          >
-                            <div
-                              aria-hidden
-                              className="absolute inset-y-0 right-0 w-[48%]"
-                              style={{
-                              background: `linear-gradient(270deg, ${section.color} 0%, color-mix(in srgb, ${section.color} 52%, transparent) 20%, color-mix(in srgb, ${section.color} 20%, transparent) 46%, transparent 78%)`
-                            }}
-                            />
-                            <span className="relative z-[1] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/86">
-                              {section.label}
-                            </span>
-                          </button>
-                        ))}
-                    </div>
                   </div>
                 )}
               </div>
@@ -2132,20 +2229,6 @@ export function CosmeticLocker() {
                                   <Trash2 size={13} />
                                 </button>
                               )}
-                              {cape.owned && cape.ownedSource === 'custom_export' && (
-                                <button
-                                  onClick={(event) => {
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                    void handleDeleteOwnCustomCape(cape);
-                                  }}
-                                  className="absolute right-2 top-10 z-[3] h-7 w-7 rounded-md border border-red-300/40 bg-red-500/20 text-red-100 hover:bg-red-500/30 flex items-center justify-center"
-                                  title="Delete forever (type confirm)"
-                                  aria-label={`Delete ${cape.name} forever`}
-                                >
-                                  <Trash2 size={13} />
-                                </button>
-                              )}
                               <div className="absolute -top-[2px] left-0 z-[2]">
                                 <span className="rounded-md border border-white/25 bg-black/35 px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-white/90 leading-none">
                                   {pickRarityLabel(cape)}
@@ -2165,7 +2248,7 @@ export function CosmeticLocker() {
                                 </div>
                                 <div className="mt-1.5 rounded-lg border border-white/15 bg-black/35 px-2 py-1.5">
                                   <div className="flex items-start justify-between gap-2">
-                                    <p className="text-[12px] font-extrabold text-white leading-tight truncate">{cape.name}</p>
+                                    <p className="line-clamp-2 break-words text-[12px] font-extrabold leading-tight text-white">{cape.name}</p>
                                     {isEquipped ? (
                                       <span className="rounded-md border border-emerald-300/45 bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.1em] text-emerald-100">Equipped</span>
                                     ) : cape.owned ? (
@@ -2224,7 +2307,7 @@ export function CosmeticLocker() {
               {selectedCape ? (
                 <>
                   <p className="text-sm font-extrabold text-white">{selectedCape.name}</p>
-                  <p className="text-[11px] text-white/58 mt-1">{pickRarityLabel(selectedCape)} â€¢ {selectedCape.slug}</p>
+                    <p className="text-[11px] text-white/58 mt-1">{pickRarityLabel(selectedCape)} · {selectedCape.slug}</p>
                   <p className="text-xs text-white/65 mt-2">{selectedCape.description || 'No description.'}</p>
                   <div className="mt-3 flex gap-2">
                     {selectedOwned ? (
@@ -2278,6 +2361,43 @@ export function CosmeticLocker() {
                         >
                           Buy • {selectedCape.price_bb.toLocaleString()} BB
                         </button>
+                        {isPartner && (
+                          <>
+                            <button
+                              onClick={() => {
+                                void handlePartnerBuy();
+                              }}
+                              disabled={actionBusy || !customCapeTosAccepted}
+                              className="h-10 w-full text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-55 rounded-lg border border-white/25 bg-[color:color-mix(in_srgb,var(--g-accent)_24%,black)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]"
+                            >
+                              Partner Wallet • {selectedCape.price_bb.toLocaleString()} BB
+                            </button>
+                            <div className="rounded-lg border border-white/10 bg-black/30 p-2.5 space-y-2">
+                              <p className="text-[10px] uppercase tracking-[0.13em] font-extrabold text-white/55">Gift From Partner Wallet</p>
+                              <input
+                                value={partnerGiftTarget}
+                                onChange={(event) => setPartnerGiftTarget(event.target.value)}
+                                placeholder="Target username or UUID..."
+                                className="g-input h-9 text-xs"
+                              />
+                              <input
+                                value={partnerGiftNote}
+                                onChange={(event) => setPartnerGiftNote(event.target.value)}
+                                placeholder="Note (optional)..."
+                                className="g-input h-9 text-xs"
+                              />
+                              <button
+                                onClick={() => {
+                                  void handlePartnerGift();
+                                }}
+                                disabled={actionBusy || partnerGiftTarget.trim().length === 0}
+                                className="g-btn h-9 w-full text-[10px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-55"
+                              >
+                                Gift Cape
+                              </button>
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2514,8 +2634,9 @@ export function CosmeticLocker() {
                   />
                   <input
                     value={ownerCapeEditor.name}
-                    onChange={(event) => updateOwnerEditor('name', event.target.value)}
+                    onChange={(event) => updateOwnerEditor('name', clampCapeName(event.target.value))}
                     placeholder="name"
+                    maxLength={CAPE_NAME_MAX_LENGTH}
                     className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none"
                   />
                   <input
@@ -2548,6 +2669,20 @@ export function CosmeticLocker() {
                       <option key={group} value={group} />
                     ))}
                   </datalist>
+                  </div>
+
+                  <div className={clsx(ownerCapeEditorSection !== 'identity' && 'hidden', 'md:col-span-2 rounded-lg border border-white/10 bg-white/[0.02] p-3')}>
+                    <label className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/80">Partner For Profits</p>
+                        <p className="text-[11px] text-white/55 mt-1">Enable this cape for Owner Utility ? Partner Earnings mapping list.</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(ownerCapeEditor.partner_for_profits)}
+                        onChange={(event) => updateOwnerEditor('partner_for_profits', event.target.checked)}
+                      />
+                    </label>
                   </div>
                   <div className={clsx(ownerCapeEditorSection !== 'appearance' && 'hidden', 'md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-2')}>
                   <input
@@ -2912,7 +3047,8 @@ export function CosmeticLocker() {
                     />
                     <input
                       value={capeSqlDraft.name}
-                      onChange={(event) => updateCapeSqlDraft('name', event.target.value)}
+                      onChange={(event) => updateCapeSqlDraft('name', clampCapeName(event.target.value))}
+                      maxLength={CAPE_NAME_MAX_LENGTH}
                       placeholder="name (required)"
                       className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none"
                     />
@@ -3030,77 +3166,49 @@ export function CosmeticLocker() {
         </div>
       )}
 
-      {guardState && (
-        <div className="fixed inset-0 z-[520] flex items-center justify-center p-4 app-region-no-drag">
-          <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" />
-          <div className="relative w-full max-w-[520px] rounded-2xl border border-red-400/35 bg-[#0f0a12] p-5 shadow-[0_30px_70px_rgba(0,0,0,0.65)]">
-            {guardState.step === 'warning' ? (
-              <>
-                <div className="flex items-start gap-3">
-                  <div className="h-10 w-10 rounded-lg border border-red-300/40 bg-red-500/15 flex items-center justify-center mt-0.5">
-                    <AlertTriangle size={18} className="text-red-200" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-[11px] uppercase tracking-[0.14em] font-extrabold text-red-200">Required Warning</p>
-                    <h3 className="text-xl font-extrabold text-white mt-1">Use the EXACT Ko-fi Email</h3>
-                    <p className="mt-2 text-sm text-red-100/90">
-                      You must use the exact same email in Ko-fi checkout. Any mismatch can delay or break automatic Bloom Bucks crediting.
-                    </p>
-                    <p className="mt-2 text-sm text-red-100/90 font-bold">
-                      This warning cannot be dismissed for {guardState.countdown}s.
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-5 grid grid-cols-2 gap-2">
-                  <button
-                    onClick={closeGuard}
-                    disabled={guardState.countdown > 0}
-                    className="g-btn h-10 text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-35"
-                  >
-                    Close
-                  </button>
-                  <button
-                    onClick={() => setGuardState({ ...guardState, step: 'email' })}
-                    disabled={guardState.countdown > 0}
-                    className="g-btn-accent h-10 text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-35"
-                  >
-                    Continue
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="text-[11px] uppercase tracking-[0.14em] font-extrabold text-white/60">Confirm Pending Purchase</p>
-                <h3 className="text-xl font-extrabold text-white mt-1">{guardState.pack.name}</h3>
-                <p className="text-sm text-white/65 mt-2">Enter the exact email you will use on Ko-fi checkout.</p>
-                <input
-                  type="email"
-                  value={guardState.email}
-                  onChange={(event) => setGuardState({ ...guardState, email: event.target.value, error: null })}
-                  placeholder="you@example.com"
-                  className="mt-3 w-full rounded-lg border border-white/15 bg-white/[0.04] px-3 py-2 text-sm text-white placeholder:text-white/35 outline-none"
-                />
-                {guardState.error && <p className="mt-2 text-xs text-red-200 font-bold">{guardState.error}</p>}
-                <div className="mt-4 flex gap-2">
-                  <button
-                    onClick={closeGuard}
-                    disabled={guardState.saving}
-                    className="g-btn h-10 flex-1 text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-45"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => {
-                      void handleConfirmPending();
-                    }}
-                    disabled={guardState.saving}
-                    className="g-btn-accent h-10 flex-1 text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-45"
-                  >
-                    {guardState.saving ? 'Saving...' : 'Save & Continue'}
-                  </button>
-                </div>
-              </>
-            )}
+      {promoRedeemOpen && (
+        <div className="fixed inset-0 z-[522] flex items-center justify-center p-4 app-region-no-drag">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/75 backdrop-blur-sm"
+            onClick={() => !promoRedeemBusy && setPromoRedeemOpen(false)}
+          />
+          <div className="relative w-full max-w-[460px] rounded-2xl border border-white/15 bg-[#09090c] p-5 shadow-[0_30px_70px_rgba(0,0,0,0.65)]">
+            <p className="text-[11px] uppercase tracking-[0.14em] font-extrabold text-white/55">Promo</p>
+            <h3 className="mt-1 text-2xl font-extrabold text-white">Redeem Cosmetic Code</h3>
+            <p className="mt-2 text-sm text-white/62">Enter your promo code to unlock hidden capes/cosmetics linked to that code.</p>
+            <input
+              value={promoCodeInput}
+              onChange={(event) => setPromoCodeInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  void handleRedeemPromo();
+                }
+              }}
+              placeholder="Enter promo code..."
+              className="mt-4 h-11 w-full rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/35 outline-none"
+            />
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setPromoRedeemOpen(false)}
+                disabled={promoRedeemBusy}
+                className="g-btn h-10 text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-45"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleRedeemPromo();
+                }}
+                disabled={promoRedeemBusy}
+                className="g-btn-accent h-10 text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-45"
+              >
+                {promoRedeemBusy ? 'Redeeming...' : 'Redeem'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -3124,29 +3232,14 @@ export function CosmeticLocker() {
                   className="h-10 w-10 rounded-full border border-white/18 bg-white/[0.04] text-white/75 hover:bg-white/[0.08] disabled:opacity-40"
                   disabled={actionBusy}
                 >
-                  Ã—
+                  ×
                 </button>
               </div>
 
               <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
                 <p className="text-sm text-white/78">
-                  {dialogState.kind === 'confirm-delete-shop'
-                    ? <>Delete <span className="font-extrabold text-white">"{dialogState.cape.name}"</span> from all shop views?</>
-                    : <>Type <span className="font-extrabold text-white">confirm</span> to delete <span className="font-extrabold text-white">"{dialogState.cape.name}"</span> forever.</>}
+                  Delete <span className="font-extrabold text-white">"{dialogState.cape.name}"</span> from all shop views?
                 </p>
-
-                {dialogState.kind === 'confirm-delete-custom' && (
-                  <input
-                    value={dialogState.input}
-                    onChange={(event) =>
-                      setDialogState((current) =>
-                        current?.kind === 'confirm-delete-custom' ? { ...current, input: event.target.value } : current
-                      )
-                    }
-                    placeholder="type confirm"
-                    className="mt-4 h-11 w-full rounded-xl border border-white/14 bg-black/35 px-4 text-sm text-white placeholder:text-white/32 outline-none"
-                  />
-                )}
               </div>
 
               <div className="mt-5 flex items-center justify-end gap-3">
@@ -3161,17 +3254,9 @@ export function CosmeticLocker() {
                 <button
                   type="button"
                   onClick={() => {
-                    if (dialogState.kind === 'confirm-delete-shop') {
-                      void confirmDeleteShopCape(dialogState.cape);
-                      return;
-                    }
-                    if (dialogState.input.trim().toLowerCase() !== 'confirm') return;
-                    void confirmDeleteOwnCustomCape(dialogState.cape);
+                    void confirmDeleteShopCape(dialogState.cape);
                   }}
-                  disabled={
-                    actionBusy ||
-                    (dialogState.kind === 'confirm-delete-custom' && dialogState.input.trim().toLowerCase() !== 'confirm')
-                  }
+                  disabled={actionBusy}
                   className="h-11 rounded-xl border border-red-300/30 bg-red-500/18 px-5 text-[11px] font-extrabold uppercase tracking-[0.16em] text-red-100 hover:bg-red-500/24 disabled:opacity-40"
                 >
                   {actionBusy ? 'Working...' : 'Delete'}
@@ -3184,4 +3269,6 @@ export function CosmeticLocker() {
     </div>
   );
 }
+
+
 
