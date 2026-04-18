@@ -557,6 +557,7 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     // key => (priority, version, absolute_path)
     let mut cp_libs: HashMap<String, (u8, String, String)> = HashMap::new();
     let mut cp_entries = Vec::new();
+    let mut cp_missing_downloads: Vec<(std::path::PathBuf, String)> = Vec::new();
 
     // Client JAR
     let client_jar = paths
@@ -576,6 +577,11 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                 if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
                     if let Some(path) = artifact.get("path").and_then(|p| p.as_str()) {
                         let lib_path = libraries_dir.join(path);
+                        if !lib_path.exists() {
+                            if let Some(url) = artifact.get("url").and_then(|u| u.as_str()) {
+                                cp_missing_downloads.push((lib_path.clone(), url.to_string()));
+                            }
+                        }
                         if let Some(key) = extract_maven_key_from_path(path) {
                             let normalized = path.replace('\\', "/");
                             let path_parts: Vec<&str> = normalized.split('/').collect();
@@ -663,6 +669,43 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     let mut merged_libs: Vec<String> = cp_libs.into_values().map(|(_, _, path)| path).collect();
     merged_libs.sort();
     cp_entries.extend(merged_libs);
+
+    // Ensure any missing classpath libraries are present before launch.
+    for (lib_path, url) in cp_missing_downloads {
+        if lib_path.exists() {
+            continue;
+        }
+        if let Some(parent) = lib_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| {
+                format!(
+                    "Failed to create library directory {}: {}",
+                    parent.display(),
+                    e
+                )
+            })?;
+        }
+        let response = reqwest::get(&url)
+            .await
+            .map_err(|e| format!("Failed to download missing library {}: {}", url, e))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "Failed to download missing library {} (HTTP {})",
+                url,
+                response.status()
+            ));
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed reading library bytes {}: {}", url, e))?;
+        fs::write(&lib_path, bytes).map_err(|e| {
+            format!(
+                "Failed writing downloaded library {}: {}",
+                lib_path.display(),
+                e
+            )
+        })?;
+    }
 
     let classpath_separator = if cfg!(target_os = "windows") { ";" } else { ":" };
     let classpath = cp_entries.join(classpath_separator);
