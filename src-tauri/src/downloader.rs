@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use tokio::fs;
+use tokio::time::{sleep, Duration};
 
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
@@ -22,6 +24,7 @@ pub struct DownloadProgress {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct VersionJson {
     pub id: String,
     pub downloads: VersionDownloads,
@@ -36,6 +39,7 @@ pub struct VersionDownloads {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct DownloadEntry {
     pub path: Option<String>,
     pub sha1: String,
@@ -44,6 +48,7 @@ pub struct DownloadEntry {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct LibraryEntry {
     pub name: String,
     pub downloads: Option<LibraryDownloads>,
@@ -85,15 +90,92 @@ pub struct AssetIndex {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct AssetObject {
     pub hash: String,
     pub size: u64,
+}
+
+fn install_cancel_set() -> &'static Mutex<HashSet<String>> {
+    static CANCEL_SET: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    CANCEL_SET.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn request_install_cancel(instance_id: &str) {
+    if let Ok(mut set) = install_cancel_set().lock() {
+        set.insert(instance_id.to_string());
+    }
+}
+
+fn clear_install_cancel(instance_id: &str) {
+    if let Ok(mut set) = install_cancel_set().lock() {
+        set.remove(instance_id);
+    }
+}
+
+fn install_cancelled(instance_id: &str) -> bool {
+    if let Ok(set) = install_cancel_set().lock() {
+        return set.contains(instance_id);
+    }
+    false
+}
+
+async fn fetch_bytes_with_retry(
+    client: &reqwest::Client,
+    url: &str,
+    attempts: usize,
+) -> Result<Vec<u8>, String> {
+    let mut last_error = String::new();
+
+    for attempt in 0..attempts {
+        match client.get(url).send().await {
+            Ok(resp) => {
+                if !resp.status().is_success() {
+                    last_error = format!("Failed to download {} (HTTP {})", url, resp.status());
+                } else {
+                    match resp.bytes().await {
+                        Ok(bytes) => return Ok(bytes.to_vec()),
+                        Err(err) => {
+                            last_error =
+                                format!("Failed to read response body for {}: {}", url, err);
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                last_error = format!("Failed to download {}: {}", url, err);
+            }
+        }
+
+        if attempt + 1 < attempts {
+            sleep(Duration::from_millis(250 * (attempt as u64 + 1))).await;
+        }
+    }
+
+    Err(last_error)
+}
+
+fn build_http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .user_agent("BloomClient/1.5.3")
+        .pool_idle_timeout(Duration::from_secs(30))
+        .pool_max_idle_per_host(32)
+        .tcp_nodelay(true)
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn instance_install_cancel(instance_id: String) -> Result<(), String> {
+    request_install_cancel(&instance_id);
+    Ok(())
 }
 
 pub async fn download_version_json(
     version_id: &str,
     mc_manifest_url: &str,
     cache_dir: &Path,
+    client: &reqwest::Client,
 ) -> Result<String, String> {
     let version_dir = cache_dir.join("versions").join(version_id);
     fs::create_dir_all(&version_dir)
@@ -107,9 +189,7 @@ pub async fn download_version_json(
         return Ok(json_path.to_string_lossy().to_string());
     }
 
-    let response = reqwest::get(mc_manifest_url)
-        .await
-        .map_err(|e| e.to_string())?;
+    let response = client.get(mc_manifest_url).send().await.map_err(|e| e.to_string())?;
     let content = response.text().await.map_err(|e| e.to_string())?;
 
     fs::write(&json_path, content)
@@ -121,10 +201,13 @@ pub async fn download_version_json(
 
 #[tauri::command]
 pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Result<(), String> {
-    use crate::bloom_mod::ensure_bloom_cosmetics_mod;
+    use crate::bloom_mod::ensure_bloom_injected_mods;
     use crate::paths::{paths_get, AppPaths};
     use futures::future::join_all;
     use tauri::Emitter;
+
+    clear_install_cancel(&instance_id);
+    let http_client = build_http_client()?;
 
     // 1. Get paths
     let paths: AppPaths = paths_get(app.clone())?;
@@ -146,6 +229,10 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
         .as_str()
         .ok_or("Missing mcVersion")?;
     let loader_type = instance_json["loader"].as_str().unwrap_or("vanilla");
+    let renderer = instance_json
+        .get("renderer")
+        .and_then(|value| value.as_str())
+        .unwrap_or("opengl");
     let instance_dir = paths.instances.join(&instance_id);
     let loader_version = instance_json
         .get("fabricLoaderVersion")
@@ -158,6 +245,10 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
     }
 
     // Emit starting event
+    if install_cancelled(&instance_id) {
+        return Err("Installation cancelled by user.".to_string());
+    }
+
     let _ = app.emit(
         "download_progress",
         DownloadProgress {
@@ -170,9 +261,14 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
 
     // We need to fetch the big version manifest again to find the URL for `mc_version`
     let manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
-    let manifest_resp = reqwest::get(manifest_url)
+    let manifest_resp = http_client
+        .get(manifest_url)
+        .send()
         .await
         .map_err(|e| e.to_string())?;
+    if install_cancelled(&instance_id) {
+        return Err("Installation cancelled by user.".to_string());
+    }
     let manifest: crate::mojang::VersionManifest =
         manifest_resp.json().await.map_err(|e| e.to_string())?;
 
@@ -194,7 +290,10 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
 
     // 3. Download the specific version JSON
     let version_json_path =
-        download_version_json(mc_version, &version_entry.url, &paths.cache).await?;
+        download_version_json(mc_version, &version_entry.url, &paths.cache, &http_client).await?;
+    if install_cancelled(&instance_id) {
+        return Err("Installation cancelled by user.".to_string());
+    }
 
     // Print to verify
     println!("Version json downloaded to: {}", version_json_path);
@@ -224,12 +323,17 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
     let client_jar_path = versions_dir.join(format!("{}.jar", mc_version));
 
     if !client_jar_path.exists() {
-        let client_bytes = reqwest::get(&v_data.downloads.client.url)
+        let client_bytes = http_client
+            .get(&v_data.downloads.client.url)
+            .send()
             .await
             .map_err(|e| e.to_string())?
             .bytes()
             .await
             .map_err(|e| e.to_string())?;
+        if install_cancelled(&instance_id) {
+            return Err("Installation cancelled by user.".to_string());
+        }
         fs::write(&client_jar_path, client_bytes)
             .await
             .map_err(|e| e.to_string())?;
@@ -255,12 +359,17 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
 
     let index_path = indexes_dir.join(format!("{}.json", asset_index_id));
     if !index_path.exists() {
-        let index_bytes = reqwest::get(&asset_index_url)
+        let index_bytes = http_client
+            .get(&asset_index_url)
+            .send()
             .await
             .map_err(|e| e.to_string())?
             .bytes()
             .await
             .map_err(|e| e.to_string())?;
+        if install_cancelled(&instance_id) {
+            return Err("Installation cancelled by user.".to_string());
+        }
         fs::write(&index_path, index_bytes)
             .await
             .map_err(|e| e.to_string())?;
@@ -296,6 +405,9 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
 
     let mut valid_libs: Vec<DownloadEntry> = Vec::new();
     for lib in v_data.libraries {
+        if install_cancelled(&instance_id) {
+            return Err("Installation cancelled by user.".to_string());
+        }
         if !library_allowed_on_windows(&lib.rules) {
             continue;
         }
@@ -337,6 +449,9 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
 
     // 7.5 If Fabric, append Fabric libraries to valid_libs
     if loader_type == "fabric" && !loader_version.is_empty() {
+        if install_cancelled(&instance_id) {
+            return Err("Installation cancelled by user.".to_string());
+        }
         let _ = app.emit(
             "download_progress",
             DownloadProgress {
@@ -351,7 +466,9 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
             "https://meta.fabricmc.net/v2/versions/loader/{}/{}/profile/json",
             mc_version, loader_version
         );
-        let fabric_resp = reqwest::get(&fabric_profile_url)
+        let fabric_resp = http_client
+            .get(&fabric_profile_url)
+            .send()
             .await
             .map_err(|e| e.to_string())?;
         let fabric_json_str = fabric_resp.text().await.map_err(|e| e.to_string())?;
@@ -397,7 +514,10 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
     let _total_libs = valid_libs.len();
     let mut futures = Vec::new();
 
-    for artifact in valid_libs {
+    for artifact in &valid_libs {
+        if install_cancelled(&instance_id) {
+            return Err("Installation cancelled by user.".to_string());
+        }
         let artifact_path_str = match &artifact.path {
             Some(p) => p.clone(),
             None => {
@@ -415,36 +535,28 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
         }
 
         let url = artifact.url.clone();
+        let client = http_client.clone();
 
-        let handle = tokio::spawn(async move {
-            if let Some(parent) = lib_dest_path.parent() {
-                let _ = fs::create_dir_all(parent).await;
-            }
-
-            match reqwest::get(&url).await {
-                Ok(resp) => {
-                    if !resp.status().is_success() {
-                        return Err(format!(
-                            "Failed to download {} (HTTP {})",
-                            url,
-                            resp.status()
-                        ));
-                    }
-                    if let Ok(bytes) = resp.bytes().await {
-                        let _ = fs::write(&lib_dest_path, bytes).await;
-                        return Ok(());
-                    }
+            let handle = tokio::spawn(async move {
+                if let Some(parent) = lib_dest_path.parent() {
+                    let _ = fs::create_dir_all(parent).await;
                 }
-                Err(_) => {}
-            }
-            Err(format!("Failed to download {}", url))
-        });
+
+                let bytes = fetch_bytes_with_retry(&client, &url, 3).await?;
+                fs::write(&lib_dest_path, bytes)
+                    .await
+                    .map_err(|e| format!("Failed to write library {}: {}", url, e))?;
+                Ok::<(), String>(())
+            });
 
         futures.push(handle);
     }
 
     // Wait for all library downloads
     let results = join_all(futures).await;
+    if install_cancelled(&instance_id) {
+        return Err("Installation cancelled by user.".to_string());
+    }
     let mut failed_libs: Vec<String> = Vec::new();
     for result in results {
         match result {
@@ -454,6 +566,48 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
                 failed_libs.push(format!("Library download task failed: {}", join_err))
             }
         }
+    }
+    if !failed_libs.is_empty() {
+        let mut retry_errors: Vec<String> = Vec::new();
+
+        for artifact in &valid_libs {
+            if install_cancelled(&instance_id) {
+                return Err("Installation cancelled by user.".to_string());
+            }
+
+            let artifact_path_str = match &artifact.path {
+                Some(p) => p.clone(),
+                None => {
+                    let parts: Vec<&str> = artifact.url.split('/').collect();
+                    parts.last().unwrap_or(&"unknown.jar").to_string()
+                }
+            };
+
+            let lib_dest_path = libraries_dir.join(artifact_path_str);
+            if lib_dest_path.exists() {
+                continue;
+            }
+
+            if let Some(parent) = lib_dest_path.parent() {
+                fs::create_dir_all(parent)
+                    .await
+                    .map_err(|e| format!("Failed to prepare library directory: {}", e))?;
+            }
+
+            match fetch_bytes_with_retry(&http_client, &artifact.url, 4).await {
+                Ok(bytes) => {
+                    if let Err(err) = fs::write(&lib_dest_path, bytes).await {
+                        retry_errors.push(format!(
+                            "Failed to write library {}: {}",
+                            artifact.url, err
+                        ));
+                    }
+                }
+                Err(err) => retry_errors.push(err),
+            }
+        }
+
+        failed_libs = retry_errors;
     }
     if !failed_libs.is_empty() {
         return Err(format!(
@@ -490,9 +644,13 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
     let objects_to_download: Vec<_> = index_data.objects.into_iter().collect();
     let _total_objects = objects_to_download.len();
 
-    // Chunking to avoid too many open sockets (e.g., 50 at a time)
-    for chunk in objects_to_download.chunks(50) {
+    // Keep more asset requests in flight per batch to reduce idle time between chunks.
+    for chunk in objects_to_download.chunks(96) {
+        if install_cancelled(&instance_id) {
+            return Err("Installation cancelled by user.".to_string());
+        }
         let mut object_futures = Vec::new();
+        let mut chunk_entries = Vec::new();
 
         for (_name, obj) in chunk {
             let hash = obj.hash.clone();
@@ -509,24 +667,26 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
                 "https://resources.download.minecraft.net/{}/{}",
                 two_char, hash
             );
+            let client = http_client.clone();
+            chunk_entries.push((hash.clone(), obj_dest_dir.clone(), obj_dest_path.clone(), url.clone()));
 
             let handle = tokio::spawn(async move {
                 let _ = fs::create_dir_all(&obj_dest_dir).await;
-                match reqwest::get(&url).await {
-                    Ok(resp) => {
-                        if let Ok(bytes) = resp.bytes().await {
-                            let _ = fs::write(&obj_dest_path, bytes).await;
-                            return Ok(());
-                        }
-                    }
-                    Err(_) => {}
-                }
-                Err(format!("Failed to download asset {}", hash))
+                let bytes = fetch_bytes_with_retry(&client, &url, 3)
+                    .await
+                    .map_err(|e| format!("Failed to download asset {}: {}", hash, e))?;
+                fs::write(&obj_dest_path, bytes)
+                    .await
+                    .map_err(|e| format!("Failed to write asset {}: {}", hash, e))?;
+                Ok::<(), String>(())
             });
             object_futures.push(handle);
         }
 
         let object_results = join_all(object_futures).await;
+        if install_cancelled(&instance_id) {
+            return Err("Installation cancelled by user.".to_string());
+        }
         let mut failed_assets = 0usize;
         for result in object_results {
             match result {
@@ -535,10 +695,40 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
             }
         }
         if failed_assets > 0 {
-            return Err(format!(
-                "Installation failed: {} assets could not be downloaded in one batch.",
-                failed_assets
-            ));
+            let mut retry_errors = Vec::new();
+
+            for (hash, obj_dest_dir, obj_dest_path, url) in chunk_entries {
+                if install_cancelled(&instance_id) {
+                    return Err("Installation cancelled by user.".to_string());
+                }
+                if obj_dest_path.exists() {
+                    continue;
+                }
+
+                fs::create_dir_all(&obj_dest_dir)
+                    .await
+                    .map_err(|e| format!("Failed to prepare asset directory: {}", e))?;
+
+                match fetch_bytes_with_retry(&http_client, &url, 4).await {
+                    Ok(bytes) => {
+                        if let Err(err) = fs::write(&obj_dest_path, bytes).await {
+                            retry_errors.push(format!("Failed to write asset {}: {}", hash, err));
+                        }
+                    }
+                    Err(err) => retry_errors.push(format!("Failed to download asset {}: {}", hash, err)),
+                }
+            }
+
+            if !retry_errors.is_empty() {
+                return Err(format!(
+                    "Installation failed: {} assets could not be downloaded. First error: {}",
+                    retry_errors.len(),
+                    retry_errors
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "unknown".to_string())
+                ));
+            }
         }
     }
 
@@ -562,7 +752,8 @@ pub async fn instance_install(app: tauri::AppHandle, instance_id: String) -> Res
         },
     );
 
-    ensure_bloom_cosmetics_mod(&instance_dir, loader_type, mc_version)?;
+    ensure_bloom_injected_mods(&instance_dir, loader_type, mc_version, renderer).await?;
+    clear_install_cancel(&instance_id);
 
     Ok(())
 }

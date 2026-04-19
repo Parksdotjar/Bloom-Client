@@ -33,7 +33,7 @@ export function useFabric(mcVersion: string, isFabric: boolean) {
 
     const latestStable = versions.find(v => v.loader.stable)?.loader.version
         || versions[0]?.loader.version
-        || "0.16.5"; // Fallback
+        || '';
 
     return { versions, loading, latestStable };
 }

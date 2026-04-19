@@ -24,6 +24,26 @@ type CapeMeshRendererProps = {
 };
 
 const snapshotCache = new Map<string, string>();
+const SNAPSHOT_MAX_CONCURRENT = 2;
+let snapshotActiveCount = 0;
+const snapshotWaiters: Array<() => void> = [];
+
+async function acquireSnapshotSlot() {
+  if (snapshotActiveCount < SNAPSHOT_MAX_CONCURRENT) {
+    snapshotActiveCount += 1;
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    snapshotWaiters.push(resolve);
+  });
+  snapshotActiveCount += 1;
+}
+
+function releaseSnapshotSlot() {
+  snapshotActiveCount = Math.max(0, snapshotActiveCount - 1);
+  const next = snapshotWaiters.shift();
+  if (next) next();
+}
 
 function finiteOr(value: number | undefined, fallback: number) {
   return Number.isFinite(value) ? Number(value) : fallback;
@@ -83,8 +103,27 @@ export function CapeMeshRenderer({ slug, textureUrl, name, className, glowColor,
   const [failed, setFailed] = useState(false);
   const [ready, setReady] = useState(false);
   const [rendering, setRendering] = useState(false);
-  const [activated] = useState(true);
+  const [activated, setActivated] = useState(false);
   const [snapshotSrc, setSnapshotSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    const node = rootRef.current;
+    if (!node) return;
+    if (activated) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        if (entry.isIntersecting || entry.intersectionRatio > 0) {
+          setActivated(true);
+          observer.disconnect();
+        }
+      },
+      { root: null, rootMargin: '260px 0px 260px 0px', threshold: 0.01 }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [activated]);
 
   useEffect(() => {
     if (!activated) return;
@@ -132,6 +171,7 @@ export function CapeMeshRenderer({ slug, textureUrl, name, className, glowColor,
     setFailed(false);
 
     void (async () => {
+      await acquireSnapshotSlot();
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
@@ -186,6 +226,7 @@ export function CapeMeshRenderer({ slug, textureUrl, name, className, glowColor,
       setFailed(true);
       setReady(false);
     }).finally(() => {
+      releaseSnapshotSlot();
       if (viewer) viewer.dispose();
       if (!cancelled) setRendering(false);
     });

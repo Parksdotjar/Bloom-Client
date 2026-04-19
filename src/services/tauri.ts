@@ -5,6 +5,7 @@ export interface Instance {
     name: string;
     mcVersion: string;
     loader: 'vanilla' | 'fabric';
+    renderer?: 'opengl' | 'vulkan';
     fabricLoaderVersion?: string;
     iconDataUrl?: string;
     coverDataUrl?: string;
@@ -179,6 +180,13 @@ export interface StoredBackgroundVideo {
     dataUrl?: string | null;
 }
 
+export interface MinecraftPreferences {
+    showBloomNametagLogo: boolean;
+    showBloomTabLogo: boolean;
+    showBloomChatLogo: boolean;
+    bloomLogoSide: 'left' | 'right';
+}
+
 export interface BloomExportOptions {
     includeMods: boolean;
     includeResourcepacks: boolean;
@@ -203,6 +211,7 @@ export interface InstanceTransferOptions {
 export const TauriApi = {
     pathsGet: () => invoke<any>('paths_get'),
     startupOpenFileTake: () => invoke<string | null>('startup_open_file_take'),
+    instanceInstallCancel: (instanceId: string) => invoke<void>('instance_install_cancel', { instanceId }),
 
     instancesList: () => invoke<Instance[]>('instances_list'),
     instancesGet: (id: string) => invoke<Instance>('instances_get', { id }),
@@ -336,6 +345,10 @@ export const TauriApi = {
         invoke<StoredBackgroundVideo>('launcher_background_video_save', { fileName, mimeType, data }),
     launcherBackgroundVideoLoad: () =>
         invoke<StoredBackgroundVideo | null>('launcher_background_video_load'),
+    minecraftPreferencesGet: () =>
+        invoke<MinecraftPreferences>('minecraft_preferences_get'),
+    minecraftPreferencesSet: (payload: MinecraftPreferences) =>
+        invoke<MinecraftPreferences>('minecraft_preferences_set', { payload }),
     instanceExportBloom: (instanceId: string, outputPath: string, options: BloomExportOptions) =>
         invoke<string>('instance_export_bloom', { instanceId, outputPath, options }),
     saveBinaryFile: (path: string, data: number[]) =>

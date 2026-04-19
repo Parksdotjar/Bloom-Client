@@ -402,6 +402,7 @@ export function ScriptStudio() {
       name: trimmed,
       mcVersion: '1.21.1',
       loader: 'vanilla',
+      renderer: 'opengl',
       createdAt: now,
       updatedAt: now,
       iconDataUrl: undefined,
@@ -478,6 +479,7 @@ export function ScriptStudio() {
     const updated: Instance = {
       ...current,
       loader,
+      renderer: loader === 'fabric' ? (current.renderer || 'opengl') : 'opengl',
       fabricLoaderVersion: loader === 'fabric' ? (current.fabricLoaderVersion || 'latest') : undefined,
       updatedAt: Date.now()
     };

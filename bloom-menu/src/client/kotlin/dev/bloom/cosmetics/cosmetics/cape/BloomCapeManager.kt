@@ -23,21 +23,9 @@ object BloomCapeManager {
 
         val client = MinecraftClient.getInstance() ?: return
         client.execute {
-            runCatching {
-                val handler = client.networkHandler ?: return@runCatching
-                val field = handler.javaClass.declaredFields.firstOrNull {
-                    java.util.Map::class.java.isAssignableFrom(it.type) && it.name.contains("playerListEntries", ignoreCase = true)
-                }
-                if (field != null) {
-                    field.isAccessible = true
-                    val value = field.get(handler)
-                    @Suppress("UNCHECKED_CAST")
-                    val map = value as? MutableMap<Any, Any>
-                    map?.clear()
-                }
-            }.onFailure {
-                BloomLog.debug("Player list refresh skipped reason={}", it.toString())
-            }
+            // Keep this intentionally non-destructive. Skin/cape state is injected
+            // during render; clearing vanilla player caches causes cape flicker/hide.
+            BloomLog.debug("Cape updated signal queued for uuid={}", playerUuid)
         }
     }
 }

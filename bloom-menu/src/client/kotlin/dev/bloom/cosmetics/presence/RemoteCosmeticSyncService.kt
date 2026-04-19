@@ -1,6 +1,7 @@
 package dev.bloom.cosmetics.presence
 
 import dev.bloom.cosmetics.auth.LauncherBridgeAuth
+import dev.bloom.cosmetics.badges.BadgeStateService
 import dev.bloom.cosmetics.bridge.BridgeLiveEventPayload
 import dev.bloom.cosmetics.bridge.LauncherBridgeClient
 import dev.bloom.cosmetics.bridge.toDomain
@@ -18,7 +19,8 @@ import java.util.concurrent.ConcurrentMap
 
 class RemoteCosmeticSyncService(
     private val auth: LauncherBridgeAuth,
-    private val capeStateService: CapeStateService
+    private val capeStateService: CapeStateService,
+    private val badgeStateService: BadgeStateService
 ) {
     private val bridgeClient = LauncherBridgeClient(auth)
     private val fallbackClient = SupabasePublicCapeClient(SupabasePublicAuth.fromEnvironment())
@@ -74,7 +76,7 @@ class RemoteCosmeticSyncService(
             else -> CompletableFuture.completedFuture(null)
         }
         val mergedFuture = primaryFuture.thenCompose { primary ->
-            if (primary != null) {
+            if (primary != null && primary.cape != null) {
                 CompletableFuture.completedFuture(primary)
             } else {
                 fallbackClient.fetchEquippedCapeByMinecraftUuid(normalized)
@@ -82,6 +84,11 @@ class RemoteCosmeticSyncService(
         }
 
         return mergedFuture.thenApply { payload ->
+            if (payload != null) {
+                badgeStateService.upsert(payload, normalized)
+            } else {
+                badgeStateService.clear(normalized)
+            }
             val equipped = payload?.toDomain(defaultUuid = normalized)
             if (equipped != null) {
                 capeStateService.upsert(equipped)
@@ -115,9 +122,17 @@ class RemoteCosmeticSyncService(
             connectBackendLive(resolved)
             bridgeClient.fetchLocalEquippedCape().thenAccept { equippedPayload ->
                 val equipped = equippedPayload?.toDomain(defaultUuid = resolved.minecraftUuid)
-                if (equipped != null) {
+                if (equipped?.asset != null) {
                     capeStateService.upsert(equipped)
                     BloomLog.info("Local cape loaded for uuid={}", resolved.minecraftUuid)
+                } else {
+                    resolveCapeForPlayer(resolved.minecraftUuid)
+                    if (equippedPayload != null) {
+                        BloomLog.warn(
+                            "Local cape payload missing asset for uuid={}; falling back to public loadout lookup.",
+                            resolved.minecraftUuid
+                        )
+                    }
                 }
             }
             BloomLog.info("Bloom session connected user={} uuid={}", resolved.bloomUserId, resolved.minecraftUuid)
@@ -162,6 +177,14 @@ class RemoteCosmeticSyncService(
     private fun handleLiveEvent(event: BridgeLiveEventPayload) {
         when (event.type?.lowercase()) {
             "equipped_changed", "player_cape_changed", "cape_updated", "local_equipped_changed" -> {
+                if (event.equipped != null) {
+                    badgeStateService.upsert(event.equipped, event.minecraftUuid)
+                } else {
+                    val uuid = UuidUtil.normalize(event.minecraftUuid)
+                    if (uuid.isNotBlank()) {
+                        badgeStateService.clear(uuid)
+                    }
+                }
                 val equipped = event.equipped?.toDomain(defaultUuid = event.minecraftUuid)
                 if (equipped != null) {
                     capeStateService.upsert(equipped)
@@ -175,6 +198,7 @@ class RemoteCosmeticSyncService(
 
             "presence_snapshot", "snapshot" -> {
                 event.players.orEmpty().forEach { payload ->
+                    badgeStateService.upsert(payload, payload.minecraftUuid)
                     payload.toDomain(defaultUuid = payload.minecraftUuid)?.let { capeStateService.upsert(it) }
                 }
             }

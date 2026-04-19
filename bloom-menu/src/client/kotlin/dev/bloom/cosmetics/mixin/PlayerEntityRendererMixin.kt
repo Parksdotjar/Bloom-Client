@@ -1,5 +1,6 @@
 package dev.bloom.cosmetics.mixin
 
+import dev.bloom.cosmetics.badges.BloomBadgeService
 import dev.bloom.cosmetics.cosmetics.cape.BloomCapeManager
 import net.minecraft.client.render.entity.state.PlayerEntityRenderState
 import net.minecraft.entity.PlayerLikeEntity
@@ -33,6 +34,21 @@ abstract class PlayerEntityRendererMixin {
             base.secure()
         )
         state.capeVisible = true
+    }
+
+    @Inject(
+        method = ["updateRenderState(Lnet/minecraft/entity/PlayerLikeEntity;Lnet/minecraft/client/render/entity/state/PlayerEntityRenderState;F)V"],
+        at = [At("TAIL")],
+        require = 0
+    )
+    private fun bloomInjectNameBadge(
+        entity: PlayerLikeEntity,
+        state: PlayerEntityRenderState,
+        tickDelta: Float,
+        ci: CallbackInfo
+    ) {
+        state.playerName = BloomBadgeService.decorateName(state.playerName, entity.uuid, BloomBadgeService.Surface.NAMETAG) ?: state.playerName
+        state.displayName = BloomBadgeService.decorateName(state.displayName, entity.uuid, BloomBadgeService.Surface.NAMETAG) ?: state.displayName
     }
 }
 

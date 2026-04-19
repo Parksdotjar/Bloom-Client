@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent } from 'react';
 import { clsx } from 'clsx';
-import { Coins, Download, ImagePlus, Move, RefreshCw, ZoomIn } from 'lucide-react';
+import { Coins, Download, ImagePlus, Move, RefreshCw, Ticket, ZoomIn } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { MinecraftPlayerPreview } from '../components/cosmetics/MinecraftPlayerPreview';
@@ -12,7 +12,9 @@ import {
   finalizeCustomCapeExport,
   getSupabaseUserId,
   loadLatestCustomCapeDraft,
+  loadOwnCustomCapeFreeCredits,
   loadWallet,
+  redeemCustomCapeRewardCode,
   subscribeOwnWallet,
   uploadCustomCapeFinalAtlas,
   uploadCustomCapeSourceImage
@@ -31,13 +33,17 @@ type CropBox = {
   width: number;
   height: number;
 };
+type StaticUploadMode = 'convert' | 'texture';
 
 const EXPORT_PRICE_BB = 800;
+const REDEEM_INPUT_LOCK_MS = 5 * 60 * 1000;
 const WATERMARK_TEXT = 'Preview Only';
 const CUSTOM_CAPE_TOS_ACCEPTED_STORAGE_KEY = 'bloom_custom_cape_tos_accepted_v1';
 const CAPE_NAME_MAX_LENGTH = 28;
 const ACCEPTED_FILE_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
-const VISIBLE_FACE_HEIGHT_TO_WIDTH_RATIO = 2;
+const ACCEPTED_TEXTURE_FILE_TYPES = ['image/png'];
+// Midpoint tuning between legacy 2:1 and strict 16:10 for better visual framing.
+const VISIBLE_FACE_HEIGHT_TO_WIDTH_RATIO = 9 / 5;
 const MIN_VALID_CROP_FRACTION = 0.02;
 
 function clamp(value: number, min: number, max: number) {
@@ -121,6 +127,7 @@ export function CustomCape() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [walletBalance, setWalletBalance] = useState(0);
+  const [freeCapeCredits, setFreeCapeCredits] = useState(0);
   const [supabaseUserId, setSupabaseUserId] = useState<string | null>(null);
   const [commerceRole, setCommerceRole] = useState<'user' | 'owner'>('user');
   const [designId, setDesignId] = useState<string | null>(null);
@@ -145,6 +152,7 @@ export function CustomCape() {
   const [ownerListingDescription, setOwnerListingDescription] = useState('');
   const [publishingToShop, setPublishingToShop] = useState(false);
   const [staticStudioEpoch, setStaticStudioEpoch] = useState(0);
+  const [staticUploadMode, setStaticUploadMode] = useState<StaticUploadMode>('convert');
   const [previewBackEquipment, setPreviewBackEquipment] = useState<'cape' | 'elytra'>('cape');
   const [customCapeTosAccepted, setCustomCapeTosAccepted] = useState<boolean>(() => {
     try {
@@ -154,6 +162,11 @@ export function CustomCape() {
     }
   });
   const [customCapeTosOpen, setCustomCapeTosOpen] = useState(false);
+  const [rewardCodeModalOpen, setRewardCodeModalOpen] = useState(false);
+  const [rewardCodeInput, setRewardCodeInput] = useState('');
+  const [rewardCodeBusy, setRewardCodeBusy] = useState(false);
+  const [rewardCodeLockUntil, setRewardCodeLockUntil] = useState(0);
+  const [rewardCodeNow, setRewardCodeNow] = useState(() => Date.now());
 
   useEffect(() => {
     if (studioTab === 'static') {
@@ -239,6 +252,9 @@ export function CustomCape() {
   );
 
   const currentCrop = useMemo(() => {
+    if (staticUploadMode === 'texture' && sourceImageElement) {
+      return { x: 0, y: 0, width: 1, height: 1 };
+    }
     if (!sourceImageElement || !imageRect) {
       return { x: 0, y: 0, width: 0.5, height: 1 };
     }
@@ -252,7 +268,7 @@ export function CustomCape() {
       width: cropW,
       height: cropH
     };
-  }, [frameBox.height, frameBox.width, frameBox.x, frameBox.y, imageRect, sourceImageElement]);
+  }, [frameBox.height, frameBox.width, frameBox.x, frameBox.y, imageRect, sourceImageElement, staticUploadMode]);
 
   const cropPixelStats = useMemo(() => {
     if (!sourceImageElement) return null;
@@ -336,11 +352,17 @@ export function CustomCape() {
     void (async () => {
       try {
         const profile = await ensureCommerceIdentity(authState.profile.id, authState.profile.name, authState.profile.name);
-        const [userId, wallet, draft] = await Promise.all([getSupabaseUserId(), loadWallet(), loadLatestCustomCapeDraft()]);
+        const [userId, wallet, draft, credits] = await Promise.all([
+          getSupabaseUserId(),
+          loadWallet(),
+          loadLatestCustomCapeDraft(),
+          loadOwnCustomCapeFreeCredits()
+        ]);
         if (cancelled) return;
         setCommerceRole((profile?.role ?? 'user') === 'owner' ? 'owner' : 'user');
         setSupabaseUserId(userId);
         setWalletBalance(wallet?.balance_bb ?? 0);
+        setFreeCapeCredits(credits);
         if (draft) {
           setDesignId(draft.id);
           setSourceImagePath(draft.source_image_path);
@@ -380,6 +402,27 @@ export function CustomCape() {
       cancelled = true;
     };
   }, [authState]);
+
+  useEffect(() => {
+    if (!supabaseUserId) return;
+    try {
+      const raw = window.localStorage.getItem(`bloom_custom_cape_code_lock_until_${supabaseUserId}`);
+      const parsed = Number(raw ?? 0);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        setRewardCodeLockUntil(parsed);
+      } else {
+        setRewardCodeLockUntil(0);
+      }
+    } catch {
+      setRewardCodeLockUntil(0);
+    }
+  }, [supabaseUserId]);
+
+  useEffect(() => {
+    if (rewardCodeLockUntil <= Date.now()) return;
+    const timer = window.setInterval(() => setRewardCodeNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [rewardCodeLockUntil]);
 
   useEffect(() => {
     if (!sourceImageElement || !loadedCrop || !frameBox.width || !frameBox.height) return;
@@ -443,6 +486,15 @@ export function CustomCape() {
       setPreviewTextureObjectUrl(null);
       return;
     }
+    if (staticUploadMode === 'texture') {
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+        previewUrlRef.current = null;
+      }
+      setPreviewBusy(false);
+      setPreviewTextureObjectUrl(sourceImageUrl);
+      return;
+    }
     const delay = dragging ? 70 : 180;
     const timer = window.setTimeout(() => {
       setPreviewBusy(true);
@@ -473,7 +525,7 @@ export function CustomCape() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [currentCrop, dragging, exportWidth, purchased, sourceImageElement]);
+  }, [currentCrop, dragging, exportWidth, purchased, sourceImageElement, sourceImageUrl, staticUploadMode]);
 
   useEffect(
     () => () => {
@@ -516,13 +568,14 @@ export function CustomCape() {
     setPan((current) => clampPan(current, nextZoom));
   };
 
-  const handleUploadFile = async (file: File) => {
+  const handleUploadFile = async (file: File, mode: StaticUploadMode) => {
     if (!supabaseUserId) {
       setErrorMessage('missing_user_session');
       return;
     }
-    if (!ACCEPTED_FILE_TYPES.includes(file.type)) {
-      setErrorMessage('Unsupported file type. Use PNG, JPG, JPEG, or WEBP.');
+    const acceptedTypes = mode === 'texture' ? ACCEPTED_TEXTURE_FILE_TYPES : ACCEPTED_FILE_TYPES;
+    if (!acceptedTypes.includes(file.type)) {
+      setErrorMessage(mode === 'texture' ? 'Unsupported texture type. Use PNG.' : 'Unsupported file type. Use PNG, JPG, JPEG, or WEBP.');
       return;
     }
     if (file.size > 30 * 1024 * 1024) {
@@ -535,6 +588,12 @@ export function CustomCape() {
     try {
       const upload = await uploadCustomCapeSourceImage(supabaseUserId, file);
       const image = await loadImageElementFromUrl(upload.publicUrl);
+      if (mode === 'texture') {
+        const ratio = image.naturalWidth / Math.max(1, image.naturalHeight);
+        if (Math.abs(ratio - 2) > 0.001) {
+          throw new Error('Invalid cape texture dimensions. Use a 2:1 texture (64x32, 128x64, 256x128, etc).');
+        }
+      }
       setSourceImagePath(upload.path);
       setSourceImageUrl(upload.publicUrl);
       setSourceImageElement(image);
@@ -557,7 +616,11 @@ export function CustomCape() {
         export_width: exportWidth
       });
       if (draft?.id) setDesignId(draft.id);
-      setStatusMessage('Image uploaded. Move and zoom to frame the visible cape face.');
+      setStatusMessage(
+        mode === 'texture'
+          ? 'Cape texture uploaded. It will export exactly as uploaded.'
+          : 'Image uploaded. Move and zoom to frame the visible cape face.'
+      );
       const safeBaseName = (sanitizeFileName(file.name).replace(/\.[^.]+$/, '') || 'custom-cape').toLowerCase();
       setOwnerListingSlug((current) => current || `custom-${safeBaseName}-${Date.now().toString().slice(-5)}`);
       setOwnerListingName((current) => (current ? clampCapeName(current) : clampCapeName(`${safeBaseName} cape`)));
@@ -571,7 +634,7 @@ export function CustomCape() {
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    void handleUploadFile(file);
+    void handleUploadFile(file, staticUploadMode);
     event.target.value = '';
   };
 
@@ -584,14 +647,23 @@ export function CustomCape() {
     setStatusMessage(null);
     setExporting(true);
     try {
-      const cleanAtlas = await generateCustomCapeAtlas({
-        image: sourceImageElement,
-        sourceWidth: sourceImageElement.naturalWidth,
-        sourceHeight: sourceImageElement.naturalHeight,
-        crop: currentCrop,
-        exportWidth,
-        watermarkText: null
-      });
+      let outputBlob: Blob;
+      let debugVisibleFaceBlob: Blob | null = null;
+      if (staticUploadMode === 'texture') {
+        const textureResponse = await fetch(sourceImageUrl);
+        outputBlob = await textureResponse.blob();
+      } else {
+        const cleanAtlas = await generateCustomCapeAtlas({
+          image: sourceImageElement,
+          sourceWidth: sourceImageElement.naturalWidth,
+          sourceHeight: sourceImageElement.naturalHeight,
+          crop: currentCrop,
+          exportWidth,
+          watermarkText: null
+        });
+        outputBlob = cleanAtlas.blob;
+        debugVisibleFaceBlob = cleanAtlas.visibleFaceBlob;
+      }
 
       let activeDesignId = designId;
       if (!activeDesignId) {
@@ -600,22 +672,25 @@ export function CustomCape() {
       }
       if (!activeDesignId) throw new Error('design_not_ready');
 
-      await saveCustomCapeDebugArtifacts(
-        activeDesignId,
-        sourceImageUrl,
-        sourceFileName,
-        cleanAtlas.visibleFaceBlob,
-        cleanAtlas.blob
-      );
+      if (debugVisibleFaceBlob) {
+        await saveCustomCapeDebugArtifacts(
+          activeDesignId,
+          sourceImageUrl,
+          sourceFileName,
+          debugVisibleFaceBlob,
+          outputBlob
+        );
+      }
 
       if (!purchased) {
         if (!customCapeTosAccepted) {
           throw new Error('You must agree to the custom cape TOS before purchasing.');
         }
-        if (walletBalance < EXPORT_PRICE_BB) {
+        const usingFreeCredit = freeCapeCredits > 0;
+        if (!usingFreeCredit && walletBalance < EXPORT_PRICE_BB) {
           throw new Error('insufficient_balance');
         }
-        const uploaded = await uploadCustomCapeFinalAtlas(supabaseUserId, activeDesignId, cleanAtlas.blob);
+        const uploaded = await uploadCustomCapeFinalAtlas(supabaseUserId, activeDesignId, outputBlob);
         const finalizeResult = await finalizeCustomCapeExport(
           activeDesignId,
           uploaded.path,
@@ -624,14 +699,25 @@ export function CustomCape() {
         );
         if (!finalizeResult) throw new Error('finalize_failed');
         setWalletBalance(finalizeResult.new_balance_bb);
+        if (usingFreeCredit) {
+          setFreeCapeCredits((current) => Math.max(0, current - 1));
+        }
         setPurchased(true);
         setLastExportTextureUrl(finalizeResult.final_asset_url || uploaded.publicUrl);
         setExportIdempotencyKey(crypto.randomUUID());
-        setStatusMessage('Custom cape exported to Locker and purchased for 800 BB. Watermark removed.');
+        setStatusMessage(
+          usingFreeCredit
+            ? staticUploadMode === 'texture'
+              ? 'Cape texture exported to Locker using a free code credit.'
+              : 'Custom cape exported to Locker using a free code credit.'
+            : staticUploadMode === 'texture'
+              ? 'Cape texture exported to Locker and purchased for 800 BB.'
+              : 'Custom cape exported to Locker and purchased for 800 BB. Watermark removed.'
+        );
       } else {
-        const uploaded = await uploadCustomCapeFinalAtlas(supabaseUserId, activeDesignId, cleanAtlas.blob);
+        const uploaded = await uploadCustomCapeFinalAtlas(supabaseUserId, activeDesignId, outputBlob);
         setLastExportTextureUrl(uploaded.publicUrl);
-        setStatusMessage('Custom cape exported to Locker.');
+        setStatusMessage(staticUploadMode === 'texture' ? 'Cape texture exported to Locker.' : 'Custom cape exported to Locker.');
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -639,6 +725,45 @@ export function CustomCape() {
       setExporting(false);
     }
   };
+
+  const handleRedeemFreeCapeCode = async () => {
+    const code = rewardCodeInput.trim();
+    if (Date.now() < rewardCodeLockUntil) {
+      setErrorMessage('Code input is locked for 5 minutes after a successful redeem.');
+      return;
+    }
+    if (!code) {
+      setErrorMessage('Enter a code first.');
+      return;
+    }
+    setRewardCodeBusy(true);
+    setErrorMessage(null);
+    try {
+      const result = await redeemCustomCapeRewardCode(code);
+      setFreeCapeCredits(result.credits_remaining);
+      setRewardCodeInput('');
+      setRewardCodeModalOpen(false);
+      const nextLock = Date.now() + REDEEM_INPUT_LOCK_MS;
+      setRewardCodeLockUntil(nextLock);
+      if (supabaseUserId) {
+        try {
+          window.localStorage.setItem(`bloom_custom_cape_code_lock_until_${supabaseUserId}`, String(nextLock));
+        } catch {
+          // ignore local storage errors
+        }
+      }
+      setStatusMessage(`Code redeemed. You now have ${result.credits_remaining} free custom cape export credit${result.credits_remaining === 1 ? '' : 's'}.`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRewardCodeBusy(false);
+    }
+  };
+  const rewardCodeLocked = rewardCodeLockUntil > rewardCodeNow;
+  const rewardCodeLockSeconds = rewardCodeLocked ? Math.ceil((rewardCodeLockUntil - rewardCodeNow) / 1000) : 0;
+  const rewardCodeLockLabel = rewardCodeLocked
+    ? `${Math.floor(rewardCodeLockSeconds / 60)}:${String(rewardCodeLockSeconds % 60).padStart(2, '0')}`
+    : null;
 
   const handleOwnerPublishToShop = async () => {
     if (commerceRole !== 'owner') {
@@ -766,14 +891,54 @@ export function CustomCape() {
       <section key={`static-studio-${staticStudioEpoch}`} className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)_340px] gap-4 min-h-0">
         <aside className="g-panel p-4 min-h-0 overflow-y-auto">
           <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Setup</p>
-          <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/jpg,image/webp" className="hidden" onChange={handleFileChange} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={staticUploadMode === 'texture' ? 'image/png' : 'image/png,image/jpeg,image/jpg,image/webp'}
+            className="hidden"
+            onChange={handleFileChange}
+          />
+          <div className="mt-3 inline-flex w-full items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-1">
+            <button
+              type="button"
+              onClick={() => setStaticUploadMode('convert')}
+              className={clsx(
+                'h-8 flex-1 rounded-lg border text-[10px] font-extrabold uppercase tracking-[0.12em]',
+                staticUploadMode === 'convert'
+                  ? 'border-[var(--g-accent)] bg-white/[0.1] text-white'
+                  : 'border-white/15 bg-white/[0.03] text-white/72 hover:bg-white/[0.07]'
+              )}
+            >
+              Convert Image
+            </button>
+            <button
+              type="button"
+              onClick={() => setStaticUploadMode('texture')}
+              className={clsx(
+                'h-8 flex-1 rounded-lg border text-[10px] font-extrabold uppercase tracking-[0.12em]',
+                staticUploadMode === 'texture'
+                  ? 'border-[var(--g-accent)] bg-white/[0.1] text-white'
+                  : 'border-white/15 bg-white/[0.03] text-white/72 hover:bg-white/[0.07]'
+              )}
+            >
+              Upload Cape Texture
+            </button>
+            <button
+              type="button"
+              onClick={() => setRewardCodeModalOpen(true)}
+              className="h-8 w-9 shrink-0 rounded-lg border border-white/15 bg-white/[0.03] text-white/80 inline-flex items-center justify-center hover:bg-white/[0.08]"
+              title="Redeem free custom cape code"
+            >
+              <Ticket size={14} />
+            </button>
+          </div>
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
             className="g-btn-accent mt-3 h-10 w-full text-[11px] font-extrabold uppercase tracking-[0.12em] inline-flex items-center justify-center gap-2 disabled:opacity-55"
           >
             <ImagePlus size={14} />
-            {uploading ? 'Uploading...' : 'Upload Image'}
+            {uploading ? 'Uploading...' : staticUploadMode === 'texture' ? 'Upload Texture PNG' : 'Upload Image'}
           </button>
 
           <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
@@ -785,38 +950,47 @@ export function CustomCape() {
           <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
             <div className="flex items-center justify-between gap-3">
               <p className="text-[10px] uppercase tracking-[0.12em] font-extrabold text-white/55">Export Resolution</p>
-              <span className="text-xs font-extrabold text-white">{getCapeAtlasResolutionLabel(exportWidth)}</span>
+              <span className="text-xs font-extrabold text-white">
+                {staticUploadMode === 'texture' ? 'Original texture' : getCapeAtlasResolutionLabel(exportWidth)}
+              </span>
             </div>
-            <input
-              type="range"
-              min={0}
-              max={CUSTOM_CAPE_EXPORT_PRESETS.length - 1}
-              value={Math.max(0, CUSTOM_CAPE_EXPORT_PRESETS.indexOf(exportWidth as (typeof CUSTOM_CAPE_EXPORT_PRESETS)[number]))}
-              onChange={(event) => {
-                const index = clamp(Number(event.target.value) || 0, 0, CUSTOM_CAPE_EXPORT_PRESETS.length - 1);
-                setExportWidth(CUSTOM_CAPE_EXPORT_PRESETS[index]);
-              }}
-              className="mt-2 w-full accent-[var(--g-accent)]"
-            />
-            <div className="mt-2 grid grid-cols-3 gap-1">
-              {CUSTOM_CAPE_EXPORT_PRESETS.map((preset) => (
-                <button
-                  key={preset}
-                  onClick={() => setExportWidth(preset)}
-                  className={clsx(
-                    'h-7 rounded-md border text-[10px] font-extrabold uppercase tracking-[0.1em]',
-                    exportWidth === preset ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03] text-white/72'
-                  )}
-                >
-                  {getCapeAtlasResolutionLabel(preset)}
-                </button>
-              ))}
-            </div>
+            {staticUploadMode === 'texture' ? (
+              <p className="mt-2 text-xs text-white/60">Direct texture mode keeps your uploaded PNG resolution unchanged.</p>
+            ) : (
+              <>
+                <input
+                  type="range"
+                  min={0}
+                  max={CUSTOM_CAPE_EXPORT_PRESETS.length - 1}
+                  value={Math.max(0, CUSTOM_CAPE_EXPORT_PRESETS.indexOf(exportWidth as (typeof CUSTOM_CAPE_EXPORT_PRESETS)[number]))}
+                  onChange={(event) => {
+                    const index = clamp(Number(event.target.value) || 0, 0, CUSTOM_CAPE_EXPORT_PRESETS.length - 1);
+                    setExportWidth(CUSTOM_CAPE_EXPORT_PRESETS[index]);
+                  }}
+                  className="mt-2 w-full accent-[var(--g-accent)]"
+                />
+                <div className="mt-2 grid grid-cols-3 gap-1">
+                  {CUSTOM_CAPE_EXPORT_PRESETS.map((preset) => (
+                    <button
+                      key={preset}
+                      onClick={() => setExportWidth(preset)}
+                      className={clsx(
+                        'h-7 rounded-md border text-[10px] font-extrabold uppercase tracking-[0.1em]',
+                        exportWidth === preset ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03] text-white/72'
+                      )}
+                    >
+                      {getCapeAtlasResolutionLabel(preset)}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
           <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
             <p className="text-[10px] uppercase tracking-[0.12em] font-extrabold text-white/55">Export Cost</p>
             <p className="mt-1 text-lg font-extrabold text-white">Export to Locker - {EXPORT_PRICE_BB} BB</p>
+            <p className="text-xs text-emerald-200 mt-1">Free code credits: {freeCapeCredits}</p>
             <p className="text-xs text-white/55 mt-1">
               Upload and preview are free. Exporting to Locker charges once and removes watermark from live preview.
             </p>
@@ -858,10 +1032,20 @@ export function CustomCape() {
           </div>
 
           <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/62 space-y-1">
-            <p>1. Upload any image.</p>
-            <p>2. Drag + zoom until the vertical 2:1 frame matches what you want visible on cape front.</p>
-            <p>3. Pick export size.</p>
-            <p>4. Export to pay once and remove watermark.</p>
+            {staticUploadMode === 'texture' ? (
+              <>
+                <p>1. Upload a 2:1 PNG cape texture.</p>
+                <p>2. Preview it live on your player.</p>
+                <p>3. Export to send it directly to Locker.</p>
+              </>
+            ) : (
+              <>
+                <p>1. Upload any image.</p>
+                <p>2. Drag + zoom until the frame matches what you want visible on cape front.</p>
+                <p>3. Pick export size.</p>
+                <p>4. Export to pay once and remove watermark.</p>
+              </>
+            )}
           </div>
 
           {commerceRole === 'owner' && (
@@ -928,14 +1112,14 @@ export function CustomCape() {
           <div className="flex items-center justify-between gap-3">
             <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Visible Cape Face</p>
             <div className="flex items-center gap-2">
-              {cropPixelStats && (
+              {cropPixelStats && staticUploadMode === 'convert' && (
                 <span className="text-[11px] text-white/58">
-                  Crop (W x H): {cropPixelStats.width}x{cropPixelStats.height}px | Locked Ratio (H:W): 2:1
+                  Crop (W x H): {cropPixelStats.width}x{cropPixelStats.height}px | Locked Ratio (H:W): 9:5
                 </span>
               )}
               <button
                 onClick={resetFraming}
-                disabled={!sourceImageElement}
+                disabled={!sourceImageElement || staticUploadMode === 'texture'}
                 className="g-btn h-8 px-2.5 text-[10px] font-extrabold uppercase tracking-[0.12em] inline-flex items-center gap-1 disabled:opacity-50"
               >
                 <RefreshCw size={12} />
@@ -947,11 +1131,11 @@ export function CustomCape() {
           <div
             ref={workspaceRef}
             className="relative mt-3 flex-1 min-h-[420px] overflow-hidden border border-white/12 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_60%),rgba(0,0,0,0.35)]"
-            onPointerDown={handleWorkspacePointerDown}
-            onPointerMove={handleWorkspacePointerMove}
-            onPointerUp={handleWorkspacePointerUp}
-            onPointerCancel={handleWorkspacePointerUp}
-            onWheel={handleWorkspaceWheel}
+            onPointerDown={staticUploadMode === 'convert' ? handleWorkspacePointerDown : undefined}
+            onPointerMove={staticUploadMode === 'convert' ? handleWorkspacePointerMove : undefined}
+            onPointerUp={staticUploadMode === 'convert' ? handleWorkspacePointerUp : undefined}
+            onPointerCancel={staticUploadMode === 'convert' ? handleWorkspacePointerUp : undefined}
+            onWheel={staticUploadMode === 'convert' ? handleWorkspaceWheel : undefined}
           >
             {sourceImageElement && sourceImageUrl && imageRect ? (
               <>
@@ -967,10 +1151,11 @@ export function CustomCape() {
                   <img
                     src={sourceImageUrl}
                     alt="Custom cape source"
-                    className="h-full w-full object-fill select-none pointer-events-none [image-rendering:pixelated]"
+                    className="h-full w-full object-contain select-none pointer-events-none [image-rendering:pixelated]"
                     draggable={false}
                   />
                 </div>
+                {staticUploadMode === 'convert' ? (
                 <div className="absolute inset-0 pointer-events-none">
                   <div
                     className="absolute bg-black/45"
@@ -1027,12 +1212,24 @@ export function CustomCape() {
                     }}
                   />
                 </div>
+                ) : (
+                <div className="absolute inset-0 grid place-items-center px-6 text-center">
+                  <div className="rounded-xl border border-white/12 bg-black/45 px-4 py-3">
+                    <p className="text-sm font-extrabold text-white">Direct texture mode</p>
+                    <p className="mt-1 text-xs text-white/62">Texture is exported exactly as uploaded. No crop or conversion.</p>
+                  </div>
+                </div>
+                )}
               </>
             ) : (
               <div className="absolute inset-0 grid place-items-center text-center px-6">
                 <div>
-                  <p className="text-sm font-extrabold text-white">Upload an image to start</p>
-                  <p className="text-xs text-white/55 mt-1">The frame is locked to the true vertical 2:1 cape visible-face ratio.</p>
+                  <p className="text-sm font-extrabold text-white">Upload {staticUploadMode === 'texture' ? 'a cape texture PNG' : 'an image'} to start</p>
+                  <p className="text-xs text-white/55 mt-1">
+                    {staticUploadMode === 'texture'
+                      ? 'Use a 2:1 cape texture (example: 64x32, 128x64, 256x128).'
+                      : 'The frame is locked to a tuned cape face ratio (9:5).'}
+                  </p>
                 </div>
               </div>
             )}
@@ -1041,14 +1238,14 @@ export function CustomCape() {
           <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-xs text-white/65">
               <Move size={13} />
-              Drag to pan
+              {staticUploadMode === 'texture' ? 'Direct upload mode' : 'Drag to pan'}
             </div>
             <div className="flex items-center gap-2 text-xs text-white/65">
               <ZoomIn size={13} />
-              Scroll to zoom
+              {staticUploadMode === 'texture' ? 'No framing needed' : 'Scroll to zoom'}
             </div>
             <div className="text-xs text-white/65">
-              Zoom: {effectiveZoom.toFixed(2)}x
+              {staticUploadMode === 'texture' ? 'Texture preserved 1:1' : `Zoom: ${effectiveZoom.toFixed(2)}x`}
             </div>
           </div>
         </div>
@@ -1102,7 +1299,13 @@ export function CustomCape() {
               )}
             </div>
             <p className="mt-2 text-[11px] text-white/55">
-              {previewBusy ? 'Updating preview...' : purchased ? 'Clean preview active.' : 'Preview watermark stays until export purchase.'}
+              {previewBusy
+                ? 'Updating preview...'
+                : staticUploadMode === 'texture'
+                  ? 'Direct texture preview.'
+                  : purchased
+                    ? 'Clean preview active.'
+                    : 'Preview watermark stays until export purchase.'}
             </p>
           </div>
 
@@ -1112,7 +1315,9 @@ export function CustomCape() {
             <p className="text-xs text-white/65 mt-2">
               {purchased
                 ? 'This design is purchased. Exports are clean and watermark-free.'
-                : 'This design is in preview mode. Export purchase required for clean final atlas.'}
+                : staticUploadMode === 'texture'
+                  ? 'Direct texture mode is active. Export purchase is still required.'
+                  : 'This design is in preview mode. Export purchase required for clean final atlas.'}
             </p>
             <div className="mt-3 rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-[11px] text-white/60">
               {savingDraft ? 'Saving draft...' : loading ? 'Loading...' : 'Draft autosave active.'}
@@ -1125,7 +1330,47 @@ export function CustomCape() {
           playerUuid={authState.profile.id}
           playerName={authState.profile.name}
           playerSkinUrl={authState.profile.skinUrl ?? null}
+          commerceRole={commerceRole}
         />
+      )}
+      {rewardCodeModalOpen && (
+        <div className="fixed inset-0 z-[565] flex items-center justify-center p-4 app-region-no-drag">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={() => setRewardCodeModalOpen(false)} />
+          <div className="relative w-full max-w-[520px] rounded-2xl border border-white/20 bg-[#09090a] p-5 shadow-[0_34px_80px_rgba(0,0,0,0.72)]">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.16em] font-black text-white/45">Coupon Code</p>
+                <h3 className="text-2xl font-extrabold text-white mt-1">Redeem Free Custom Cape</h3>
+              </div>
+              <button
+                onClick={() => setRewardCodeModalOpen(false)}
+                className="h-9 px-3 rounded-lg border border-white/20 bg-white/[0.03] text-[10px] font-extrabold uppercase tracking-[0.12em] text-white/85 hover:bg-white/[0.1]"
+              >
+                Close
+              </button>
+            </div>
+            <p className="mt-3 text-xs text-white/65">Each code is single-use and grants one free custom cape export credit.</p>
+            {rewardCodeLocked && (
+              <p className="mt-2 text-xs text-amber-200">Typing locked for {rewardCodeLockLabel} after successful redeem.</p>
+            )}
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+              <input
+                value={rewardCodeInput}
+                onChange={(event) => setRewardCodeInput(event.target.value.toUpperCase())}
+                placeholder="Enter code"
+                className="g-input h-10 text-sm"
+                disabled={rewardCodeLocked}
+              />
+              <button
+                onClick={() => { void handleRedeemFreeCapeCode(); }}
+                disabled={rewardCodeBusy || rewardCodeLocked}
+                className="g-btn-accent h-10 px-4 text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+              >
+                {rewardCodeBusy ? 'Redeeming...' : 'Redeem'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {customCapeTosOpen && (
         <div className="fixed inset-0 z-[560] flex items-center justify-center p-4 app-region-no-drag">

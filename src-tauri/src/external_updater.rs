@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::process::Command;
 use tauri::AppHandle;
@@ -7,6 +8,8 @@ const GITHUB_LATEST_RELEASE_API: &str =
     "https://api.github.com/repos/Parksdotjar/Bloom-Client/releases/latest";
 const SUPABASE_LATEST_JSON_URL: &str =
     "https://sb.bloomclient.org/storage/v1/object/public/updates/latest.json";
+const SUPABASE_LATEST_JSON_FALLBACK_URL: &str = "https://sb.bloomclient.org/updates/latest.json";
+const EMBEDDED_LATEST_JSON: &str = include_str!("../../latest.json");
 
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {
@@ -26,6 +29,7 @@ struct SupabaseManifest {
     version: String,
     installer_url: Option<String>,
     asset_name: Option<String>,
+    fallback_installer_urls: Option<Vec<String>>,
     windows: Option<SupabaseWindowsManifest>,
 }
 
@@ -36,6 +40,7 @@ struct SupabaseWindowsManifest {
     asset_name: Option<String>,
     nsis_url: Option<String>,
     nsis_asset_name: Option<String>,
+    fallback_installer_urls: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -84,40 +89,214 @@ fn find_windows_installer(assets: &[GitHubAsset]) -> Option<&GitHubAsset> {
     })
 }
 
-async fn external_update_check_supabase(
-    current_version: &str,
-) -> Result<Option<ExternalUpdateInfo>, String> {
+async fn download_installer_bytes(installer_url: &str) -> Result<Vec<u8>, String> {
     let client = reqwest::Client::new();
+
     let response = client
-        .get(SUPABASE_LATEST_JSON_URL)
+        .get(installer_url)
         .header(reqwest::header::USER_AGENT, "BloomClientUpdater/1.0")
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch Supabase latest.json: {e}"))?;
+        .map_err(|e| format!("Failed to download installer from {installer_url}: {e}"))?;
 
-    if !response.status().is_success() {
+    if response.status().is_success() {
+        return response
+            .bytes()
+            .await
+            .map(|b| b.to_vec())
+            .map_err(|e| format!("Failed to read installer bytes from {installer_url}: {e}"));
+    }
+
+    if response.status() == reqwest::StatusCode::BAD_REQUEST && installer_url.contains('?') {
+        let fallback_url = installer_url
+            .split('?')
+            .next()
+            .unwrap_or(installer_url)
+            .trim()
+            .to_string();
+
+        let fallback_response = client
+            .get(&fallback_url)
+            .header(reqwest::header::USER_AGENT, "BloomClientUpdater/1.0")
+            .send()
+            .await
+            .map_err(|e| format!("Failed to download installer from fallback URL {fallback_url}: {e}"))?;
+
+        if fallback_response.status().is_success() {
+            return fallback_response
+                .bytes()
+                .await
+                .map(|b| b.to_vec())
+                .map_err(|e| format!("Failed to read installer bytes from fallback URL {fallback_url}: {e}"));
+        }
+
         return Err(format!(
-            "Supabase latest.json returned HTTP {}",
-            response.status()
+            "Installer download returned HTTP {} (fallback HTTP {})",
+            response.status(),
+            fallback_response.status()
         ));
     }
 
-    let manifest: SupabaseManifest = response
+    Err(format!("Installer download returned HTTP {}", response.status()))
+}
+
+fn sanitize_url(input: &str) -> String {
+    input.trim().replace(' ', "%20")
+}
+
+fn build_supabase_public_url(file_name: &str) -> String {
+    format!(
+        "https://sb.bloomclient.org/storage/v1/object/public/updates/{}",
+        file_name
+    )
+}
+
+fn push_candidate(candidates: &mut Vec<String>, seen: &mut HashSet<String>, candidate: Option<String>) {
+    if let Some(raw) = candidate {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let sanitized = sanitize_url(trimmed);
+        if seen.insert(sanitized.clone()) {
+            candidates.push(sanitized);
+        }
+    }
+}
+
+fn build_manifest_candidate_urls(manifest: &SupabaseManifest) -> Vec<String> {
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+
+    push_candidate(
+        &mut candidates,
+        &mut seen,
+        manifest
+            .windows
+            .as_ref()
+            .and_then(|w| w.installer_url.clone()),
+    );
+    push_candidate(
+        &mut candidates,
+        &mut seen,
+        manifest.windows.as_ref().and_then(|w| w.nsis_url.clone()),
+    );
+    push_candidate(
+        &mut candidates,
+        &mut seen,
+        manifest.installer_url.clone(),
+    );
+
+    if let Some(windows) = &manifest.windows {
+        if let Some(extra) = &windows.fallback_installer_urls {
+            for url in extra {
+                push_candidate(&mut candidates, &mut seen, Some(url.clone()));
+            }
+        }
+        if let Some(asset_name) = &windows.asset_name {
+            push_candidate(
+                &mut candidates,
+                &mut seen,
+                Some(build_supabase_public_url(asset_name)),
+            );
+        }
+        if let Some(nsis_asset_name) = &windows.nsis_asset_name {
+            push_candidate(
+                &mut candidates,
+                &mut seen,
+                Some(build_supabase_public_url(nsis_asset_name)),
+            );
+        }
+    }
+
+    if let Some(extra) = &manifest.fallback_installer_urls {
+        for url in extra {
+            push_candidate(&mut candidates, &mut seen, Some(url.clone()));
+        }
+    }
+
+    if let Some(asset_name) = &manifest.asset_name {
+        push_candidate(
+            &mut candidates,
+            &mut seen,
+            Some(build_supabase_public_url(asset_name)),
+        );
+    }
+
+    let version = normalize_version(&manifest.version);
+    push_candidate(
+        &mut candidates,
+        &mut seen,
+        Some(build_supabase_public_url(&format!(
+            "BloomClient-v{}-x64-setup.exe",
+            version
+        ))),
+    );
+    push_candidate(
+        &mut candidates,
+        &mut seen,
+        Some(build_supabase_public_url("BloomClient-latest-x64-setup.exe")),
+    );
+
+    candidates
+}
+
+async fn fetch_manifest_from_url(
+    client: &reqwest::Client,
+    url: &str,
+    source_label: &str,
+) -> Result<SupabaseManifest, String> {
+    let response = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, "BloomClientUpdater/1.0")
+        .send()
+        .await
+        .map_err(|e| format!("{source_label} request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("{source_label} returned HTTP {}", response.status()));
+    }
+
+    response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse Supabase latest.json: {e}"))?;
+        .map_err(|e| format!("{source_label} parse failed: {e}"))
+}
+
+async fn fetch_supabase_manifest_with_fallback() -> Result<SupabaseManifest, String> {
+    let client = reqwest::Client::new();
+    let sources = [
+        ("Supabase latest.json primary", SUPABASE_LATEST_JSON_URL),
+        ("Supabase latest.json fallback", SUPABASE_LATEST_JSON_FALLBACK_URL),
+    ];
+
+    let mut errors = Vec::new();
+    for (label, url) in sources {
+        match fetch_manifest_from_url(&client, url, label).await {
+            Ok(manifest) => return Ok(manifest),
+            Err(err) => errors.push(err),
+        }
+    }
+
+    Err(format!(
+        "All manifest sources failed: {}",
+        errors.join(" | ")
+    ))
+}
+
+async fn external_update_check_supabase(
+    current_version: &str,
+) -> Result<Option<ExternalUpdateInfo>, String> {
+    let manifest = fetch_supabase_manifest_with_fallback().await?;
 
     let latest_version = normalize_version(&manifest.version);
     if compare_versions(current_version, &latest_version) != std::cmp::Ordering::Less {
         return Ok(None);
     }
 
-    let mut installer_url = manifest
-        .windows
-        .as_ref()
-        .and_then(|w| w.installer_url.clone())
-        .or_else(|| manifest.windows.as_ref().and_then(|w| w.nsis_url.clone()))
-        .or(manifest.installer_url.clone())
+    let installer_url = build_manifest_candidate_urls(&manifest)
+        .into_iter()
+        .next()
         .ok_or_else(|| "Supabase manifest missing installer URL".to_string())?;
 
     let asset_name = manifest
@@ -128,14 +307,46 @@ async fn external_update_check_supabase(
         .or(manifest.asset_name.clone())
         .unwrap_or_else(|| "BloomClient-latest-x64-setup.exe".to_string());
 
-    // Guard against manifest URLs containing raw spaces that can 400 in downloader.
-    installer_url = installer_url.replace(' ', "%20");
+    Ok(Some(ExternalUpdateInfo {
+        version: latest_version,
+        installer_url,
+        asset_name,
+    }))
+}
+
+fn external_update_check_embedded_manifest(
+    current_version: &str,
+) -> Result<Option<ExternalUpdateInfo>, String> {
+    let manifest: SupabaseManifest = serde_json::from_str(EMBEDDED_LATEST_JSON)
+        .map_err(|e| format!("Failed to parse bundled latest.json: {e}"))?;
+
+    let latest_version = normalize_version(&manifest.version);
+    if compare_versions(current_version, &latest_version) != std::cmp::Ordering::Less {
+        return Ok(None);
+    }
+
+    let installer_url = build_manifest_candidate_urls(&manifest)
+        .into_iter()
+        .next()
+        .ok_or_else(|| "Bundled latest.json is missing installer URL".to_string())?;
+
+    let asset_name = manifest
+        .windows
+        .as_ref()
+        .and_then(|w| w.asset_name.clone())
+        .or_else(|| manifest.windows.as_ref().and_then(|w| w.nsis_asset_name.clone()))
+        .or(manifest.asset_name.clone())
+        .unwrap_or_else(|| "BloomClient-latest-x64-setup.exe".to_string());
 
     Ok(Some(ExternalUpdateInfo {
         version: latest_version,
         installer_url,
         asset_name,
     }))
+}
+
+async fn fetch_supabase_manifest() -> Result<SupabaseManifest, String> {
+    fetch_supabase_manifest_with_fallback().await
 }
 
 #[tauri::command]
@@ -146,16 +357,24 @@ pub async fn external_update_check(app: AppHandle) -> Result<Option<ExternalUpda
         return Ok(update);
     }
 
+    if let Ok(update) = external_update_check_embedded_manifest(&current_version) {
+        return Ok(update);
+    }
+
     let client = reqwest::Client::new();
     let response = client
         .get(GITHUB_LATEST_RELEASE_API)
         .header(reqwest::header::USER_AGENT, "BloomClientUpdater/1.0")
         .send()
-        .await
-        .map_err(|e| format!("Failed to fetch latest release: {e}"))?;
+        .await;
+
+    let response = match response {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
 
     if !response.status().is_success() {
-        return Err(format!("Release API returned HTTP {}", response.status()));
+        return Ok(None);
     }
 
     let release: GitHubRelease = response
@@ -197,24 +416,40 @@ pub async fn external_update_install(
 
     #[cfg(target_os = "windows")]
     {
-        let response = reqwest::Client::new()
-            .get(&installer_url)
-            .header(reqwest::header::USER_AGENT, "BloomClientUpdater/1.0")
-            .send()
-            .await
-            .map_err(|e| format!("Failed to download installer: {e}"))?;
+        let mut candidate_urls = Vec::new();
+        let mut seen = HashSet::new();
+        push_candidate(
+            &mut candidate_urls,
+            &mut seen,
+            Some(installer_url.clone()),
+        );
 
-        if !response.status().is_success() {
-            return Err(format!(
-                "Installer download returned HTTP {}",
-                response.status()
-            ));
+        if let Ok(manifest) = fetch_supabase_manifest().await {
+            for candidate in build_manifest_candidate_urls(&manifest) {
+                push_candidate(&mut candidate_urls, &mut seen, Some(candidate));
+            }
         }
 
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| format!("Failed to read installer bytes: {e}"))?;
+        let mut last_error: Option<String> = None;
+        let mut downloaded_bytes: Option<Vec<u8>> = None;
+        for candidate in &candidate_urls {
+            match download_installer_bytes(candidate).await {
+                Ok(bytes) => {
+                    downloaded_bytes = Some(bytes);
+                    break;
+                }
+                Err(err) => {
+                    last_error = Some(format!("{candidate} -> {err}"));
+                }
+            }
+        }
+
+        let bytes = downloaded_bytes.ok_or_else(|| {
+            format!(
+                "Installer download failed for all candidate URLs. last_error={}",
+                last_error.unwrap_or_else(|| "unknown".to_string())
+            )
+        })?;
 
         let temp_dir = std::env::temp_dir().join("bloom-client-updater");
         fs::create_dir_all(&temp_dir)

@@ -1,23 +1,31 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { ChevronDown, Coins, Search, Ticket, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Coins, Search, Ticket, Trash2, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { useAuth } from '../hooks/useAuth';
 import { COSMETICS_MOD_MENU_EVENT, consumeCosmeticsModMenuRequest } from '../constants/cosmeticsModMenu';
 import { CapeMeshRenderer } from '../components/cosmetics/CapeMeshRenderer';
 import { MinecraftPlayerPreview } from '../components/cosmetics/MinecraftPlayerPreview';
+import bloomLogo from '../assets/logo.png';
 import { capeTextureLoader } from '../services/capeTextures';
 import {
-  createTebexCheckoutSession,
+  clearOwnerPartnerCapeMapping,
+  createMcsetsCheckoutSession,
   createPartnerGroup,
   ensureCommerceIdentity,
   getSupabaseUserId,
   loadCurrencyPacks,
+  loadOwnerCapesLite,
   loadCurrentLoadout,
+  loadOwnerMembers,
+  ownerGetPartnerWalletBalanceByUserId,
+  ownerGrantPartnerWalletByUserId,
+  loadOwnerPartnerCapeMappings,
   loadOwnedCapes,
   loadOwnPartnerWallet,
   loadOwnPartnerWalletLedger,
+  loadPartnerApplicationForms,
   loadPartnerGroups,
   loadAllCapeIdsForOwner,
   loadPreviewAppearance,
@@ -29,7 +37,9 @@ import {
   requestPartnerCashout,
   giftCapeWithPartnerWallet,
   redeemPromoCode,
+  submitPartnerApplication,
   setCapeLoadout,
+  setOwnerPartnerCapeMapping,
   deactivateCapeListing,
   subscribePartnerGroups,
   subscribePreviewAppearance,
@@ -39,15 +49,23 @@ import {
   upsertPreviewAppearance,
   updateCapeListing,
   updateCapeRenderPose,
+  ownerRevokeCapeFromUserById,
   DEFAULT_PREVIEW_APPEARANCE,
   type CapeRecord,
   type CommerceProfile,
   type CurrencyPackRecord,
+  type OwnerCapeLiteRecord,
   type OwnedCapeRecord,
+  type OwnerMemberRecord,
+  type OwnerPartnerCapeMappingRecord,
   type PartnerGroupRecord,
+  type PartnerApplicationAudience,
+  type PartnerApplicationForm,
+  type PartnerApplicationQuestion,
   type PartnerWalletLedgerRecord,
   type PartnerWalletPurchaseResult,
   type PreviewAppearanceRecord,
+  type PartnerWalletRecord,
   type UpdateCapeInput,
   type WalletLedgerRecord
 } from '../services/cosmetics';
@@ -60,6 +78,131 @@ import {
 
 type LockerTab = 'partners' | 'locker' | 'shop' | 'wallet';
 type LockerCategory = 'capes';
+type PartnerApplyAnswerValue = string | string[];
+const PARTNER_TERMS_TEXT = `Bloom Partnership Terms of Agreement
+
+This Partnership Terms of Agreement ("Agreement") is entered into between Bloom and the approved Creator or Server Partner ("Partner"). By accepting or participating in a partnership with Bloom, the Partner agrees to the following terms.
+
+1. Purpose
+The purpose of this partnership is to create a mutually beneficial relationship between Bloom and the Partner through promotion, community exposure, and agreed collaboration efforts.
+
+2. Eligibility
+To be accepted as a Bloom partner, the Partner must:
+- Represent an active and legitimate community, server, brand, or creator platform
+- Maintain a professional and respectful public presence
+- Have an audience or community that aligns with Bloom's brand and target audience
+- Be capable of meeting the partnership requirements consistently
+Bloom reserves the right to approve or deny any partnership application for any reason.
+
+3. Partnership Types
+Bloom may offer partnerships to:
+- Content creators
+- Minecraft SMPs
+- Minecraft servers
+- Discord communities
+- Other approved gaming or creator-related brands
+Each partnership may have different requirements, benefits, and expectations depending on the category.
+
+4. Partner Requirements
+All Partners must:
+- Properly represent Bloom in a respectful and accurate way
+- Follow any agreed promotional requirements
+- Maintain required placements, channels, or mentions for the duration of the partnership
+- Communicate professionally with Bloom staff
+- Avoid misleading claims about Bloom, its products, staff, or services
+If the partnership includes Discord promotion, the Partner may be required to:
+- Create a dedicated Bloom channel near the top of the server
+- Set it as a visible or default onboarding channel where applicable
+- Keep Bloom branding, links, or ads posted and accessible
+- Send agreed announcement posts for major updates, launches, or promotions
+
+5. Creator-Specific Terms
+Creators partnering with Bloom agree that:
+- They will promote Bloom in the agreed format, whether through videos, streams, posts, Discord, or other approved platforms
+- Any promotion should be genuine and not intentionally damaging to Bloom's image
+- They may not falsely claim ownership, development involvement, or official staff status unless explicitly approved
+- Any custom creator perks, commissions, rewards, or payment structures will be handled separately and may be changed or revoked at Bloom's discretion
+Bloom may track creator performance using factors such as:
+- Activity
+- Audience engagement
+- Content quality
+- Consistency
+- Traffic, purchases, or referrals generated
+
+6. Server Partner-Specific Terms
+Servers or communities partnering with Bloom agree that:
+- They will maintain the required promotional setup in their Discord or server
+- They will not remove, hide, or bury Bloom promotion without notice
+- They will ensure staff are aware of and support the partnership
+- They will not use the partnership to mislead members into thinking Bloom officially owns, manages, or endorses all actions of the server
+If the server becomes inactive, unprofessional, severely toxic, or harmful to Bloom's brand, the partnership may be removed immediately.
+
+7. Benefits and Perks
+Bloom may offer approved Partners benefits such as:
+- Exclusive cosmetics or capes
+- Discounts
+- Commissions
+- Affiliate rewards
+- Priority access
+- Promotion through Bloom platforms
+- Custom arrangements made directly with Bloom
+All benefits are optional, non-guaranteed unless explicitly agreed upon, and may be changed, limited, paused, or removed at any time.
+
+8. Brand Use
+Partners may only use Bloom's name, logo, graphics, and branding in ways approved by Bloom.
+Partners may not:
+- Alter Bloom branding in a misleading way
+- Impersonate Bloom staff or official representatives
+- Use Bloom branding for scams, false advertising, or unrelated products
+- Present themselves as owners, developers, or employees of Bloom without written approval
+
+9. Conduct Standards
+Partners must maintain a reasonable standard of conduct. Bloom may terminate a partnership at any time if the Partner engages in:
+- Scamming
+- Harassment
+- Hate speech
+- Serious community misconduct
+- Reputational harm to Bloom
+- Chargeback abuse
+- Dishonest partnership practices
+- Repeated failure to meet agreed expectations
+
+10. Payments and Rewards
+If a partnership includes payouts, commissions, or rewards:
+- Payment terms may be defined separately
+- Bloom reserves the right to delay or deny payouts in cases of fraud, abuse, fake referrals, manipulated metrics, or chargebacks
+- The Partner is responsible for providing correct payout information
+- Failure to meet requirements may result in reduced or canceled rewards
+
+11. No Guarantee of Results
+Bloom does not guarantee:
+- Sales
+- Growth
+- Audience conversion
+- Increased engagement
+- Continued access to rewards
+- Permanent partnership status
+Partnership is an opportunity, not a guaranteed business outcome.
+
+12. Termination
+Bloom may end a partnership at any time, with or without notice, if:
+- The Partner breaks these terms
+- The Partner becomes inactive
+- The Partner damages Bloom's reputation
+- The Partner no longer aligns with Bloom's goals or standards
+- The partnership is no longer beneficial
+The Partner may also end the partnership at any time by notifying Bloom.
+Upon termination, the Partner must remove any official Bloom partner claims, unless otherwise approved.
+
+13. Changes to Terms
+Bloom may update or revise these terms at any time. Continued participation in the partnership after changes are communicated means the Partner accepts the updated terms.
+
+14. Final Agreement
+By accepting a partnership with Bloom, the Partner confirms that they:
+- Have read and understood these terms
+- Agree to follow Bloom's requirements
+- Understand that partnership may be revoked at any time
+- Understand that all benefits are conditional on compliance and good standing`;
 
 type DisplayCape = {
   id: string;
@@ -147,6 +290,9 @@ type TagPreset = {
 type OwnerPreviewContextMenuState = {
   x: number;
   y: number;
+};
+type OwnerPartnerMappingModalState = {
+  capeId: string;
 };
 
 type OwnerCapeEditorSection = 'identity' | 'pricing' | 'appearance' | 'render' | 'presets';
@@ -534,6 +680,84 @@ function isPromoCape(cape: DisplayCape) {
   return rarity === 'promo' || label === 'promo';
 }
 
+function defaultPartnerApplicationForm(audience: PartnerApplicationAudience): PartnerApplicationForm {
+  return {
+    audience,
+    title: audience === 'server' ? 'Server Partner Application' : 'Creator Partner Application',
+    description:
+      audience === 'server'
+        ? 'Apply as a Minecraft server for Bloom partner collaboration.'
+        : 'Apply as an individual creator for the Bloom partner program.',
+    questions: [
+      {
+        id: 'intro',
+        label: audience === 'server' ? 'Tell us about your server' : 'Tell us about yourself',
+        type: 'long_text',
+        required: true,
+        placeholder: audience === 'server' ? 'Community, playerbase, goals...' : 'Content style, audience, goals...'
+      }
+    ],
+    updated_by: null,
+    updated_at: new Date(0).toISOString()
+  };
+}
+
+function normalizePartnerApplicationForms(forms: PartnerApplicationForm[]) {
+  const map = new Map<PartnerApplicationAudience, PartnerApplicationForm>();
+  for (const form of forms) {
+    if (form.audience === 'individual' || form.audience === 'server') {
+      map.set(form.audience, form);
+    }
+  }
+  if (!map.has('individual')) map.set('individual', defaultPartnerApplicationForm('individual'));
+  if (!map.has('server')) map.set('server', defaultPartnerApplicationForm('server'));
+  return map;
+}
+
+function toAnswerValue(raw: unknown): PartnerApplyAnswerValue {
+  if (Array.isArray(raw)) return raw.map((item) => String(item ?? '')).filter((item) => item.length > 0);
+  return String(raw ?? '');
+}
+
+function parsePossibleLink(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return null;
+}
+
+function renderQuestionHelper(question: PartnerApplicationQuestion) {
+  const text = (question.helper_text ?? '').trim();
+  const link = parsePossibleLink(question.helper_link ?? '');
+  if (!text && !link) return null;
+  return (
+    <p className="mt-1 text-[11px] text-white/50">
+      {text}
+      {link && (
+        <>
+          {text ? ' ' : ''}
+          <a href={link} target="_blank" rel="noreferrer" className="text-white/78 underline underline-offset-2">
+            {link}
+          </a>
+        </>
+      )}
+    </p>
+  );
+}
+
+function toDisplayQuestionLabel(question: PartnerApplicationQuestion) {
+  return question.label.trim() || 'Untitled question';
+}
+
+function parseAnimatedCapeIdFromTextureUrl(textureUrl: string | null | undefined) {
+  const raw = String(textureUrl ?? '').trim();
+  if (!raw) return null;
+  const match = raw.match(/\/gif-cape\/capes\/([^/]+)\/frames\/\d+/i);
+  if (!match) return null;
+  const id = (match[1] ?? '').trim();
+  return id || null;
+}
+
 function toDisplayFromShop(shop: CapeRecord, ownedSourcesByCapeId: Map<string, string>): DisplayCape {
   return {
     ...shop,
@@ -689,11 +913,22 @@ export function CosmeticLocker() {
   const [loading, setLoading] = useState(true);
   const [shopLoading, setShopLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [checkoutBusySlug, setCheckoutBusySlug] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [promoRedeemOpen, setPromoRedeemOpen] = useState(false);
   const [promoCodeInput, setPromoCodeInput] = useState('');
   const [promoRedeemBusy, setPromoRedeemBusy] = useState(false);
+  const [partnerApplyOpen, setPartnerApplyOpen] = useState(false);
+  const [partnerApplyAudience, setPartnerApplicationAudience] = useState<PartnerApplicationAudience>('individual');
+  const [partnerApplyForms, setPartnerApplyForms] = useState<Map<PartnerApplicationAudience, PartnerApplicationForm>>(new Map());
+  const [partnerApplyName, setPartnerApplyName] = useState('');
+  const [partnerApplyAnswers, setPartnerApplyAnswers] = useState<Record<string, PartnerApplyAnswerValue>>({});
+  const [partnerApplyStepIndex, setPartnerApplyStepIndex] = useState(0);
+  const [partnerApplyTermsAccepted, setPartnerApplyTermsAccepted] = useState(false);
+  const [partnerApplyTermsScrolled, setPartnerApplyTermsScrolled] = useState(false);
+  const [partnerApplyBusy, setPartnerApplyBusy] = useState(false);
+  const partnerApplyTermsRef = useRef<HTMLDivElement | null>(null);
   const [supabaseUserId, setSupabaseUserId] = useState<string | null>(null);
   const [commerceProfile, setCommerceProfile] = useState<CommerceProfile | null>(null);
   const [ownerPassphraseInput, setOwnerPassphraseInput] = useState('');
@@ -701,12 +936,26 @@ export function CosmeticLocker() {
   const [ownerUnlockError, setOwnerUnlockError] = useState<string | null>(null);
   const [modMenuOpen, setModMenuOpen] = useState(false);
   const [pendingModMenuRequest, setPendingModMenuRequest] = useState(false);
-  const [activeModTool, setActiveModTool] = useState<'cape-sql'>('cape-sql');
+  const [activeModTool, setActiveModTool] = useState<'cape-sql' | 'owner-utility'>('cape-sql');
   const [capeSqlDraft, setCapeSqlDraft] = useState<OwnerCapeSqlDraft>(DEFAULT_OWNER_CAPE_SQL_DRAFT);
   const [capeSqlCopied, setCapeSqlCopied] = useState(false);
   const [ownerContextMenu, setOwnerContextMenu] = useState<OwnerContextMenuState | null>(null);
   const [ownerPreviewContextMenu, setOwnerPreviewContextMenu] = useState<OwnerPreviewContextMenuState | null>(null);
   const [ownerAppearancePanelOpen, setOwnerAppearancePanelOpen] = useState(false);
+  const [ownerPartnerMappings, setOwnerPartnerMappings] = useState<OwnerPartnerCapeMappingRecord[]>([]);
+  const [ownerPartnerCandidates, setOwnerPartnerCandidates] = useState<OwnerMemberRecord[]>([]);
+  const [ownerMembers, setOwnerMembers] = useState<OwnerMemberRecord[]>([]);
+  const [ownerAllCapesLite, setOwnerAllCapesLite] = useState<OwnerCapeLiteRecord[]>([]);
+  const [ownerUtilityUserId, setOwnerUtilityUserId] = useState('');
+  const [ownerUtilityCapeId, setOwnerUtilityCapeId] = useState('');
+  const [ownerUtilityPartnerBucks, setOwnerUtilityPartnerBucks] = useState<PartnerWalletRecord | null>(null);
+  const [ownerUtilityGrantAmount, setOwnerUtilityGrantAmount] = useState('');
+  const [ownerUtilityGrantReason, setOwnerUtilityGrantReason] = useState('');
+  const [ownerUtilityRevokeReason, setOwnerUtilityRevokeReason] = useState('');
+  const [ownerUtilityBusy, setOwnerUtilityBusy] = useState(false);
+  const [ownerPartnerMappingModal, setOwnerPartnerMappingModal] = useState<OwnerPartnerMappingModalState | null>(null);
+  const [ownerPartnerMappingDraftUserId, setOwnerPartnerMappingDraftUserId] = useState('');
+  const [ownerPartnerMappingBusy, setOwnerPartnerMappingBusy] = useState(false);
   const [ownerCapeEditor, setOwnerCapeEditor] = useState<OwnerCapeEditDraft | null>(null);
   const [ownerCapeEditorSection, setOwnerCapeEditorSection] = useState<OwnerCapeEditorSection>('identity');
   const [sharedCardPose, setSharedCardPose] = useState<SharedCardPose | null>(null);
@@ -798,7 +1047,17 @@ export function CosmeticLocker() {
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [ownedDisplay, shopDisplay]);
   const isOwner = commerceProfile?.role === 'owner';
-  const isPartner = commerceProfile?.role === 'partner';
+  const hasPartnerWalletAccess = commerceProfile?.role === 'partner' || commerceProfile?.role === 'owner';
+  const activePartnerApplyForm = partnerApplyForms.get(partnerApplyAudience) ?? defaultPartnerApplicationForm(partnerApplyAudience);
+  const partnerApplyQuestions = activePartnerApplyForm.questions ?? [];
+  const partnerApplyTotalSteps = 2 + partnerApplyQuestions.length;
+  const activePartnerApplyQuestion = partnerApplyStepIndex > 1 ? (partnerApplyQuestions[partnerApplyStepIndex - 2] ?? null) : null;
+  const partnerApplyTermsReady = partnerApplyTermsScrolled && partnerApplyTermsAccepted;
+  const ownerPartnerMappingByCapeId = useMemo(() => {
+    const map = new Map<string, OwnerPartnerCapeMappingRecord>();
+    for (const row of ownerPartnerMappings) map.set(row.cape_id, row);
+    return map;
+  }, [ownerPartnerMappings]);
 
   const lockerList = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -844,11 +1103,25 @@ export function CosmeticLocker() {
     if (!exists) setSelectedPartnerGroup('all');
   }, [selectedPartnerGroup, visiblePartnerGroups]);
 
+  useEffect(() => {
+    if (ownerUtilityUserId && ownerMembers.some((member) => member.user_id === ownerUtilityUserId)) return;
+    setOwnerUtilityUserId(ownerMembers[0]?.user_id ?? '');
+  }, [ownerMembers, ownerUtilityUserId]);
+
+  useEffect(() => {
+    if (ownerUtilityCapeId && ownerAllCapesLite.some((cape) => cape.id === ownerUtilityCapeId)) return;
+    setOwnerUtilityCapeId(ownerAllCapesLite[0]?.id ?? '');
+  }, [ownerAllCapesLite, ownerUtilityCapeId]);
+
   const activeList = activeTab === 'locker' ? lockerList : activeTab === 'shop' ? shopList : activeTab === 'partners' ? partnersList : [];
   const activeSections = useMemo(() => groupCapesForDisplay(activeList, shopRarityTheme), [activeList, shopRarityTheme]);
   const selectedCape = useMemo(
     () => [...shopDisplay, ...ownedDisplay].find((cape) => cape.id === selectedCapeId) ?? null,
     [ownedDisplay, selectedCapeId, shopDisplay]
+  );
+  const selectedAnimatedCapeId = useMemo(
+    () => parseAnimatedCapeIdFromTextureUrl(selectedCape?.texture_url),
+    [selectedCape?.texture_url]
   );
 
   const resolveCardPose = (cape: DisplayCape): SharedCardPose => {
@@ -1024,7 +1297,7 @@ export function CosmeticLocker() {
       if (!rarity || byRarity.has(rarity)) continue;
       byRarity.set(rarity, {
         id: `rarity:${rarity}`,
-        name: `Rarity â€¢ ${normalizeRarityDisplay(cape.rarity_label || cape.rarity)}`,
+        name: `Rarity • ${normalizeRarityDisplay(cape.rarity_label || cape.rarity)}`,
         rarity,
         rarity_label: (cape.rarity_label || normalizeRarityDisplay(cape.rarity)).trim(),
         rarity_color_start: (cape.rarity_color_start || '#a979ff').trim(),
@@ -1122,7 +1395,7 @@ export function CosmeticLocker() {
     setErrorMessage(null);
     try {
       const profile = await ensureCommerceIdentity(authState.profile.id, authState.profile.name, authState.profile.name);
-      const [shopData, ownedData, loadoutData, walletData, ledgerData, partnerWalletData, partnerLedgerData, packsData, userId, appearance, groups] = await Promise.all([
+      const [shopData, ownedData, loadoutData, walletData, ledgerData, partnerWalletData, partnerLedgerData, packsData, userId, appearance, groups, applyForms] = await Promise.all([
         loadShopCapes(searchQuery, rarityFilter),
         loadOwnedCapes(),
         loadCurrentLoadout(),
@@ -1133,7 +1406,8 @@ export function CosmeticLocker() {
         loadCurrencyPacks(),
         getSupabaseUserId(),
         loadPreviewAppearance(),
-        loadPartnerGroups()
+        loadPartnerGroups(),
+        loadPartnerApplicationForms()
       ]);
 
       setCommerceProfile(profile);
@@ -1148,6 +1422,23 @@ export function CosmeticLocker() {
       setSupabaseUserId(userId);
       setPreviewAppearance(normalizePreviewAppearance(appearance));
       setPartnerGroupRecords(groups);
+      setPartnerApplyForms(normalizePartnerApplicationForms(applyForms));
+      if (profile?.role === 'owner') {
+        const [mappings, members, ownerCapesLite] = await Promise.all([
+          loadOwnerPartnerCapeMappings(),
+          loadOwnerMembers(),
+          loadOwnerCapesLite()
+        ]);
+        setOwnerPartnerMappings(mappings);
+        setOwnerMembers(members);
+        setOwnerPartnerCandidates(members.filter((m) => m.role === 'partner'));
+        setOwnerAllCapesLite(ownerCapesLite);
+      } else {
+        setOwnerPartnerMappings([]);
+        setOwnerPartnerCandidates([]);
+        setOwnerMembers([]);
+        setOwnerAllCapesLite([]);
+      }
       setStatusMessage(null);
     } catch (error) {
       setCommerceProfile(null);
@@ -1216,9 +1507,28 @@ export function CosmeticLocker() {
   }, [activeTab, authState]);
 
   useEffect(() => {
-    const preload = activeList.slice(0, 180);
+    const preload = activeList.slice(0, 42);
     if (!preload.length) return;
-    void Promise.allSettled(preload.map((cape) => capeTextureLoader.loadFull(cape.slug, cape.texture_url)));
+    let cancelled = false;
+    const concurrency = 4;
+    let index = 0;
+    const workers = Array.from({ length: Math.min(concurrency, preload.length) }, async () => {
+      while (!cancelled) {
+        const currentIndex = index;
+        index += 1;
+        if (currentIndex >= preload.length) return;
+        const cape = preload[currentIndex];
+        try {
+          await capeTextureLoader.loadFull(cape.slug, cape.texture_url);
+        } catch {
+          // best effort preload only
+        }
+      }
+    });
+    void Promise.allSettled(workers);
+    return () => {
+      cancelled = true;
+    };
   }, [activeList]);
 
   useEffect(() => {
@@ -1242,6 +1552,24 @@ export function CosmeticLocker() {
       unsubscribe();
     };
   }, [authState]);
+
+  useEffect(() => {
+    if (!isOwner || !authState) return;
+    let cancelled = false;
+    void Promise.all([loadOwnerPartnerCapeMappings(), loadOwnerMembers()])
+      .then(([mappings, members]) => {
+        if (cancelled) return;
+        setOwnerPartnerMappings(mappings);
+        setOwnerPartnerCandidates(members.filter((m) => m.role === 'partner'));
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setErrorMessage(formatUiError(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authState, isOwner, shopCapes.length]);
 
   useEffect(() => {
     if (!authState) return;
@@ -1412,8 +1740,8 @@ export function CosmeticLocker() {
 
   const handlePartnerBuy = async () => {
     if (!selectedCape || selectedCape.owned) return;
-    if (!isPartner) {
-      setErrorMessage('Partner wallet purchases require a partner role.');
+    if (!hasPartnerWalletAccess) {
+      setErrorMessage('Partner wallet purchases require partner or owner role.');
       return;
     }
     if (!customCapeTosAccepted) {
@@ -1436,8 +1764,8 @@ export function CosmeticLocker() {
 
   const handlePartnerGift = async () => {
     if (!selectedCape || selectedCape.owned) return;
-    if (!isPartner) {
-      setErrorMessage('Only partners can gift from partner wallet.');
+    if (!hasPartnerWalletAccess) {
+      setErrorMessage('Only partners or owners can gift from partner wallet.');
       return;
     }
     const target = partnerGiftTarget.trim();
@@ -1463,8 +1791,8 @@ export function CosmeticLocker() {
   };
 
   const handlePartnerCashoutRequest = async () => {
-    if (!isPartner) {
-      setErrorMessage('Only partners can request cashout.');
+    if (!hasPartnerWalletAccess) {
+      setErrorMessage('Only partners or owners can request cashout.');
       return;
     }
     const amount = Math.floor(Number(partnerCashoutAmount));
@@ -1524,26 +1852,116 @@ export function CosmeticLocker() {
     }
   };
 
-  const handleTebexCheckout = async (pack: CurrencyPackRecord) => {
+  const handleOpenPartnerApply = async () => {
+    setPartnerApplyBusy(true);
+    setErrorMessage(null);
     try {
-      setErrorMessage(null);
-      const checkout = await createTebexCheckoutSession(pack.slug);
-      if (checkout.checkoutUrl) {
-        await openUrl(checkout.checkoutUrl);
-        setStatusMessage(`Opened Tebex checkout for ${pack.name}.`);
-        return;
-      }
-      if (checkout.ident) {
-        setStatusMessage(`Tebex checkout created for ${pack.name}: ${checkout.ident}`);
-        return;
-      }
-      setStatusMessage('Tebex checkout path is configured, waiting for session launch wiring.');
+      const forms = await loadPartnerApplicationForms();
+      const normalized = normalizePartnerApplicationForms(forms);
+      setPartnerApplyForms(normalized);
+      setPartnerApplyAnswers({});
+      setPartnerApplyName('');
+      setPartnerApplyStepIndex(0);
+      setPartnerApplyTermsAccepted(false);
+      setPartnerApplyTermsScrolled(false);
+      setPartnerApplyOpen(true);
     } catch (error) {
       setErrorMessage(formatUiError(error));
+    } finally {
+      setPartnerApplyBusy(false);
     }
   };
 
-  const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: OwnerCapeSqlDraft[K]) => {
+  useEffect(() => {
+    const onOpenPartnerApply = () => {
+      void handleOpenPartnerApply();
+    };
+    window.addEventListener('bloom-open-partner-apply', onOpenPartnerApply as EventListener);
+    return () => {
+      window.removeEventListener('bloom-open-partner-apply', onOpenPartnerApply as EventListener);
+    };
+  }, [handleOpenPartnerApply]);
+
+  const handlePartnerApplyAnswerChange = (question: PartnerApplicationQuestion, value: PartnerApplyAnswerValue) => {
+    setPartnerApplyAnswers((current) => ({
+      ...current,
+      [question.id]: value
+    }));
+  };
+
+  const handleClosePartnerApply = () => {
+    setPartnerApplyOpen(false);
+    setPartnerApplyStepIndex(0);
+    setPartnerApplyTermsAccepted(false);
+    setPartnerApplyTermsScrolled(false);
+  };
+
+  const handleSubmitPartnerApply = async () => {
+    if (!activePartnerApplyForm) return;
+
+    const payload: Record<string, unknown> = {};
+    for (const question of activePartnerApplyForm.questions) {
+      const answer = partnerApplyAnswers[question.id];
+      if (question.type === 'multi_choice') {
+        const values = Array.isArray(answer) ? answer.map((entry) => String(entry).trim()).filter(Boolean) : [];
+        if (question.required && values.length === 0) {
+          setErrorMessage(`Missing required answer: ${toDisplayQuestionLabel(question)}`);
+          return;
+        }
+        payload[question.id] = values;
+        continue;
+      }
+      const value = String(answer ?? '').trim();
+      if (question.required && value.length === 0) {
+        setErrorMessage(`Missing required answer: ${toDisplayQuestionLabel(question)}`);
+        return;
+      }
+      payload[question.id] = value;
+    }
+
+    setPartnerApplyBusy(true);
+    setErrorMessage(null);
+    try {
+      await submitPartnerApplication({
+        audience: partnerApplyAudience,
+        applicantName: partnerApplyName,
+        answers: payload
+      });
+      setStatusMessage('Application submitted. We will review and get back to you.');
+      setPartnerApplyOpen(false);
+      setPartnerApplyAnswers({});
+      setPartnerApplyName('');
+      setPartnerApplyStepIndex(0);
+      setPartnerApplyTermsAccepted(false);
+      setPartnerApplyTermsScrolled(false);
+    } catch (error) {
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setPartnerApplyBusy(false);
+    }
+  };
+
+  const handleStartCurrencyPackCheckout = async (pack: CurrencyPackRecord) => {
+    setCheckoutBusySlug(pack.slug);
+    setErrorMessage(null);
+    try {
+      const session = await createMcsetsCheckoutSession(pack.slug, 'live');
+      const checkoutUrl = session.checkoutUrl?.trim() ?? '';
+      if (!checkoutUrl) throw new Error('mcsets_checkout_url_missing');
+      try {
+        await openUrl(checkoutUrl);
+      } catch {
+        const popup = window.open(checkoutUrl, '_blank', 'noopener,noreferrer');
+        if (!popup) throw new Error('checkout_open_failed');
+      }
+      setStatusMessage('Opened checkout for ' + pack.name + '.');
+    } catch (error) {
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setCheckoutBusySlug(null);
+    }
+  };
+const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: OwnerCapeSqlDraft[K]) => {
     setCapeSqlDraft((current) => ({ ...current, [key]: value }));
   };
 
@@ -1650,6 +2068,52 @@ export function CosmeticLocker() {
     setOwnerContextMenu(null);
     selectOwnerCapeEditorCape(capeId);
     setOwnerCapeEditorSection('render');
+  };
+
+  const openOwnerPartnerMappingModal = (capeId: string) => {
+    setOwnerContextMenu(null);
+    const current = ownerPartnerMappingByCapeId.get(capeId);
+    setOwnerPartnerMappingDraftUserId(current?.partner_user_id ?? '');
+    setOwnerPartnerMappingModal({ capeId });
+  };
+
+  const handleOwnerSavePartnerMapping = async () => {
+    if (!ownerPartnerMappingModal) return;
+    const userId = ownerPartnerMappingDraftUserId.trim();
+    if (!userId) {
+      setErrorMessage('Select a partner user first.');
+      return;
+    }
+    setOwnerPartnerMappingBusy(true);
+    setErrorMessage(null);
+    try {
+      await setOwnerPartnerCapeMapping(ownerPartnerMappingModal.capeId, userId, true);
+      const mappings = await loadOwnerPartnerCapeMappings();
+      setOwnerPartnerMappings(mappings);
+      setOwnerPartnerMappingModal(null);
+      setStatusMessage('Partner payout mapping saved.');
+    } catch (error) {
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setOwnerPartnerMappingBusy(false);
+    }
+  };
+
+  const handleOwnerClearPartnerMapping = async () => {
+    if (!ownerPartnerMappingModal) return;
+    setOwnerPartnerMappingBusy(true);
+    setErrorMessage(null);
+    try {
+      await clearOwnerPartnerCapeMapping(ownerPartnerMappingModal.capeId);
+      const mappings = await loadOwnerPartnerCapeMappings();
+      setOwnerPartnerMappings(mappings);
+      setOwnerPartnerMappingModal(null);
+      setStatusMessage('Partner payout mapping cleared.');
+    } catch (error) {
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setOwnerPartnerMappingBusy(false);
+    }
   };
 
   const applyTagPreset = (preset: TagPreset) => {
@@ -1795,6 +2259,87 @@ export function CosmeticLocker() {
     setDialogState({ kind: 'confirm-delete-shop', cape });
   };
 
+  const ownerUtilitySelectedMember = useMemo(
+    () => ownerMembers.find((member) => member.user_id === ownerUtilityUserId) ?? null,
+    [ownerMembers, ownerUtilityUserId]
+  );
+
+  const ownerUtilitySelectedCape = useMemo(
+    () => ownerAllCapesLite.find((cape) => cape.id === ownerUtilityCapeId) ?? null,
+    [ownerAllCapesLite, ownerUtilityCapeId]
+  );
+
+  const handleOwnerUtilityLoadPartnerBucks = async () => {
+    if (!ownerUtilityUserId) {
+      setErrorMessage('Select a user first.');
+      return;
+    }
+    setOwnerUtilityBusy(true);
+    setErrorMessage(null);
+    try {
+      const row = await ownerGetPartnerWalletBalanceByUserId(ownerUtilityUserId);
+      setOwnerUtilityPartnerBucks(row);
+      setStatusMessage(`Partner wallet loaded: ${row.balance_bb.toLocaleString()} BB`);
+    } catch (error) {
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
+  const handleOwnerUtilityGrantPartnerBucks = async () => {
+    if (!ownerUtilityUserId) {
+      setErrorMessage('Select a user first.');
+      return;
+    }
+    const amount = Math.max(0, Number(ownerUtilityGrantAmount) || 0);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setErrorMessage('Enter a partner bucks amount greater than 0.');
+      return;
+    }
+    setOwnerUtilityBusy(true);
+    setErrorMessage(null);
+    try {
+      const row = await ownerGrantPartnerWalletByUserId(ownerUtilityUserId, amount, ownerUtilityGrantReason);
+      setOwnerUtilityPartnerBucks(row);
+      setOwnerUtilityGrantAmount('');
+      setStatusMessage(`Granted ${Math.floor(amount).toLocaleString()} partner bucks.`);
+    } catch (error) {
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
+  const handleOwnerUtilityRevokeCape = async () => {
+    if (!ownerUtilityUserId) {
+      setErrorMessage('Select a user first.');
+      return;
+    }
+    if (!ownerUtilityCapeId) {
+      setErrorMessage('Select a cape first.');
+      return;
+    }
+    setOwnerUtilityBusy(true);
+    setErrorMessage(null);
+    try {
+      const result = await ownerRevokeCapeFromUserById(ownerUtilityUserId, ownerUtilityCapeId, ownerUtilityRevokeReason);
+      setOwnerUtilityRevokeReason('');
+      if (result.removed) {
+        setStatusMessage(`Removed ${result.cape_slug} from selected user.`);
+      } else {
+        setStatusMessage(`User did not own ${result.cape_slug}.`);
+      }
+      const [ownedData, loadoutData] = await Promise.all([loadOwnedCapes(), loadCurrentLoadout()]);
+      setOwnedCapes(ownedData);
+      setEquippedCapeId(loadoutData?.equipped_cape_id ?? null);
+    } catch (error) {
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
   const confirmDeleteShopCape = async (cape: DisplayCape) => {
     setActionBusy(true);
     setErrorMessage(null);
@@ -1903,7 +2448,7 @@ export function CosmeticLocker() {
       )}
 
       {activeTab === 'wallet' ? (
-        <section className="g-panel p-5 space-y-4 min-h-0 overflow-y-auto">
+        <section className="g-panel p-5 space-y-4 flex-1 min-h-0 overflow-y-auto">
           <div className="rounded-2xl border border-white/10 bg-[linear-gradient(120deg,rgba(142,97,255,0.2),rgba(255,255,255,0.04))] p-5">
             <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">Bloom Bucks Balance</p>
             <div className="mt-2 flex items-center gap-3">
@@ -1918,23 +2463,24 @@ export function CosmeticLocker() {
             <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
               <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/65">Buy Bloom Bucks</p>
               <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-                <p className="text-lg font-extrabold text-white">Comming soon</p>
-                <p className="mt-2 text-xs text-white/55">Wallet top-ups are temporarily disabled while Tebex checkout is being integrated.</p>
+                <p className="text-lg font-extrabold text-white">Purchase Bloom Bucks</p>
+                <p className="mt-2 text-xs text-white/55">Choose a pack to open secure checkout.</p>
                 <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                   {currencyPacks.map((pack) => (
                     <div key={pack.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                       <p className="text-[11px] uppercase tracking-[0.13em] font-extrabold text-white/62">{pack.name}</p>
                       <p className="text-xl font-extrabold text-white mt-1">{pack.total_bb.toLocaleString()} BB</p>
                       <p className="text-xs text-white/55 mt-1">
-                        ${Number(pack.price_usd).toFixed(2)} • base {pack.base_bb.toLocaleString()} + bonus {pack.bonus_bb.toLocaleString()}
+                        ${Number(pack.price_usd).toFixed(2)} � base {pack.base_bb.toLocaleString()} + bonus {pack.bonus_bb.toLocaleString()}
                       </p>
                       <button
                         onClick={() => {
-                          void handleTebexCheckout(pack);
+                          void handleStartCurrencyPackCheckout(pack);
                         }}
-                        className="mt-3 h-9 w-full rounded-lg border text-[11px] font-extrabold uppercase tracking-[0.12em] g-btn-accent"
+                        disabled={actionBusy || checkoutBusySlug === pack.slug}
+                        className="mt-3 h-9 w-full rounded-lg border text-[11px] font-extrabold uppercase tracking-[0.12em] g-btn-accent disabled:opacity-55"
                       >
-                        Pay With Tebex
+                        {checkoutBusySlug === pack.slug ? 'Opening...' : 'Purchase Bloom Bucks'}
                       </button>
                     </div>
                   ))}
@@ -1968,7 +2514,7 @@ export function CosmeticLocker() {
             </div>
           </div>
 
-          {isPartner && (
+          {hasPartnerWalletAccess && (
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
               <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
                 <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/65">Partner Wallet</p>
@@ -2030,8 +2576,8 @@ export function CosmeticLocker() {
           )}
         </section>
       ) : (
-        <section className="grid grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)_340px] gap-4 min-h-0">
-          <aside className="g-panel p-3 h-fit">
+        <section className="grid grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)_340px] gap-4 flex-1 min-h-0">
+          <aside className="g-panel p-3 min-h-0 flex flex-col">
             <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-white/55">
               {activeTab === 'partners' ? 'Partners' : 'Categories'}
             </p>
@@ -2143,6 +2689,7 @@ export function CosmeticLocker() {
                 )}
               </>
             )}
+
           </aside>
 
           <div className="g-panel p-4 min-h-0 flex flex-col">
@@ -2152,7 +2699,7 @@ export function CosmeticLocker() {
               </p>
               {shopLoading && <p className="text-[11px] text-white/55">Refreshing catalog...</p>}
             </div>
-            <div ref={middlePanelRef} className="mt-3 flex-1 min-h-0 overflow-y-auto">
+            <div ref={middlePanelRef} className="mt-3 flex-1 min-h-0 overflow-y-auto overscroll-contain">
               {loading ? (
                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/60">Loading cosmetics...</div>
               ) : activeSections.length === 0 ? (
@@ -2164,7 +2711,7 @@ export function CosmeticLocker() {
                     : 'No capes match this filter.'}
                 </div>
               ) : (
-                <div className="pl-6 pr-2 pb-4 pt-6 space-y-6">
+                <div className="pl-6 pr-2 pb-20 pt-6 space-y-6">
                   {activeSections.map((section) => (
                     <div
                       key={section.key}
@@ -2290,7 +2837,7 @@ export function CosmeticLocker() {
                     playerUuid={authState?.profile.id ?? null}
                     playerName={authState?.profile.name ?? 'Player'}
                     playerSkinUrl={authState?.profile.skinUrl ?? null}
-                    capeId={selectedCape.id}
+                    capeId={selectedAnimatedCapeId}
                     capeSlug={selectedCape.slug}
                     capeTextureUrl={selectedCape.texture_url}
                     appearance={previewAppearance}
@@ -2307,7 +2854,7 @@ export function CosmeticLocker() {
               {selectedCape ? (
                 <>
                   <p className="text-sm font-extrabold text-white">{selectedCape.name}</p>
-                    <p className="text-[11px] text-white/58 mt-1">{pickRarityLabel(selectedCape)} · {selectedCape.slug}</p>
+                    <p className="text-[11px] text-white/58 mt-1">{pickRarityLabel(selectedCape)} � {selectedCape.slug}</p>
                   <p className="text-xs text-white/65 mt-2">{selectedCape.description || 'No description.'}</p>
                   <div className="mt-3 flex gap-2">
                     {selectedOwned ? (
@@ -2359,9 +2906,9 @@ export function CosmeticLocker() {
                           disabled={actionBusy || !customCapeTosAccepted}
                           className="g-btn-accent h-10 w-full text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-55"
                         >
-                          Buy • {selectedCape.price_bb.toLocaleString()} BB
+                          Buy � {selectedCape.price_bb.toLocaleString()} BB
                         </button>
-                        {isPartner && (
+                        {hasPartnerWalletAccess && (
                           <>
                             <button
                               onClick={() => {
@@ -2370,7 +2917,7 @@ export function CosmeticLocker() {
                               disabled={actionBusy || !customCapeTosAccepted}
                               className="h-10 w-full text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-55 rounded-lg border border-white/25 bg-[color:color-mix(in_srgb,var(--g-accent)_24%,black)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]"
                             >
-                              Partner Wallet • {selectedCape.price_bb.toLocaleString()} BB
+                              Partner Wallet � {selectedCape.price_bb.toLocaleString()} BB
                             </button>
                             <div className="rounded-lg border border-white/10 bg-black/30 p-2.5 space-y-2">
                               <p className="text-[10px] uppercase tracking-[0.13em] font-extrabold text-white/55">Gift From Partner Wallet</p>
@@ -2452,6 +2999,76 @@ export function CosmeticLocker() {
         </div>
       )}
 
+      {isOwner && ownerPartnerMappingModal && (
+        <div className="fixed inset-0 z-[548] flex items-center justify-center p-4 app-region-no-drag">
+          <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={() => setOwnerPartnerMappingModal(null)} />
+          <div className="relative w-full max-w-[700px] rounded-2xl border border-white/20 bg-[#09090a] p-5 shadow-[0_34px_80px_rgba(0,0,0,0.72)]">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.16em] font-black text-white/45">Owner Utility</p>
+                <h3 className="text-2xl font-extrabold text-white mt-1">Set Partner Payout Mapping</h3>
+              </div>
+              <button
+                onClick={() => setOwnerPartnerMappingModal(null)}
+                className="h-9 px-3 rounded-lg border border-white/20 bg-white/[0.03] text-[10px] font-extrabold uppercase tracking-[0.12em] text-white/85 hover:bg-white/[0.1]"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4 space-y-3 rounded-xl border border-white/12 bg-black/35 p-4">
+              <p className="text-xs text-white/70">
+                Cape: {
+                  [...shopDisplay, ...ownedDisplay].find((cape) => cape.id === ownerPartnerMappingModal.capeId)?.name ??
+                  ownerPartnerMappingModal.capeId
+                }
+              </p>
+              <p className="text-xs text-white/70">
+                Current mapped partner: {
+                  ownerPartnerMappingByCapeId.get(ownerPartnerMappingModal.capeId)?.partner_username ??
+                  ownerPartnerMappingByCapeId.get(ownerPartnerMappingModal.capeId)?.partner_display_name ??
+                  'none'
+                }
+              </p>
+              <p className="text-xs text-white/60">
+                Purchases on mapped partner capes route 15% to partner wallet when partner payouts are enabled on that cape.
+              </p>
+              <select
+                value={ownerPartnerMappingDraftUserId}
+                onChange={(event) => setOwnerPartnerMappingDraftUserId(event.target.value)}
+                className="g-input h-10 w-full text-sm"
+              >
+                <option value="">Select partner user...</option>
+                {ownerPartnerCandidates.map((member) => (
+                  <option key={member.user_id} value={member.user_id}>
+                    {(member.username || member.display_name || member.user_id)} ({member.user_id.slice(0, 8)})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+              <button
+                onClick={() => {
+                  void handleOwnerClearPartnerMapping();
+                }}
+                disabled={ownerPartnerMappingBusy}
+                className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-55"
+              >
+                Clear Mapping
+              </button>
+              <button
+                onClick={() => {
+                  void handleOwnerSavePartnerMapping();
+                }}
+                disabled={ownerPartnerMappingBusy || !ownerPartnerMappingDraftUserId}
+                className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-55"
+              >
+                Save Mapping
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isOwner && ownerContextMenu && (
         <div
           className="fixed z-[540] min-w-[220px] rounded-xl border border-white/20 bg-[#0a0a0b]/95 p-2.5 shadow-[0_20px_40px_rgba(0,0,0,0.65)] backdrop-blur-lg"
@@ -2470,6 +3087,12 @@ export function CosmeticLocker() {
             className="mt-1.5 w-full rounded-lg border border-white/15 bg-white/[0.02] px-2.5 py-2 text-left text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/90 hover:bg-white/[0.09]"
           >
             Edit Render Pose
+          </button>
+          <button
+            onClick={() => openOwnerPartnerMappingModal(ownerContextMenu.capeId)}
+            className="mt-1.5 w-full rounded-lg border border-white/15 bg-white/[0.02] px-2.5 py-2 text-left text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/90 hover:bg-white/[0.09]"
+          >
+            Set Partner Payout Mapping
           </button>
         </div>
       )}
@@ -2512,7 +3135,7 @@ export function CosmeticLocker() {
             <div className="mt-3 rounded-xl border border-white/15 bg-white/[0.02] p-4">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/72">Lighting + Camera</p>
-                <p className="text-xs text-white/55">{previewAppearanceSaving ? 'Syncingâ€¦' : 'Synced live'}</p>
+                <p className="text-xs text-white/55">{previewAppearanceSaving ? 'Syncing…' : 'Synced live'}</p>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[64vh] overflow-y-auto pr-1">
                 {PREVIEW_APPEARANCE_SLIDERS.map((slider) => {
@@ -3033,12 +3656,25 @@ export function CosmeticLocker() {
                     >
                       Cape SQL Creator
                     </button>
+                    <button
+                      onClick={() => setActiveModTool('owner-utility')}
+                      className={clsx(
+                        'w-full rounded-xl border px-3 py-2 text-left text-[11px] font-extrabold uppercase tracking-[0.12em] transition',
+                        activeModTool === 'owner-utility'
+                          ? 'border-white/30 bg-white/[0.14] text-white'
+                          : 'border-white/15 bg-black/35 text-white/75 hover:bg-white/[0.08]'
+                      )}
+                    >
+                      Owner Utility
+                    </button>
                   </div>
                 </aside>
 
                 <div className="rounded-xl border border-white/15 bg-white/[0.02] p-3 space-y-3">
-                  <p className="text-[10px] uppercase tracking-[0.14em] font-black text-white/50">Create Cape Listing SQL</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {activeModTool === 'cape-sql' ? (
+                    <>
+                      <p className="text-[10px] uppercase tracking-[0.14em] font-black text-white/50">Create Cape Listing SQL</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     <input
                       value={capeSqlDraft.slug}
                       onChange={(event) => updateCapeSqlDraft('slug', event.target.value)}
@@ -3135,33 +3771,401 @@ export function CosmeticLocker() {
                       />
                       is_featured
                     </label>
-                  </div>
+                      </div>
 
-                  <textarea
-                    value={generatedCapeSql}
-                    readOnly
-                    className="h-56 w-full rounded-lg border border-white/20 bg-[#050506] px-3 py-2 font-mono text-xs text-white/90 outline-none"
-                  />
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      onClick={() => {
-                        void handleCopyCapeSql();
-                      }}
-                      disabled={!capeSqlReady}
-                      className="h-10 px-4 rounded-lg border border-white/25 bg-white/[0.12] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white hover:bg-white/[0.18] disabled:opacity-45"
-                    >
-                      {capeSqlCopied ? 'Copied' : 'Copy SQL'}
-                    </button>
-                    <button
-                      onClick={() => setCapeSqlDraft(DEFAULT_OWNER_CAPE_SQL_DRAFT)}
-                      className="h-10 px-4 rounded-lg border border-white/20 bg-white/[0.03] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/85 hover:bg-white/[0.1]"
-                    >
-                      Reset Form
-                    </button>
-                  </div>
+                      <textarea
+                        value={generatedCapeSql}
+                        readOnly
+                        className="h-56 w-full rounded-lg border border-white/20 bg-[#050506] px-3 py-2 font-mono text-xs text-white/90 outline-none"
+                      />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          onClick={() => {
+                            void handleCopyCapeSql();
+                          }}
+                          disabled={!capeSqlReady}
+                          className="h-10 px-4 rounded-lg border border-white/25 bg-white/[0.12] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white hover:bg-white/[0.18] disabled:opacity-45"
+                        >
+                          {capeSqlCopied ? 'Copied' : 'Copy SQL'}
+                        </button>
+                        <button
+                          onClick={() => setCapeSqlDraft(DEFAULT_OWNER_CAPE_SQL_DRAFT)}
+                          className="h-10 px-4 rounded-lg border border-white/20 bg-white/[0.03] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/85 hover:bg-white/[0.1]"
+                        >
+                          Reset Form
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-[10px] uppercase tracking-[0.14em] font-black text-white/50">Partner Bucks + Cape Removal</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <label className="rounded-lg border border-white/20 bg-black/35 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 flex flex-col md:col-span-2">
+                          <span>User</span>
+                          <select
+                            value={ownerUtilityUserId}
+                            onChange={(event) => {
+                              setOwnerUtilityUserId(event.target.value);
+                              setOwnerUtilityPartnerBucks(null);
+                            }}
+                            className="mt-1 bg-transparent text-sm text-white outline-none normal-case tracking-normal"
+                          >
+                            {ownerMembers.map((member) => (
+                              <option key={member.user_id} value={member.user_id} className="bg-black text-white">
+                                {(member.username || member.display_name || member.user_id) + ` (${member.role})`}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <div className="rounded-lg border border-white/20 bg-black/35 px-3 py-2 md:col-span-2">
+                          <p className="text-[10px] uppercase tracking-[0.12em] font-extrabold text-white/55">Partner Bucks</p>
+                          <p className="mt-1 text-lg font-extrabold text-white">
+                            {ownerUtilityPartnerBucks?.balance_bb?.toLocaleString() ?? '...'} BB
+                          </p>
+                          <p className="text-[10px] text-white/45 mt-1">
+                            {ownerUtilitySelectedMember
+                              ? `${ownerUtilitySelectedMember.username || ownerUtilitySelectedMember.display_name || ownerUtilitySelectedMember.user_id}`
+                              : 'No user selected'}
+                          </p>
+                        </div>
+
+                        <input
+                          type="number"
+                          min={1}
+                          value={ownerUtilityGrantAmount}
+                          onChange={(event) => setOwnerUtilityGrantAmount(event.target.value.replace(/[^\d]/g, ''))}
+                          placeholder="Grant amount (BB)"
+                          className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none"
+                        />
+                        <input
+                          value={ownerUtilityGrantReason}
+                          onChange={(event) => setOwnerUtilityGrantReason(event.target.value)}
+                          placeholder="Grant reason (optional)"
+                          className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none"
+                        />
+                        <button
+                          onClick={() => {
+                            void handleOwnerUtilityLoadPartnerBucks();
+                          }}
+                          disabled={ownerUtilityBusy || !ownerUtilityUserId}
+                          className="h-9 rounded-lg border border-white/20 bg-white/[0.04] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/88 hover:bg-white/[0.1] disabled:opacity-45"
+                        >
+                          Refresh Partner Bucks
+                        </button>
+                        <button
+                          onClick={() => {
+                            void handleOwnerUtilityGrantPartnerBucks();
+                          }}
+                          disabled={ownerUtilityBusy || !ownerUtilityUserId || !ownerUtilityGrantAmount}
+                          className="h-9 rounded-lg border border-white/25 bg-white/[0.12] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white hover:bg-white/[0.18] disabled:opacity-45"
+                        >
+                          Grant Partner Bucks
+                        </button>
+
+                        <label className="rounded-lg border border-white/20 bg-black/35 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 flex flex-col md:col-span-2">
+                          <span>Cape To Remove</span>
+                          <select
+                            value={ownerUtilityCapeId}
+                            onChange={(event) => setOwnerUtilityCapeId(event.target.value)}
+                            className="mt-1 bg-transparent text-sm text-white outline-none normal-case tracking-normal"
+                          >
+                            {ownerAllCapesLite.map((cape) => (
+                              <option key={cape.id} value={cape.id} className="bg-black text-white">
+                                {cape.name} ({cape.slug})
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <input
+                          value={ownerUtilityRevokeReason}
+                          onChange={(event) => setOwnerUtilityRevokeReason(event.target.value)}
+                          placeholder="Revoke reason (optional)"
+                          className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none md:col-span-2"
+                        />
+                        <button
+                          onClick={() => {
+                            void handleOwnerUtilityRevokeCape();
+                          }}
+                          disabled={ownerUtilityBusy || !ownerUtilityUserId || !ownerUtilityCapeId}
+                          className="h-9 rounded-lg border border-red-400/40 bg-red-500/12 text-[11px] font-extrabold uppercase tracking-[0.12em] text-red-100 hover:bg-red-500/18 disabled:opacity-45 md:col-span-2"
+                        >
+                          Remove Cape From User
+                        </button>
+                      </div>
+                      {ownerUtilitySelectedCape && (
+                        <p className="text-[11px] text-white/55">
+                          Selected cape: <span className="text-white/85">{ownerUtilitySelectedCape.name}</span> ({ownerUtilitySelectedCape.slug})
+                        </p>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {partnerApplyOpen && (
+        <div className="fixed inset-0 z-[524] flex items-center justify-center overflow-hidden p-4 app-region-no-drag">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/82 backdrop-blur-sm"
+            onClick={handleClosePartnerApply}
+          />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.18),transparent_20%),linear-gradient(180deg,#020202_0%,#050505_100%)]" />
+          <div className="relative w-full max-w-[1040px] overflow-hidden rounded-[36px] border border-white/10 bg-[rgba(8,8,10,0.95)] shadow-[0_34px_95px_rgba(0,0,0,0.62)]">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.06),transparent_40%),radial-gradient(circle_at_24%_58%,rgba(201,206,214,0.08),transparent_30%)]" />
+            <div className="absolute inset-0 opacity-[0.16]" style={{ backgroundImage: 'radial-gradient(rgba(255,255,255,0.16) 0.85px, transparent 0.85px)', backgroundSize: '16px 16px' }} />
+            <div className="relative p-5 md:p-7">
+              <div className="flex items-center justify-center gap-2.5">
+                {Array.from({ length: partnerApplyTotalSteps }).map((_, index) => (
+                  <button
+                    key={index}
+                    type="button"
+                    onClick={() => {
+                      if (index <= partnerApplyStepIndex) setPartnerApplyStepIndex(index);
+                    }}
+                    className={clsx(
+                      'h-1.5 rounded-full transition-all',
+                      index === partnerApplyStepIndex
+                        ? 'w-9 bg-[#c7ccd4] shadow-[0_0_18px_rgba(199,204,212,0.4)]'
+                        : index < partnerApplyStepIndex
+                          ? 'w-7 bg-white/55 hover:bg-white/70'
+                          : 'w-7 bg-white/28 hover:bg-white/40'
+                    )}
+                    aria-label={`Go to step ${index + 1}`}
+                  />
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={handleClosePartnerApply}
+                className="absolute right-5 top-5 inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/35 bg-black/40 text-white/85 transition hover:bg-white/[0.08]"
+                aria-label="Close Partner Application"
+              >
+                <X size={15} />
+              </button>
+
+              <div className="mx-auto mt-5 flex max-w-[760px] flex-col items-center text-center">
+                <div className="flex h-[104px] w-[104px] items-center justify-center rounded-[30px] border border-white/35 bg-[linear-gradient(180deg,rgba(255,255,255,0.15),rgba(255,255,255,0.02))] shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_18px_50px_rgba(0,0,0,0.36)]">
+                  <img src={bloomLogo} alt="Bloom" className="h-9 w-9 scale-[5.2] object-contain opacity-95" />
+                </div>
+                <p className="mt-6 text-[10px] font-black uppercase tracking-[0.28em] text-white/42">Partner Program</p>
+                <h3 className="mt-3 text-[clamp(1.7rem,3.8vw,2.7rem)] font-black leading-[1.02] text-white">
+                  {partnerApplyStepIndex === 0
+                    ? 'Partnership Terms'
+                    : partnerApplyStepIndex === 1
+                      ? 'Choose Application'
+                      : toDisplayQuestionLabel(activePartnerApplyQuestion ?? { id: '', label: 'Question', type: 'short_text', required: false })}
+                </h3>
+                <p className="mt-3 text-sm text-white/58">
+                  {partnerApplyStepIndex === 0
+                    ? 'Read the full agreement, scroll through it, and accept before continuing.'
+                    : partnerApplyStepIndex === 1
+                    ? 'Pick your application type and add your name, then continue one question at a time.'
+                    : activePartnerApplyQuestion?.required
+                      ? 'This step is required before you can finish.'
+                      : 'Optional step. You can skip it if it does not apply.'}
+                </p>
+              </div>
+
+              <div className="mx-auto mt-6 max-w-[920px] rounded-[30px] border border-white/10 bg-[rgba(255,255,255,0.03)] p-4 md:p-5">
+                {partnerApplyStepIndex === 0 ? (
+                  <div className="space-y-4">
+                    <div
+                      ref={partnerApplyTermsRef}
+                      onScroll={() => {
+                        const node = partnerApplyTermsRef.current;
+                        if (!node) return;
+                        const reachedBottom = node.scrollTop + node.clientHeight >= node.scrollHeight - 16;
+                        if (reachedBottom) setPartnerApplyTermsScrolled(true);
+                      }}
+                      className="max-h-[46vh] overflow-auto rounded-[22px] border border-white/14 bg-black/35 p-5 text-[12.5px] leading-6 text-white/78 whitespace-pre-line"
+                    >
+                      {PARTNER_TERMS_TEXT}
+                    </div>
+                    <label className="inline-flex items-center gap-2 text-sm text-white/86">
+                      <input
+                        type="checkbox"
+                        checked={partnerApplyTermsAccepted}
+                        disabled={!partnerApplyTermsScrolled}
+                        onChange={(event) => setPartnerApplyTermsAccepted(event.target.checked)}
+                      />
+                      I have read and agree to the Bloom Partnership Terms of Agreement.
+                    </label>
+                    {!partnerApplyTermsScrolled && (
+                      <p className="text-xs text-white/62">Scroll to the bottom of the terms to continue.</p>
+                    )}
+                  </div>
+                ) : partnerApplyStepIndex === 1 ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-2">
+              {(['individual', 'server'] as PartnerApplicationAudience[]).map((audience) => (
+                <button
+                  key={audience}
+                  type="button"
+                  onClick={() => {
+                    setPartnerApplicationAudience(audience);
+                    setPartnerApplyAnswers({});
+                    setPartnerApplyStepIndex(0);
+                  }}
+                  className={clsx(
+                    'h-11 rounded-[16px] border text-[11px] font-extrabold uppercase tracking-[0.14em]',
+                    partnerApplyAudience === audience
+                      ? 'border-white/45 bg-white/[0.12] text-white'
+                      : 'border-white/12 bg-white/[0.03] text-white/74 hover:bg-white/[0.08]'
+                  )}
+                >
+                  {audience === 'server' ? 'For Server' : 'For Me'}
+                </button>
+              ))}
+            </div>
+
+                    <div className="rounded-[24px] border border-white/12 bg-black/30 p-5">
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/42">{activePartnerApplyForm.title}</p>
+                      {activePartnerApplyForm.description && <p className="mt-2 text-sm text-white/58">{activePartnerApplyForm.description}</p>}
+                      <p className="mt-4 text-[10px] font-black uppercase tracking-[0.2em] text-white/42">Name</p>
+                      <input
+                        value={partnerApplyName}
+                        onChange={(event) => setPartnerApplyName(event.target.value)}
+                        placeholder={partnerApplyAudience === 'server' ? 'Server name...' : 'Creator name...'}
+                        className="mt-2 h-12 w-full rounded-[18px] border border-white/18 bg-black/45 px-4 text-base font-bold text-white placeholder:text-white/30 outline-none focus:border-white/40"
+                      />
+                      <p className="mt-3 text-xs text-white/52">
+                        This is how your application will be labeled for the owner review team.
+                      </p>
+                    </div>
+                  </div>
+                ) : activePartnerApplyQuestion ? (
+                  <div className="space-y-3">
+                    <div className="rounded-[24px] border border-white/12 bg-black/30 p-5">
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/42">
+                        Step {partnerApplyStepIndex - 1} / {partnerApplyQuestions.length}
+                      </p>
+                      <p className="mt-3 text-xl font-black text-white">
+                        {toDisplayQuestionLabel(activePartnerApplyQuestion)} {activePartnerApplyQuestion.required ? '*' : ''}
+                      </p>
+                      {activePartnerApplyQuestion.type === 'long_text' ? (
+                        <textarea
+                          value={Array.isArray(toAnswerValue(partnerApplyAnswers[activePartnerApplyQuestion.id])) ? (toAnswerValue(partnerApplyAnswers[activePartnerApplyQuestion.id]) as string[]).join(', ') : (toAnswerValue(partnerApplyAnswers[activePartnerApplyQuestion.id]) as string)}
+                          onChange={(event) => handlePartnerApplyAnswerChange(activePartnerApplyQuestion, event.target.value)}
+                          placeholder={activePartnerApplyQuestion.placeholder ?? ''}
+                          className="mt-4 h-36 w-full rounded-[18px] border border-white/16 bg-black/45 px-4 py-3 text-sm text-white placeholder:text-white/32 outline-none focus:border-white/40 resize-none"
+                        />
+                      ) : activePartnerApplyQuestion.type === 'single_choice' ? (
+                        <select
+                          value={Array.isArray(toAnswerValue(partnerApplyAnswers[activePartnerApplyQuestion.id])) ? ((toAnswerValue(partnerApplyAnswers[activePartnerApplyQuestion.id]) as string[])[0] ?? '') : (toAnswerValue(partnerApplyAnswers[activePartnerApplyQuestion.id]) as string)}
+                          onChange={(event) => handlePartnerApplyAnswerChange(activePartnerApplyQuestion, event.target.value)}
+                          className="mt-4 h-12 w-full rounded-[18px] border border-white/16 bg-black/45 px-4 text-sm text-white outline-none focus:border-white/40"
+                        >
+                          <option value="">Select...</option>
+                          {(activePartnerApplyQuestion.options ?? []).map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      ) : activePartnerApplyQuestion.type === 'multi_choice' ? (
+                        <div className="mt-4 rounded-[18px] border border-white/14 bg-white/[0.03] p-3 space-y-2">
+                          {(activePartnerApplyQuestion.options ?? []).map((option) => {
+                            const value = toAnswerValue(partnerApplyAnswers[activePartnerApplyQuestion.id]);
+                            const selected = Array.isArray(value) && value.includes(option);
+                            return (
+                              <label key={option} className="flex items-center gap-2 text-sm text-white/86">
+                                <input
+                                  type="checkbox"
+                                  checked={selected}
+                                  onChange={(event) => {
+                                    const current = Array.isArray(value) ? [...value] : [];
+                                    const next = event.target.checked
+                                      ? Array.from(new Set([...current, option]))
+                                      : current.filter((item) => item !== option);
+                                    handlePartnerApplyAnswerChange(activePartnerApplyQuestion, next);
+                                  }}
+                                />
+                                {option}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <input
+                          type={activePartnerApplyQuestion.type === 'number' ? 'number' : 'text'}
+                          value={Array.isArray(toAnswerValue(partnerApplyAnswers[activePartnerApplyQuestion.id])) ? (toAnswerValue(partnerApplyAnswers[activePartnerApplyQuestion.id]) as string[]).join(', ') : (toAnswerValue(partnerApplyAnswers[activePartnerApplyQuestion.id]) as string)}
+                          onChange={(event) => handlePartnerApplyAnswerChange(activePartnerApplyQuestion, event.target.value)}
+                          placeholder={activePartnerApplyQuestion.placeholder ?? ''}
+                          className="mt-4 h-12 w-full rounded-[18px] border border-white/16 bg-black/45 px-4 text-sm text-white placeholder:text-white/32 outline-none focus:border-white/40"
+                        />
+                      )}
+                      {renderQuestionHelper(activePartnerApplyQuestion)}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="mx-auto mt-4 flex max-w-[760px] items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPartnerApplyStepIndex((current) => Math.max(0, current - 1))}
+                  disabled={partnerApplyStepIndex === 0 || partnerApplyBusy}
+                  className="inline-flex h-11 items-center gap-1.5 rounded-[18px] border border-white/14 bg-white/[0.04] px-4 text-sm font-bold text-white/86 transition hover:bg-white/[0.08] disabled:opacity-40"
+                >
+                  <ChevronLeft size={14} />
+                  Back
+                </button>
+
+                {partnerApplyStepIndex < partnerApplyTotalSteps - 1 ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (partnerApplyStepIndex === 0) {
+                        if (!partnerApplyTermsScrolled) {
+                          setErrorMessage('Please scroll through the entire terms agreement.');
+                          return;
+                        }
+                        if (!partnerApplyTermsAccepted) {
+                          setErrorMessage('You must agree to the terms before continuing.');
+                          return;
+                        }
+                      }
+                      if (partnerApplyStepIndex > 1 && activePartnerApplyQuestion?.required) {
+                        const answer = partnerApplyAnswers[activePartnerApplyQuestion.id];
+                        if (activePartnerApplyQuestion.type === 'multi_choice') {
+                          const values = Array.isArray(answer) ? answer.map((entry) => String(entry).trim()).filter(Boolean) : [];
+                          if (values.length === 0) {
+                            setErrorMessage(`Missing required answer: ${toDisplayQuestionLabel(activePartnerApplyQuestion)}`);
+                            return;
+                          }
+                        } else {
+                          const value = String(answer ?? '').trim();
+                          if (!value) {
+                            setErrorMessage(`Missing required answer: ${toDisplayQuestionLabel(activePartnerApplyQuestion)}`);
+                            return;
+                          }
+                        }
+                      }
+                      setErrorMessage(null);
+                      setPartnerApplyStepIndex((current) => Math.min(partnerApplyTotalSteps - 1, current + 1));
+                    }}
+                    disabled={partnerApplyBusy || (partnerApplyStepIndex === 0 && !partnerApplyTermsReady)}
+                    className="inline-flex h-11 items-center gap-2 rounded-[18px] border border-white/16 bg-white/[0.1] px-5 text-sm font-black text-white transition hover:bg-white/[0.14] disabled:opacity-45"
+                  >
+                    Next
+                    <ChevronRight size={14} />
+                  </button>
+                ) : (
+              <button
+                type="button"
+                onClick={() => { void handleSubmitPartnerApply(); }}
+                disabled={partnerApplyBusy}
+                    className="inline-flex h-11 items-center gap-2 rounded-[18px] border border-[#c7ccd4]/30 bg-[rgba(201,206,214,0.14)] px-5 text-sm font-black text-white transition hover:bg-[rgba(201,206,214,0.2)] disabled:opacity-45"
+              >
+                    {partnerApplyBusy ? 'Submitting...' : 'Finish'}
+              </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -3232,7 +4236,7 @@ export function CosmeticLocker() {
                   className="h-10 w-10 rounded-full border border-white/18 bg-white/[0.04] text-white/75 hover:bg-white/[0.08] disabled:opacity-40"
                   disabled={actionBusy}
                 >
-                  ×
+                  �
                 </button>
               </div>
 

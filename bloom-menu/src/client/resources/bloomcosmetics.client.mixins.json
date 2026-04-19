@@ -5,7 +5,9 @@
   "client": [
     "AbstractClientPlayerEntityMixin",
     "PlayerListEntryMixin",
-    "PlayerEntityRendererMixin"
+    "PlayerEntityRendererMixin",
+    "PlayerListHudMixin",
+    "ChatHudMixin"
   ],
   "injectors": {
     "defaultRequire": 1

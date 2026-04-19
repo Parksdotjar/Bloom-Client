@@ -1,9 +1,11 @@
 package dev.bloom.cosmetics.mixin
 
 import com.mojang.authlib.GameProfile
+import dev.bloom.cosmetics.badges.BloomBadgeService
 import dev.bloom.cosmetics.cosmetics.cape.BloomCapeManager
 import net.minecraft.client.network.PlayerListEntry
 import net.minecraft.entity.player.SkinTextures
+import net.minecraft.text.Text
 import net.minecraft.util.AssetInfo
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.Shadow
@@ -28,5 +30,12 @@ abstract class PlayerListEntryMixin {
             base.model(),
             base.secure()
         )
+    }
+
+    @Inject(method = ["getDisplayName"], at = [At("RETURN")], cancellable = true, require = 0)
+    private fun bloomDecorateDisplayName(cir: CallbackInfoReturnable<Text?>) {
+        val uuid = getProfile().id ?: return
+        val base = cir.returnValue ?: return
+        cir.returnValue = BloomBadgeService.decorateName(base, uuid, BloomBadgeService.Surface.TAB_LIST)
     }
 }

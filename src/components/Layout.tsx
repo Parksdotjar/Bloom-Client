@@ -6,6 +6,7 @@ import { animate, engine, remove, set } from 'animejs';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { SidebarRail } from './SidebarRail';
 import { BloomConsole } from './BloomConsole';
+import { BudAssistant } from './BudAssistant';
 import { useAuth } from '../hooks/useAuth';
 import { useInstances } from '../hooks/useInstances';
 import { useDownloader } from '../hooks/useDownloader';
@@ -54,6 +55,7 @@ import {
   setHostServersUnlocked as writeHostServersUnlocked
 } from '../constants/hostServerAccess';
 import { requestCosmeticsModMenuOpen } from '../constants/cosmeticsModMenu';
+import { BUD_ENABLED_KEY, BUD_SETTINGS_CHANGE_EVENT, readBudEnabled } from '../constants/bud';
 
 const Particles = lazy(() => import('./Particles').then((module) => ({ default: module.Particles })));
 
@@ -281,6 +283,10 @@ function readConsoleBool(key: string, fallback: boolean) {
 export function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const selectedInstanceId = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get('id');
+  }, [location.search]);
 
   const [themeMode, setThemeMode] = useState<LauncherTheme>(() => {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
@@ -432,6 +438,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [instanceLauncherOpen, setInstanceLauncherOpen] = useState(false);
   const [instanceLauncherSelectedIndex, setInstanceLauncherSelectedIndex] = useState(0);
   const [consoleOpen, setConsoleOpen] = useState(false);
+  const [budEnabled, setBudEnabled] = useState<boolean>(() => readBudEnabled());
   const [showInternalConsoleCommands, setShowInternalConsoleCommands] = useState<boolean>(() => readConsoleBool(CONSOLE_SHOW_DEV_COMMANDS_KEY, false));
   const [hostServersUnlocked, setHostServersUnlocked] = useState<boolean>(() => readHostServersUnlocked());
   const [consoleLogLevel, setConsoleLogLevel] = useState<ConsoleLogLevel>(() => {
@@ -455,6 +462,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [onboardingExitActive, setOnboardingExitActive] = useState(false);
   const [appBlackoutPhase, setAppBlackoutPhase] = useState<'idle' | 'fade-in' | 'hold' | 'fade-out'>('idle');
   const [appRevealActive, setAppRevealActive] = useState(false);
+  const showPartnerApplyTopButton = location.pathname === '/cosmetics';
 
   const searchRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -490,6 +498,34 @@ export function Layout({ children }: { children: React.ReactNode }) {
   } = useAuth();
   const { instances, loadInstances, createInstance, updateInstance, deleteInstance } = useInstances();
   const { startDownload, activeDownloads } = useDownloader();
+  const selectedInstance = useMemo(
+    () => (selectedInstanceId ? instances.find((instance) => instance.id === selectedInstanceId) ?? null : null),
+    [instances, selectedInstanceId]
+  );
+  const selectedInstanceDownload = useMemo(
+    () => (selectedInstance ? activeDownloads[selectedInstance.id] ?? null : null),
+    [activeDownloads, selectedInstance]
+  );
+  const budContext = useMemo(() => ({
+    currentRoute: location.pathname,
+    selectedInstance: selectedInstance
+      ? {
+          id: selectedInstance.id,
+          name: selectedInstance.name,
+          mcVersion: selectedInstance.mcVersion,
+          loader: selectedInstance.loader,
+          fabricLoaderVersion: selectedInstance.fabricLoaderVersion
+        }
+      : null,
+    activeDownload: selectedInstanceDownload
+      ? {
+          id: selectedInstanceDownload.id,
+          status: selectedInstanceDownload.status,
+          progress: selectedInstanceDownload.progress,
+          remediation: selectedInstanceDownload.remediation
+        }
+      : null
+  }), [location.pathname, selectedInstance, selectedInstanceDownload]);
 
   const entries: SearchEntry[] = useMemo(() => {
     const base: SearchEntry[] = [];
@@ -1090,12 +1126,41 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const checkMax = async () => {
-      const windowRef = getCurrentWindow();
+    const syncWindowState = async () => {
+      try {
+        const windowRef = getCurrentWindow();
+        const max = await windowRef.isMaximized();
+        setIsMaximized(max);
+      } catch {
+        setIsMaximized(false);
+      }
+    };
+    void syncWindowState();
+  }, []);
+
+  const toggleWindowMaximize = useCallback(async () => {
+    const windowRef = getCurrentWindow();
+    try {
+      const currentlyMaximized = await windowRef.isMaximized();
+      if (currentlyMaximized) {
+        await windowRef.unmaximize();
+      } else {
+        await windowRef.maximize();
+      }
+    } catch {
+      try {
+        await windowRef.toggleMaximize();
+      } catch {
+        // no-op
+      }
+    }
+
+    try {
       const max = await windowRef.isMaximized();
       setIsMaximized(max);
-    };
-    void checkMax();
+    } catch {
+      // no-op
+    }
   }, []);
 
   useEffect(() => {
@@ -1375,6 +1440,28 @@ export function Layout({ children }: { children: React.ReactNode }) {
     };
     window.addEventListener('bloom-extra-change', onExtraChange as EventListener);
     return () => window.removeEventListener('bloom-extra-change', onExtraChange as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const syncBudEnabled = (event: Event) => {
+      const custom = event as CustomEvent<{ enabled?: boolean }>;
+      if (typeof custom.detail?.enabled === 'boolean') {
+        setBudEnabled(custom.detail.enabled);
+        return;
+      }
+      setBudEnabled(readBudEnabled());
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === BUD_ENABLED_KEY) {
+        setBudEnabled(readBudEnabled());
+      }
+    };
+    window.addEventListener(BUD_SETTINGS_CHANGE_EVENT, syncBudEnabled as EventListener);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(BUD_SETTINGS_CHANGE_EVENT, syncBudEnabled as EventListener);
+      window.removeEventListener('storage', onStorage);
+    };
   }, []);
 
   useEffect(() => {
@@ -1850,6 +1937,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       name: trimmed,
       mcVersion: '1.21.1',
       loader: 'vanilla',
+      renderer: 'opengl',
       createdAt: now,
       updatedAt: now,
       iconDataUrl: undefined,
@@ -1919,6 +2007,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     const updated: Instance = {
       ...current,
       loader,
+      renderer: loader === 'fabric' ? (current.renderer || 'opengl') : 'opengl',
       fabricLoaderVersion: loader === 'fabric' ? (current.fabricLoaderVersion || 'latest') : undefined,
       updatedAt: Date.now()
     };
@@ -2361,7 +2450,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
             )}
           </div>
 
-          <div data-tauri-drag-region className="app-region-drag flex-1 h-full min-w-[40px]" />
+          <div data-tauri-drag-region className="app-region-drag flex-1 h-full min-w-[40px] flex items-center justify-center">
+            {showPartnerApplyTopButton && (
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent('bloom-open-partner-apply'))}
+                className="app-region-no-drag h-9 rounded-lg border border-[var(--g-accent)] bg-[color:color-mix(in_srgb,var(--g-accent)_14%,black)] px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] text-white hover:brightness-110"
+              >
+                Apply for Partner
+              </button>
+            )}
+          </div>
 
           <div className="app-region-no-drag flex items-center gap-2 shrink-0">
             <button onClick={() => setNotificationsOpen((v) => !v)} className="relative h-10 w-10 rounded-xl border border-white/12 bg-white/[0.04] text-white/75 inline-flex items-center justify-center">
@@ -2500,29 +2599,28 @@ export function Layout({ children }: { children: React.ReactNode }) {
               )}
             </div>
 
-            <button onClick={() => { void getCurrentWindow().minimize(); }} className="g-window-btn" title="Minimize">
+            <button onClick={() => { void getCurrentWindow().minimize(); }} className="g-window-btn app-region-no-drag" title="Minimize">
               <Minus size={14} strokeWidth={iconStrokeWidth} />
             </button>
             <button
               title="Move Window"
               onMouseDown={() => { void getCurrentWindow().startDragging(); }}
-              className="g-window-btn"
+              className="g-window-btn app-region-no-drag"
             >
               <Move size={13} strokeWidth={iconStrokeWidth} />
             </button>
             <button
-              onClick={async () => {
-                const windowRef = getCurrentWindow();
-                await windowRef.toggleMaximize();
-                const max = await windowRef.isMaximized();
-                setIsMaximized(max);
+              onMouseDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
               }}
-              className="g-window-btn"
+              onClick={() => { void toggleWindowMaximize(); }}
+              className="g-window-btn app-region-no-drag"
               title={isMaximized ? 'Restore' : 'Maximize'}
             >
               <Maximize2 size={13} strokeWidth={iconStrokeWidth} className={isMaximized ? 'opacity-60' : ''} />
             </button>
-            <button onClick={() => { void getCurrentWindow().close(); }} className="g-window-btn g-window-btn-danger" title="Close">
+            <button onClick={() => { void getCurrentWindow().close(); }} className="g-window-btn g-window-btn-danger app-region-no-drag" title="Close">
               <X size={14} strokeWidth={iconStrokeWidth} />
             </button>
           </div>
@@ -2736,6 +2834,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           context={consoleContext}
           onClose={() => setConsoleOpen(false)}
         />
+        <BudAssistant enabled={budEnabled} onNavigate={navigate} context={budContext} />
       </div>
       )}
 

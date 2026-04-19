@@ -31,6 +31,10 @@ class LauncherBridgeClient(private val auth: LauncherBridgeAuth) {
         return getJson("/v1/cosmetics/equipped", BridgeEquippedCapePayload::class.java)
     }
 
+    fun fetchClientPreferences(): CompletableFuture<BridgeClientPreferencesPayload?> {
+        return getJson("/v1/client/preferences", BridgeClientPreferencesPayload::class.java)
+    }
+
     fun fetchPlayerCape(minecraftUuid: String): CompletableFuture<BridgeEquippedCapePayload?> {
         val encodedUuid = URLEncoder.encode(minecraftUuid, StandardCharsets.UTF_8)
         return getJson("/v1/players/$encodedUuid/cape", BridgeEquippedCapePayload::class.java)

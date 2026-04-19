@@ -1,0 +1,23 @@
+{
+  "required": true,
+  "package": "blooms_kernel.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "CameraAccessor",
+    "CameraMixin",
+    "GameRendererMixin",
+    "HandledScreenScaleMixin",
+    "HeldItemRendererMixin",
+    "InGameHudMixin",
+    "InGameOverlayRendererAccessor",
+    "InGameOverlayRendererMixin",
+    "MouseLookMixin",
+    "MouseMixin",
+    "SimpleOptionAccessor",
+    "ClientPlayerEntityMixin",
+    "ItemEntityRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

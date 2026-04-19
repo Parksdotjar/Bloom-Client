@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#050505"/>
+  <g opacity="0.11">
+    <path d="M0 70h1200M0 140h1200M0 210h1200M0 280h1200M0 350h1200M0 420h1200M0 490h1200M0 560h1200" stroke="#fff"/>
+    <path d="M120 0v630M240 0v630M360 0v630M480 0v630M600 0v630M720 0v630M840 0v630M960 0v630M1080 0v630" stroke="#fff"/>
+  </g>
+  <text x="90" y="290" fill="#fff" font-size="92" font-family="Arial, Helvetica, sans-serif" font-weight="700">BLOOM CLIENT</text>
+  <text x="90" y="360" fill="#bdbdbd" font-size="32" font-family="Arial, Helvetica, sans-serif">Official News and Downloads</text>
+</svg>

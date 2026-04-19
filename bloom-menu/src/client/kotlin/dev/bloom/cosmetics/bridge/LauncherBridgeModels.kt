@@ -24,6 +24,9 @@ data class BridgeCapeAssetPayload(
 data class BridgeEquippedCapePayload(
     @SerializedName("minecraft_uuid") val minecraftUuid: String? = null,
     @SerializedName("equipped_at") val equippedAt: String? = null,
+    @SerializedName("role") val role: String? = null,
+    @SerializedName("custom_badge_key") val customBadgeKey: String? = null,
+    @SerializedName("badge_key") val badgeKey: String? = null,
     @SerializedName("cape") val cape: BridgeCapeAssetPayload? = null
 )
 
@@ -33,4 +36,11 @@ data class BridgeLiveEventPayload(
     @SerializedName("equipped") val equipped: BridgeEquippedCapePayload? = null,
     @SerializedName("players") val players: List<BridgeEquippedCapePayload>? = null,
     @SerializedName("reason") val reason: String? = null
+)
+
+data class BridgeClientPreferencesPayload(
+    @SerializedName("show_bloom_nametag_logo") val showBloomNametagLogo: Boolean = true,
+    @SerializedName("show_bloom_tab_logo") val showBloomTabLogo: Boolean = true,
+    @SerializedName("show_bloom_chat_logo") val showBloomChatLogo: Boolean = true,
+    @SerializedName("bloom_logo_side") val bloomLogoSide: String = "right"
 )

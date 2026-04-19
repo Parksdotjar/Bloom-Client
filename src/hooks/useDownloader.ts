@@ -15,6 +15,7 @@ export interface DownloadProgressEvent {
 type DownloaderContextValue = {
     activeDownloads: Record<string, DownloadProgressEvent>;
     startDownload: (instance: Instance, authState?: any) => Promise<void>;
+    cancelDownload: (instanceId: string) => Promise<void>;
     disableIncompatibleMods: (instanceId: string) => Promise<string[]>;
 };
 
@@ -176,7 +177,31 @@ function useDownloaderController(): DownloaderContextValue {
         return disabled;
     };
 
-    return { activeDownloads, startDownload, disableIncompatibleMods };
+    const cancelDownload = async (instanceId: string) => {
+        try {
+            await TauriApi.instanceInstallCancel(instanceId);
+        } catch {
+            // no-op, still update client state below
+        }
+        setActiveDownloads(prev => ({
+            ...prev,
+            [instanceId]: {
+                id: instanceId,
+                status: 'Cancelled by user.',
+                progress: 0,
+                speed: ''
+            }
+        }));
+        window.setTimeout(() => {
+            setActiveDownloads(prev => {
+                const next = { ...prev };
+                if (next[instanceId]?.status === 'Cancelled by user.') delete next[instanceId];
+                return next;
+            });
+        }, 900);
+    };
+
+    return { activeDownloads, startDownload, cancelDownload, disableIncompatibleMods };
 }
 
 export function DownloaderProvider({ children }: { children: React.ReactNode }) {

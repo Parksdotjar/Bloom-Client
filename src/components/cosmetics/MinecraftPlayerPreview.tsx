@@ -37,6 +37,10 @@ const DEFAULT_APPEARANCE = {
   global_light_intensity: 1.22
 };
 
+const animatedManifestCache = new Map<string, { fps: number; frameIndexes: number[]; loadedAt: number }>();
+const animatedFrameUrlCache = new Map<string, string>();
+const MAX_ANIMATED_FRAME_CACHE = 512;
+
 function clampNumber(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
@@ -71,6 +75,36 @@ function applyMinecraftCapeUvs(viewer: SkinViewer, textureWidth = 64, textureHei
   }
 }
 
+function getAnimatedFrameCacheKey(capeId: string, frameIndex: number) {
+  return `${capeId}::${frameIndex}`;
+}
+
+async function loadAnimatedFrameObjectUrl(base: string, capeId: string, frameIndex: number) {
+  const key = getAnimatedFrameCacheKey(capeId, frameIndex);
+  const cached = animatedFrameUrlCache.get(key);
+  if (cached) return cached;
+
+  const frameUrl = `${base}/functions/v1/main/gif-cape/capes/${encodeURIComponent(capeId)}/frames/${frameIndex}`;
+  const response = await fetch(frameUrl, { cache: 'force-cache' });
+  if (!response.ok) {
+    throw new Error(`animated_frame_http_${response.status}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  animatedFrameUrlCache.set(key, objectUrl);
+
+  if (animatedFrameUrlCache.size > MAX_ANIMATED_FRAME_CACHE) {
+    const oldest = animatedFrameUrlCache.keys().next().value;
+    if (oldest) {
+      const evictedUrl = animatedFrameUrlCache.get(oldest);
+      if (evictedUrl) URL.revokeObjectURL(evictedUrl);
+      animatedFrameUrlCache.delete(oldest);
+    }
+  }
+
+  return objectUrl;
+}
+
 export function MinecraftPlayerPreview({
   playerUuid,
   playerName,
@@ -92,6 +126,7 @@ export function MinecraftPlayerPreview({
   const [animatedFrameIndexes, setAnimatedFrameIndexes] = useState<number[]>([]);
   const [animatedFps, setAnimatedFps] = useState<number>(10);
   const [animatedFrameCursor, setAnimatedFrameCursor] = useState(0);
+  const [animatedBaseUrl, setAnimatedBaseUrl] = useState<string>('');
   const [dragging, setDragging] = useState(false);
   const [autoSpinEnabled, setAutoSpinEnabled] = useState(true);
   const autoSpinEnabledRef = useRef(true);
@@ -178,6 +213,7 @@ export function MinecraftPlayerPreview({
     let cancelled = false;
     setAnimatedFrameIndexes([]);
     setAnimatedFrameCursor(0);
+    setAnimatedBaseUrl('');
     if (!capeId) return () => {
       cancelled = true;
     };
@@ -190,6 +226,16 @@ export function MinecraftPlayerPreview({
         return raw.replace(/\/+$/, '');
       }
     })();
+    setAnimatedBaseUrl(base);
+    const cacheKey = capeId.trim();
+    const cachedManifest = animatedManifestCache.get(cacheKey);
+    if (cachedManifest && cachedManifest.frameIndexes.length > 0) {
+      setAnimatedFps(cachedManifest.fps);
+      setAnimatedFrameIndexes(cachedManifest.frameIndexes);
+      return () => {
+        cancelled = true;
+      };
+    }
 
     void fetch(`${base}/functions/v1/main/gif-cape/capes/${encodeURIComponent(capeId)}/manifest`)
       .then((response) => response.json())
@@ -206,6 +252,7 @@ export function MinecraftPlayerPreview({
         if (indexes.length === 0) return;
         setAnimatedFps(fps);
         setAnimatedFrameIndexes(indexes);
+        animatedManifestCache.set(cacheKey, { fps, frameIndexes: indexes, loadedAt: Date.now() });
       })
       .catch(() => {
         if (!cancelled) {
@@ -217,6 +264,12 @@ export function MinecraftPlayerPreview({
       cancelled = true;
     };
   }, [capeId, capeSlug]);
+
+  useEffect(() => {
+    if (!capeId || !animatedBaseUrl || animatedFrameIndexes.length === 0) return;
+    const sample = animatedFrameIndexes.slice(0, Math.min(animatedFrameIndexes.length, 12));
+    void Promise.allSettled(sample.map((idx) => loadAnimatedFrameObjectUrl(animatedBaseUrl, capeId, idx)));
+  }, [animatedBaseUrl, animatedFrameIndexes, capeId]);
 
   useEffect(() => {
     if (animatedFrameIndexes.length <= 1) return;
@@ -372,7 +425,8 @@ export function MinecraftPlayerPreview({
     const viewer = viewerRef.current;
     if (!viewer) return;
     if (animatedFrameIndexes.length > 0 && capeId) {
-      const base = (() => {
+      const frameIndex = animatedFrameIndexes[animatedFrameCursor % animatedFrameIndexes.length] ?? 0;
+      const base = animatedBaseUrl || (() => {
         const raw = String(import.meta.env.VITE_SUPABASE_URL || 'https://sb.bloomclient.org').trim();
         try {
           return new URL(raw).origin;
@@ -380,11 +434,11 @@ export function MinecraftPlayerPreview({
           return raw.replace(/\/+$/, '');
         }
       })();
-      const frameIndex = animatedFrameIndexes[animatedFrameCursor % animatedFrameIndexes.length] ?? 0;
-      const frameUrl = `${base}/functions/v1/main/gif-cape/capes/${encodeURIComponent(capeId)}/frames/${frameIndex}`;
-      void viewer.loadCape(frameUrl, { backEquipment }).catch(() => {
-        setCapeFailed(true);
-      });
+      void loadAnimatedFrameObjectUrl(base, capeId, frameIndex)
+        .then((objectUrl) => viewer.loadCape(objectUrl, { backEquipment }))
+        .catch(() => {
+          setCapeFailed(true);
+        });
       return;
     }
     if (!asset) return;

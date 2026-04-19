@@ -95,6 +95,30 @@ export type OwnerMemberRecord = {
   wallet_updated_at: string | null;
 };
 
+export type BadgeKey =
+  | 'none'
+  | 'bloom'
+  | 'partner'
+  | 'owner'
+  | 'manager'
+  | 'partner-red'
+  | 'partner-red-glow'
+  | 'staff-gold'
+  | 'staff-gold-glow'
+  | 'owner-pink'
+  | 'owner-pink-glow';
+
+export type OwnerMemberBadgeRecord = {
+  user_id: string;
+  username: string | null;
+  display_name: string | null;
+  mc_uuid: string | null;
+  role: CommerceRole;
+  custom_badge_key: BadgeKey | null;
+  effective_badge_key: BadgeKey;
+  updated_at: string;
+};
+
 export type OwnerGrantCapeResult = {
   user_id: string;
   cape_id: string;
@@ -123,7 +147,7 @@ export type CurrencyPackRecord = {
   base_bb: number;
   bonus_bb: number;
   total_bb: number;
-  tebex_package_id: string | null;
+  mcsets_price_id: string | null;
   is_active: boolean;
   sort_order: number;
 };
@@ -154,6 +178,15 @@ export type PartnerWalletRecord = {
   user_id: string;
   balance_bb: number;
   updated_at: string;
+};
+
+export type OwnerRevokeCapeResult = {
+  user_id: string;
+  cape_id: string;
+  cape_slug: string;
+  removed: boolean;
+  equipped_cape_cleared: boolean;
+  revoked_at: string;
 };
 
 export type PartnerWalletLedgerRecord = {
@@ -221,6 +254,76 @@ export type PromoRedeemResult = {
   code: string;
   granted_cape_slugs: string[];
   already_owned_cape_slugs: string[];
+};
+
+export type CustomCapeRewardCodeRecord = {
+  id: string;
+  code: string;
+  code_length: number;
+  charset: 'letters' | 'numbers' | 'both';
+  is_active: boolean;
+  max_uses: number;
+  used_count: number;
+  created_by: string | null;
+  last_used_by: string | null;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CustomCapeRewardRedeemResult = {
+  code: string;
+  credits_remaining: number;
+  redeemed_at: string;
+};
+
+export type CustomCapeFreeCreditsRecord = {
+  user_id: string;
+  credits_remaining: number;
+  updated_at: string;
+};
+
+export type PartnerApplicationAudience = 'individual' | 'server';
+export type PartnerApplicationQuestionType =
+  | 'short_text'
+  | 'long_text'
+  | 'number'
+  | 'single_choice'
+  | 'multi_choice'
+  | 'link';
+
+export type PartnerApplicationQuestion = {
+  id: string;
+  label: string;
+  type: PartnerApplicationQuestionType;
+  required: boolean;
+  placeholder?: string | null;
+  options?: string[] | null;
+  helper_text?: string | null;
+  helper_link?: string | null;
+};
+
+export type PartnerApplicationForm = {
+  audience: PartnerApplicationAudience;
+  title: string;
+  description: string | null;
+  questions: PartnerApplicationQuestion[];
+  updated_by: string | null;
+  updated_at: string;
+};
+
+export type PartnerApplicationRecord = {
+  id: string;
+  user_id: string;
+  username: string | null;
+  display_name: string | null;
+  audience: PartnerApplicationAudience;
+  applicant_name: string | null;
+  answers: Record<string, unknown>;
+  status: 'pending' | 'reviewed' | 'approved' | 'rejected';
+  owner_note: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type PartnerGroupRecord = {
@@ -339,13 +442,30 @@ export type FinalizeCustomCapeExportResult = {
   transaction_status: string;
 };
 
-type TebexCheckoutCreateResponse = {
+type McsetsCheckoutCreateResponse = {
   ok: boolean;
-  ident?: string | null;
+  session_id?: string | null;
   checkout_url?: string | null;
   error?: string;
   message?: string;
 };
+
+function extractSupabaseErrorMessage(error: unknown, fallback = 'supabase_request_failed') {
+  if (!error) return fallback;
+  if (error instanceof Error) return error.message || fallback;
+  if (typeof error === 'string') return error || fallback;
+  if (typeof error === 'object') {
+    const obj = error as Record<string, unknown>;
+    return (
+      (typeof obj.message === 'string' && obj.message) ||
+      (typeof obj.error === 'string' && obj.error) ||
+      (typeof obj.details === 'string' && obj.details) ||
+      (typeof obj.hint === 'string' && obj.hint) ||
+      fallback
+    );
+  }
+  return fallback;
+}
 
 function resolveEdgeBase() {
   const raw = String(import.meta.env.VITE_SUPABASE_URL || 'https://sb.bloomclient.org').trim();
@@ -430,18 +550,24 @@ export async function loadOwnedCapes() {
 }
 
 export async function loadCurrentLoadout() {
+  const userId = await getSupabaseUserId();
+  if (!userId) return null;
   const { data, error } = await supabase
     .from('commerce_cape_loadout')
     .select('user_id,equipped_cape_id,updated_at')
+    .eq('user_id', userId)
     .maybeSingle();
   if (error) throw error;
   return data as { user_id: string; equipped_cape_id: string | null; updated_at: string } | null;
 }
 
 export async function loadWallet() {
+  const userId = await getSupabaseUserId();
+  if (!userId) return null;
   const { data, error } = await supabase
     .from('commerce_wallets')
     .select('user_id,balance_bb,updated_at')
+    .eq('user_id', userId)
     .maybeSingle();
   if (error) throw error;
   return data as WalletRecord | null;
@@ -526,6 +652,33 @@ export async function loadOwnerMembers() {
   return (data ?? []) as OwnerMemberRecord[];
 }
 
+export async function ownerGetMemberBadgeByUserId(userId: string) {
+  const { data, error } = await supabase.rpc('commerce_owner_get_member_badge', {
+    p_user_id: userId.trim()
+  });
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'owner_get_member_badge_failed'));
+  const rows = Array.isArray(data) ? (data as OwnerMemberBadgeRecord[]) : [];
+  const row = rows[0] ?? null;
+  if (!row) throw new Error('owner_get_member_badge_failed');
+  return row;
+}
+
+export async function ownerSetMemberBadgeByUserId(
+  userId: string,
+  badgeKey: 'auto' | BadgeKey
+) {
+  const payload = badgeKey === 'auto' ? 'auto' : badgeKey;
+  const { data, error } = await supabase.rpc('commerce_owner_set_member_badge', {
+    p_user_id: userId.trim(),
+    p_badge_key: payload
+  });
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'owner_set_member_badge_failed'));
+  const rows = Array.isArray(data) ? (data as OwnerMemberBadgeRecord[]) : [];
+  const row = rows[0] ?? null;
+  if (!row) throw new Error('owner_set_member_badge_failed');
+  return row;
+}
+
 export async function ownerGrantCapeToUser(userId: string, capeNameOrSlug: string) {
   const targetUserId = userId.trim();
   const targetCape = capeNameOrSlug.trim();
@@ -583,6 +736,41 @@ export async function loadOwnerPartnerWallets() {
   return (data ?? []) as PartnerWalletRecord[];
 }
 
+export async function ownerGetPartnerWalletBalanceByUserId(userId: string) {
+  const { data, error } = await supabase.rpc('commerce_owner_get_partner_wallet_balance', {
+    p_user_id: userId.trim()
+  });
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'owner_get_partner_wallet_balance_failed'));
+  const rows = Array.isArray(data) ? (data as PartnerWalletRecord[]) : [];
+  return rows[0] ?? { user_id: userId.trim(), balance_bb: 0, updated_at: new Date(0).toISOString() };
+}
+
+export async function ownerGrantPartnerWalletByUserId(userId: string, amountBb: number, reason?: string | null) {
+  const { data, error } = await supabase.rpc('commerce_owner_grant_partner_wallet_bb', {
+    p_user_id: userId.trim(),
+    p_amount_bb: Math.max(0, Math.floor(amountBb)),
+    p_reason: reason?.trim() || null
+  });
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'owner_grant_partner_wallet_bb_failed'));
+  const rows = Array.isArray(data) ? (data as PartnerWalletRecord[]) : [];
+  const row = rows[0] ?? null;
+  if (!row) throw new Error('partner_wallet_grant_failed');
+  return row;
+}
+
+export async function ownerRevokeCapeFromUserById(userId: string, capeId: string, reason?: string | null) {
+  const { data, error } = await supabase.rpc('commerce_owner_revoke_cape_from_user', {
+    p_user_id: userId.trim(),
+    p_cape_id: capeId.trim(),
+    p_reason: reason?.trim() || null
+  });
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'owner_revoke_cape_from_user_failed'));
+  const rows = Array.isArray(data) ? (data as OwnerRevokeCapeResult[]) : [];
+  const row = rows[0] ?? null;
+  if (!row) throw new Error('owner_revoke_cape_from_user_failed');
+  return row;
+}
+
 export async function loadOwnerPartnerWalletLedger(limit = 100) {
   const safeLimit = Math.max(1, Math.min(500, Math.floor(limit)));
   const { data, error } = await supabase
@@ -595,9 +783,12 @@ export async function loadOwnerPartnerWalletLedger(limit = 100) {
 }
 
 export async function loadOwnPartnerWallet() {
+  const userId = await getSupabaseUserId();
+  if (!userId) return null;
   const { data, error } = await supabase
     .from('commerce_partner_wallets')
     .select('user_id,balance_bb,updated_at')
+    .eq('user_id', userId)
     .maybeSingle();
   if (error) throw error;
   return data as PartnerWalletRecord | null;
@@ -768,6 +959,113 @@ export async function redeemPromoCode(code: string) {
   return row;
 }
 
+export async function ownerGenerateCustomCapeRewardCode(codeLength: number, charset: 'letters' | 'numbers' | 'both') {
+  const { data, error } = await supabase.rpc('commerce_owner_generate_custom_cape_reward_code', {
+    p_code_length: Math.max(4, Math.min(64, Math.floor(codeLength))),
+    p_charset: charset
+  });
+  if (error) throw error;
+  const rows = Array.isArray(data) ? (data as CustomCapeRewardCodeRecord[]) : [];
+  return rows[0] ?? null;
+}
+
+export async function ownerLoadCustomCapeRewardCodes(limit = 100) {
+  const { data, error } = await supabase.rpc('commerce_owner_list_custom_cape_reward_codes', {
+    p_limit: Math.max(1, Math.min(500, Math.floor(limit)))
+  });
+  if (error) throw error;
+  return (data ?? []) as CustomCapeRewardCodeRecord[];
+}
+
+export async function redeemCustomCapeRewardCode(code: string) {
+  const { data, error } = await supabase.rpc('commerce_redeem_custom_cape_reward_code', {
+    p_code: code.trim()
+  });
+  if (error) throw error;
+  const rows = Array.isArray(data) ? (data as CustomCapeRewardRedeemResult[]) : [];
+  const row = rows[0] ?? null;
+  if (!row) throw new Error('reward_code_redeem_failed');
+  return row;
+}
+
+export async function loadOwnCustomCapeFreeCredits() {
+  const { data, error } = await supabase.rpc('commerce_get_own_custom_cape_free_credits');
+  if (error) throw error;
+  const raw = Number(data ?? 0);
+  if (!Number.isFinite(raw)) return 0;
+  return Math.max(0, Math.floor(raw));
+}
+
+export async function ownerGetCustomCapeFreeCreditsByUserId(userId: string) {
+  const { data, error } = await supabase.rpc('commerce_owner_get_custom_cape_free_credits', {
+    p_user_id: userId.trim()
+  });
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'owner_get_custom_cape_free_credits_failed'));
+  const raw = Number(data ?? 0);
+  if (!Number.isFinite(raw)) return 0;
+  return Math.max(0, Math.floor(raw));
+}
+
+export async function ownerSetCustomCapeFreeCreditsByUserId(userId: string, credits: number) {
+  const { data, error } = await supabase.rpc('commerce_owner_set_custom_cape_free_credits', {
+    p_user_id: userId.trim(),
+    p_credits: Math.max(0, Math.floor(credits))
+  });
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'owner_set_custom_cape_free_credits_failed'));
+  const rows = Array.isArray(data) ? (data as CustomCapeFreeCreditsRecord[]) : [];
+  const row = rows[0] ?? null;
+  if (!row) throw new Error('custom_cape_credits_update_failed');
+  return row;
+}
+
+export async function loadPartnerApplicationForms() {
+  const { data, error } = await supabase.rpc('commerce_get_partner_application_forms');
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'partner_application_forms_load_failed'));
+  return (data ?? []) as PartnerApplicationForm[];
+}
+
+export async function ownerUpsertPartnerApplicationForm(input: {
+  audience: PartnerApplicationAudience;
+  title: string;
+  description?: string | null;
+  questions: PartnerApplicationQuestion[];
+}) {
+  const { data, error } = await supabase.rpc('commerce_owner_upsert_partner_application_form', {
+    p_audience: input.audience,
+    p_title: input.title.trim(),
+    p_description: input.description?.trim() || null,
+    p_questions: input.questions as unknown as Record<string, unknown>
+  });
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'partner_application_form_save_failed'));
+  const rows = Array.isArray(data) ? (data as PartnerApplicationForm[]) : [];
+  const row = rows[0] ?? null;
+  if (!row) throw new Error('partner_application_form_save_failed');
+  return row;
+}
+
+export async function submitPartnerApplication(input: {
+  audience: PartnerApplicationAudience;
+  applicantName?: string | null;
+  answers: Record<string, unknown>;
+}) {
+  const { data, error } = await supabase.rpc('commerce_submit_partner_application', {
+    p_audience: input.audience,
+    p_applicant_name: input.applicantName?.trim() || null,
+    p_answers: input.answers
+  });
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'partner_application_submit_failed'));
+  const rows = Array.isArray(data) ? (data as PartnerApplicationRecord[]) : [];
+  const row = rows[0] ?? null;
+  if (!row) throw new Error('partner_application_submit_failed');
+  return row;
+}
+
+export async function ownerLoadPartnerApplications() {
+  const { data, error } = await supabase.rpc('commerce_owner_list_partner_applications');
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'partner_applications_load_failed'));
+  return (data ?? []) as PartnerApplicationRecord[];
+}
+
 export async function loadWalletLedger(limit = 20) {
   const { data, error } = await supabase.rpc('commerce_list_wallet_ledger', {
     p_limit: Math.max(1, Math.min(200, Math.round(limit)))
@@ -779,34 +1077,34 @@ export async function loadWalletLedger(limit = 20) {
 export async function loadCurrencyPacks() {
   const { data, error } = await supabase
     .from('commerce_currency_packs')
-    .select('id,slug,name,price_usd,base_bb,bonus_bb,total_bb,tebex_package_id,is_active,sort_order')
+    .select('id,slug,name,price_usd,base_bb,bonus_bb,total_bb,mcsets_price_id,is_active,sort_order')
     .eq('is_active', true)
     .order('sort_order', { ascending: true });
   if (error) throw error;
   return (data ?? []) as CurrencyPackRecord[];
 }
 
-export async function createTebexCheckoutSession(packageSlug: string) {
+export async function createMcsetsCheckoutSession(packageSlug: string, mode: 'test' | 'live' = 'test') {
   const session = await supabase.auth.getSession();
   const token = session.data.session?.access_token;
   if (!token) throw new Error('auth_session_missing');
 
-  const response = await fetch(`${resolveEdgeBase()}/functions/v1/main/tebex/create-checkout`, {
+  const response = await fetch(`${resolveEdgeBase()}/functions/v1/main/mcsets/create-checkout`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ package_slug: packageSlug })
+    body: JSON.stringify({ package_slug: packageSlug, mode })
   });
 
-  const payload = (await response.json().catch(() => ({}))) as TebexCheckoutCreateResponse;
+  const payload = (await response.json().catch(() => ({}))) as McsetsCheckoutCreateResponse;
   if (!response.ok || !payload.ok) {
-    throw new Error(extractEdgeError(payload, `tebex_checkout_${response.status}`));
+    throw new Error(extractEdgeError(payload, `mcsets_checkout_${response.status}`));
   }
 
   return {
-    ident: (payload.ident ?? '').trim() || null,
+    sessionId: (payload.session_id ?? '').trim() || null,
     checkoutUrl: (payload.checkout_url ?? '').trim() || null
   };
 }

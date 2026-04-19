@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "blooms_kernel",
+  "version": "${version}",
+  "name": "BLOOM'S KERNEL",
+  "description": "Client-side modular HUD suite with in-game module toggles and editor.",
+  "authors": [
+    "Bloom",
+    "Codex"
+  ],
+  "license": "All-Rights-Reserved",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "blooms_kernel.BloomsKernel"
+    ],
+    "modmenu": [
+      "blooms_kernel.integration.ModMenuIntegration"
+    ]
+  },
+  "mixins": [
+    "blooms_kernel.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.4",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "modmenu": "*"
+  }
+}

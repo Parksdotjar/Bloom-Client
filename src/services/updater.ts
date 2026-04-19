@@ -20,11 +20,13 @@ type SupabaseManifest = {
   version: string;
   installerUrl: string;
   assetName: string;
+  fallbackInstallerUrls?: string[];
   windows: {
     installerUrl: string;
     assetName: string;
     nsisUrl: string;
     nsisAssetName: string;
+    fallbackInstallerUrls?: string[];
   };
 };
 
@@ -88,10 +90,11 @@ export async function publishSupabaseLauncherUpdate(versionInput: string, instal
     throw new Error('Installer must be a .exe file.');
   }
 
-  const installerObjectPath = 'BloomClient-latest-x64-setup.exe';
+  const installerObjectPath = `Bloom Client_${version}_x64-setup.exe`;
+  const latestAliasObjectPath = 'Bloom Client_latest_x64-setup.exe';
   const latestManifestPath = 'latest.json';
 
-  const uploadInstaller = await supabase.storage
+  const uploadVersionedInstaller = await supabase.storage
     .from('updates')
     .upload(installerObjectPath, installerFile, {
       upsert: true,
@@ -99,22 +102,36 @@ export async function publishSupabaseLauncherUpdate(versionInput: string, instal
       cacheControl: 'no-store'
     });
 
-  if (uploadInstaller.error) {
-    throw new Error(`Failed to upload installer: ${uploadInstaller.error.message}`);
+  if (uploadVersionedInstaller.error) {
+    throw new Error(`Failed to upload versioned installer: ${uploadVersionedInstaller.error.message}`);
   }
 
-  const publicUrl = supabase.storage.from('updates').getPublicUrl(installerObjectPath).data.publicUrl;
-  const installerUrl = `${publicUrl}?v=${encodeURIComponent(version)}`;
+  const uploadLatestAlias = await supabase.storage
+    .from('updates')
+    .upload(latestAliasObjectPath, installerFile, {
+      upsert: true,
+      contentType: 'application/vnd.microsoft.portable-executable',
+      cacheControl: 'no-store'
+    });
+
+  if (uploadLatestAlias.error) {
+    throw new Error(`Failed to upload latest installer alias: ${uploadLatestAlias.error.message}`);
+  }
+
+  const versionedInstallerUrl = supabase.storage.from('updates').getPublicUrl(installerObjectPath).data.publicUrl;
+  const latestAliasInstallerUrl = supabase.storage.from('updates').getPublicUrl(latestAliasObjectPath).data.publicUrl;
 
   const manifest: SupabaseManifest = {
     version,
-    installerUrl,
+    installerUrl: versionedInstallerUrl,
     assetName: installerObjectPath,
+    fallbackInstallerUrls: [latestAliasInstallerUrl],
     windows: {
-      installerUrl,
+      installerUrl: versionedInstallerUrl,
       assetName: installerObjectPath,
-      nsisUrl: installerUrl,
-      nsisAssetName: installerObjectPath
+      nsisUrl: versionedInstallerUrl,
+      nsisAssetName: installerObjectPath,
+      fallbackInstallerUrls: [latestAliasInstallerUrl]
     }
   };
 
@@ -134,7 +151,8 @@ export async function publishSupabaseLauncherUpdate(versionInput: string, instal
   return {
     version,
     installerObjectPath,
+    latestAliasObjectPath,
     latestManifestPath,
-    installerUrl
+    installerUrl: versionedInstallerUrl
   };
 }

@@ -38,7 +38,7 @@ const DEFAULT_LAYOUT: Record<HomeWidgetId, WidgetSlot> = {
 export function Home() {
   const { instances } = useInstances();
   const { authState } = useAuth();
-  const { startDownload, activeDownloads, disableIncompatibleMods } = useDownloader();
+  const { startDownload, activeDownloads, cancelDownload, disableIncompatibleMods } = useDownloader();
 
   const selected = instances[0] || null;
   const download = selected ? activeDownloads[selected.id] : undefined;
@@ -199,10 +199,7 @@ export function Home() {
   useEffect(() => {
     if (!launchingInstanceId) return;
     const current = activeDownloads[launchingInstanceId];
-    if (!current) {
-      setLaunchingInstanceId(null);
-      return;
-    }
+    if (!current) return;
     if (current.status.toLowerCase().startsWith('error:')) {
       const timer = window.setTimeout(() => setLaunchingInstanceId(null), 1200);
       return () => window.clearTimeout(timer);
@@ -313,6 +310,9 @@ export function Home() {
     if (activeDownloads[instance.id] && activeDownloads[instance.id].status !== 'Complete') return;
     setLaunchingInstanceId(instance.id);
     await startDownload(instance, authState);
+    window.setTimeout(() => {
+      setLaunchingInstanceId((current) => (current === instance.id ? null : current));
+    }, 15500);
   };
 
   const widgetMap: Record<HomeWidgetId, ReactNode> = {
@@ -535,6 +535,7 @@ export function Home() {
         title={launchStatus || 'Preparing launch...'}
         description="Bloom is installing files and starting Minecraft."
         progress={launchProgress}
+        onCancel={launchingInstanceId ? () => { void cancelDownload(launchingInstanceId); setLaunchingInstanceId(null); } : undefined}
       />
       <div className="max-w-[1400px] mx-auto min-h-full space-y-4">
         {showWidgetDocker && (

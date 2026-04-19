@@ -1,0 +1,21 @@
+{
+  "version": "1.5.1",
+  "installerUrl": "https://sb.bloomclient.org/storage/v1/object/public/updates/BloomClient-v1.5.1-x64-setup.exe",
+  "assetName": "BloomClient-v1.5.1-x64-setup.exe",
+  "msiUrl": "https://sb.bloomclient.org/storage/v1/object/public/updates/BloomClient-v1.5.1-x64.msi",
+  "msiAssetName": "BloomClient-v1.5.1-x64.msi",
+  "fallbackInstallerUrls": [
+    "https://sb.bloomclient.org/storage/v1/object/public/updates/BloomClient-latest-x64-setup.exe"
+  ],
+  "windows": {
+    "installerUrl": "https://sb.bloomclient.org/storage/v1/object/public/updates/BloomClient-v1.5.1-x64-setup.exe",
+    "assetName": "BloomClient-v1.5.1-x64-setup.exe",
+    "nsisUrl": "https://sb.bloomclient.org/storage/v1/object/public/updates/BloomClient-v1.5.1-x64-setup.exe",
+    "nsisAssetName": "BloomClient-v1.5.1-x64-setup.exe",
+    "msiUrl": "https://sb.bloomclient.org/storage/v1/object/public/updates/BloomClient-v1.5.1-x64.msi",
+    "msiAssetName": "BloomClient-v1.5.1-x64.msi",
+    "fallbackInstallerUrls": [
+      "https://sb.bloomclient.org/storage/v1/object/public/updates/BloomClient-latest-x64-setup.exe"
+    ]
+  }
+}

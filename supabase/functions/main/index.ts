@@ -39,10 +39,12 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 const CURSEFORGE_API_KEY = Deno.env.get("CURSEFORGE_API_KEY") ?? "";
-const TEBEX_CHECKOUT_API_KEY = Deno.env.get("TEBEX_CHECKOUT_API_KEY") ?? "";
-const TEBEX_COMPLETE_URL = Deno.env.get("TEBEX_COMPLETE_URL") ?? "";
-const TEBEX_CANCEL_URL = Deno.env.get("TEBEX_CANCEL_URL") ?? "";
-const TEBEX_WEBHOOK_SECRET = Deno.env.get("TEBEX_WEBHOOK_SECRET") ?? "";
+const MCSETS_ENTERPRISE_BASE_URL = Deno.env.get("MCSETS_ENTERPRISE_BASE_URL") ?? "https://mcsets.com/api/v1/enterprise";
+const MCSETS_ENTERPRISE_LIVE_KEY = Deno.env.get("MCSETS_ENTERPRISE_LIVE_KEY") ?? "";
+const MCSETS_ENTERPRISE_TEST_KEY = Deno.env.get("MCSETS_ENTERPRISE_TEST_KEY") ?? "";
+const MCSETS_SUCCESS_URL = Deno.env.get("MCSETS_SUCCESS_URL") ?? "";
+const MCSETS_CANCEL_URL = Deno.env.get("MCSETS_CANCEL_URL") ?? "";
+const MCSETS_WEBHOOK_SECRET = Deno.env.get("MCSETS_WEBHOOK_SECRET") ?? "";
 
 const DRAFT_BUCKET = Deno.env.get("BLOOM_CAPE_DRAFT_BUCKET") ?? "cape-drafts";
 const PUBLISHED_BUCKET = Deno.env.get("BLOOM_CAPE_PUBLISHED_BUCKET") ?? "cape-published";
@@ -91,6 +93,35 @@ function asInt(value: unknown): number | null {
     if (Number.isFinite(parsed)) return parsed;
   }
   return null;
+}
+
+function asObject(value: unknown): JsonObject | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as JsonObject;
+}
+
+function asObjectFromUnknown(value: unknown): JsonObject | null {
+  const direct = asObject(value);
+  if (direct) return direct;
+  if (typeof value !== "string") return null;
+  try {
+    return asObject(JSON.parse(value));
+  } catch {
+    return null;
+  }
+}
+
+function asUuid(value: unknown): string | null {
+  const raw = asString(value);
+  if (!raw) return null;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw) ? raw : null;
+}
+
+function asStringOrInt(value: unknown): string | null {
+  const fromString = asString(value);
+  if (fromString) return fromString;
+  const fromInt = asInt(value);
+  return fromInt === null ? null : String(fromInt);
 }
 
 function normalizeEmail(value: unknown): string | null {
@@ -988,11 +1019,17 @@ async function handleGifCapeGetManifest(_: Request, capeId: string) {
     .eq("status", "published")
     .maybeSingle();
   if (error) throw new Error(error.message);
-  if (!cape?.manifest_path) throw new Error("manifest_not_found");
+  if (!cape?.manifest_path) {
+    return jsonResponse(404, { ok: false, error: "manifest_not_found" });
+  }
   const { data } = await admin.storage.from(PUBLISHED_BUCKET).createSignedUrl(cape.manifest_path, 60 * 60);
-  if (!data?.signedUrl) throw new Error("manifest_url_failed");
+  if (!data?.signedUrl) {
+    return jsonResponse(404, { ok: false, error: "manifest_url_failed" });
+  }
   const response = await fetch(data.signedUrl);
-  if (!response.ok) throw new Error("manifest_fetch_failed");
+  if (!response.ok) {
+    return jsonResponse(502, { ok: false, error: "manifest_fetch_failed" });
+  }
   const manifest = await response.json();
   return jsonResponse(200, { ok: true, manifest });
 }
@@ -1105,12 +1142,27 @@ async function handleCustomCapeFinalize(request: Request) {
   return jsonResponse(200, { ok: true, result: rows[0] ?? null });
 }
 
-function resolveTebexAuthHeader() {
-  const raw = TEBEX_CHECKOUT_API_KEY.trim();
+function resolveMcsetsApiKey(mode: "test" | "live") {
+  const requested = mode === "test" ? MCSETS_ENTERPRISE_TEST_KEY.trim() : MCSETS_ENTERPRISE_LIVE_KEY.trim();
+  if (requested) return requested;
+  const fallback = mode === "test" ? MCSETS_ENTERPRISE_LIVE_KEY.trim() : MCSETS_ENTERPRISE_TEST_KEY.trim();
+  return fallback || null;
+}
+
+function parseMcsetsSignatureHeader(value: string | null) {
+  const raw = (value ?? "").trim();
   if (!raw) return null;
-  if (raw.toLowerCase().startsWith("basic ")) return raw;
-  if (raw.includes(":")) return `Basic ${btoa(raw)}`;
-  return `Basic ${raw}`;
+  const parts = raw.split(",").map((part) => part.trim());
+  let timestamp: string | null = null;
+  let signature: string | null = null;
+  for (const part of parts) {
+    const [k, v] = part.split("=", 2).map((s) => s.trim());
+    if (!k || !v) continue;
+    if (k === "t") timestamp = v;
+    if (k === "v1") signature = v;
+  }
+  if (!timestamp || !signature) return null;
+  return { timestamp, signature };
 }
 
 function timingSafeEqualHex(a: string, b: string) {
@@ -1142,125 +1194,222 @@ async function hmacSha256Hex(secret: string, payload: string) {
   return [...new Uint8Array(signature)].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-async function handleTebexCreateCheckout(request: Request) {
-  const tebexAuthHeader = resolveTebexAuthHeader();
-  if (!tebexAuthHeader) {
-    return jsonResponse(503, { ok: false, error: "tebex_checkout_api_key_not_configured" });
-  }
-
+async function handleMcsetsCreateCheckout(request: Request) {
   const auth = await requireAuth(request);
   const payload = await readPayload(request);
   const packageSlug = asString(payload.package_slug)?.toLowerCase();
   if (!packageSlug) return jsonResponse(400, { ok: false, error: "package_slug_required" });
 
+  const mode = asString(payload.mode)?.toLowerCase() === "live" ? "live" : "test";
+  const mcsetsApiKey = resolveMcsetsApiKey(mode);
+  if (!mcsetsApiKey) {
+    return jsonResponse(503, { ok: false, error: "mcsets_api_key_not_configured", mode });
+  }
+
   const { data: pack, error: packError } = await admin
     .from("commerce_currency_packs")
-    .select("slug,name,is_active,tebex_package_id")
+    .select("slug,name,price_usd,is_active,mcsets_price_id")
     .eq("slug", packageSlug)
     .maybeSingle();
   if (packError) return jsonResponse(500, { ok: false, error: "pack_lookup_failed", message: packError.message });
   if (!pack || !pack.is_active) return jsonResponse(404, { ok: false, error: "package_not_found" });
-  const tebexPackageId = asString((pack as { tebex_package_id?: string | null }).tebex_package_id ?? null);
-  if (!tebexPackageId) return jsonResponse(400, { ok: false, error: "tebex_package_not_configured_for_package" });
+
+  const priceUsd = Number((pack as { price_usd?: number | string | null }).price_usd ?? Number.NaN);
+  if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
+    return jsonResponse(400, { ok: false, error: "package_price_invalid" });
+  }
+  const amountCents = Math.max(100, Math.round(priceUsd * 100));
 
   const { data: userRes, error: userError } = await admin.auth.admin.getUserById(auth.userId);
   if (userError) return jsonResponse(500, { ok: false, error: "user_lookup_failed", message: userError.message });
   const userEmail = normalizeEmail(userRes.user?.email ?? null);
+  const { data: profileRow, error: profileError } = await admin
+    .from("commerce_profiles")
+    .select("username,mc_uuid")
+    .eq("user_id", auth.userId)
+    .maybeSingle();
+  if (profileError) console.error("MCSETS_PROFILE_LOOKUP_FAIL", profileError.message);
+  const profileObj = (profileRow ?? {}) as { username?: string | null; mc_uuid?: string | null };
+  const mcUsername = asString(profileObj.username ?? null);
+  const mcUuid = asString(profileObj.mc_uuid ?? null);
+  const mcsetsPriceId = asString((pack as { mcsets_price_id?: string | null }).mcsets_price_id ?? null);
 
-  const checkoutBody = {
-    complete_url: normalizeUrl(TEBEX_COMPLETE_URL) ?? undefined,
-    cancel_url: normalizeUrl(TEBEX_CANCEL_URL) ?? undefined,
-    complete_auto_redirect: true,
-    email: userEmail ?? undefined,
-    custom: {
+  const successUrl = normalizeUrl(MCSETS_SUCCESS_URL) ?? "https://example.com/bloom/checkout/success?session={SESSION_ID}";
+  const cancelUrl = normalizeUrl(MCSETS_CANCEL_URL) ?? "https://example.com/bloom/checkout/cancel";
+  const apiBase = MCSETS_ENTERPRISE_BASE_URL.replace(/\/+$/, "");
+  const endpoint = `${apiBase}/checkout/sessions`;
+
+  const requestBody: JsonObject = {
+    amount: amountCents,
+    currency: "USD",
+    name: String((pack as { name?: string | null }).name ?? packageSlug),
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    customer_email: userEmail ?? undefined,
+    metadata: {
       user_id: auth.userId,
       package_slug: packageSlug,
+      mc_username: mcUsername ?? undefined,
+      mc_uuid: mcUuid ?? undefined,
+      mcsets_price_id: mcsetsPriceId ?? undefined,
+      mode,
+      source: "bloom_client",
     },
-    items: [
-      {
-        package: {
-          id: tebexPackageId,
-        },
-        quantity: 1,
-      },
-    ],
   };
 
-  const response = await fetch("https://checkout.tebex.io/api/checkout", {
+  // Keep amount/currency/name for compatibility with MCsets checkout session validation.
+  // We still pass mcsets_price_id in metadata so the webhook can map packages reliably.
+
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: {
-      Authorization: tebexAuthHeader,
+      Authorization: `Bearer ${mcsetsApiKey}`,
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: JSON.stringify(checkoutBody),
+    body: JSON.stringify(requestBody),
   });
 
-  const tebexPayload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    return jsonResponse(response.status, {
+  const mcsetsPayload = await response.json().catch(() => ({}));
+  if (!response.ok || !(mcsetsPayload as { success?: boolean }).success) {
+    const payloadObj = (mcsetsPayload ?? {}) as Record<string, unknown>;
+    const message =
+      asString(payloadObj.message) ??
+      asString((payloadObj.error as Record<string, unknown> | null)?.toString?.()) ??
+      "mcsets_checkout_create_failed";
+    return jsonResponse(response.status >= 400 ? response.status : 500, {
       ok: false,
-      error: "tebex_checkout_create_failed",
-      tebex: tebexPayload,
+      error: "mcsets_checkout_create_failed",
+      message,
+      mode,
+      mcsets: mcsetsPayload,
     });
   }
 
-  const payloadObj = tebexPayload as Record<string, unknown>;
-  const ident = asString(payloadObj.ident);
-  const links = (payloadObj.links ?? {}) as Record<string, unknown>;
-  const checkoutUrl = asString(links.checkout);
+  const dataObj = asObject((mcsetsPayload as Record<string, unknown>).data) ?? {};
+  const sessionId = asString(dataObj.session_id);
+  const checkoutUrl = asString(dataObj.checkout_url);
+  const expiresAt = asString(dataObj.expires_at);
 
   return jsonResponse(200, {
     ok: true,
-    ident,
-    checkout_url: checkoutUrl,
+    mode,
     package_slug: packageSlug,
+    session_id: sessionId,
+    checkout_url: checkoutUrl,
+    expires_at: expiresAt,
   });
 }
 
-async function handleTebexWebhook(request: Request) {
+async function handleMcsetsWebhook(request: Request) {
   const rawBody = await request.text();
   let payload: JsonObject = {};
   try {
     payload = (JSON.parse(rawBody || "{}") as JsonObject) ?? {};
   } catch {
-    const params = new URLSearchParams(rawBody);
-    const nested = params.get("data");
-    if (nested) {
-      try {
-        payload = JSON.parse(nested) as JsonObject;
-      } catch {
-        payload = Object.fromEntries(params.entries());
-      }
-    } else {
-      payload = Object.fromEntries(params.entries());
-    }
+    return jsonResponse(400, { ok: false, error: "invalid_json_payload" });
   }
+
   const eventType = asString(payload.type) ?? "";
+  const eventId = asString(payload.id);
+  if (!eventId) return jsonResponse(400, { ok: false, error: "mcsets_event_id_missing" });
 
-  // Tebex webhook validation challenge.
-  if (eventType === "validation.webhook") {
-    const eventId = asString(payload.id);
-    if (!eventId) return jsonResponse(400, { ok: false, error: "tebex_validation_id_missing" });
-    return jsonResponse(200, { id: eventId });
-  }
-
-  const signatureHeader =
-    request.headers.get("x-signature") ??
-    request.headers.get("X-Signature") ??
-    request.headers.get("x-tebex-signature");
-
-  if (TEBEX_WEBHOOK_SECRET.trim()) {
-    if (!signatureHeader) return jsonResponse(401, { ok: false, error: "tebex_signature_missing" });
-    const contentHash = await sha256Hex(rawBody);
-    const expected = await hmacSha256Hex(TEBEX_WEBHOOK_SECRET.trim(), contentHash);
-    if (!timingSafeEqualHex(signatureHeader, expected)) {
-      return jsonResponse(401, { ok: false, error: "tebex_signature_invalid" });
+  if (MCSETS_WEBHOOK_SECRET.trim()) {
+    const signatureHeader = request.headers.get("X-MCsets-Signature");
+    const parsed = parseMcsetsSignatureHeader(signatureHeader);
+    if (!parsed) return jsonResponse(401, { ok: false, error: "mcsets_signature_invalid_format" });
+    const now = Math.floor(Date.now() / 1000);
+    const ts = Number.parseInt(parsed.timestamp, 10);
+    if (!Number.isFinite(ts) || Math.abs(now - ts) > 300) {
+      return jsonResponse(401, { ok: false, error: "mcsets_signature_timestamp_out_of_range" });
+    }
+    const signedPayload = `${parsed.timestamp}.${rawBody}`;
+    const expected = await hmacSha256Hex(MCSETS_WEBHOOK_SECRET.trim(), signedPayload);
+    if (!timingSafeEqualHex(expected, parsed.signature)) {
+      return jsonResponse(401, { ok: false, error: "mcsets_signature_invalid" });
     }
   }
 
-  // TODO: add payment crediting flow for payment.completed using your wallet ledger pipeline.
-  return jsonResponse(200, { ok: true, received: true, type: eventType || null });
+  if (eventType !== "checkout.session.completed") {
+    return jsonResponse(200, { ok: true, received: true, ignored: true, type: eventType || null });
+  }
+
+  const dataObj = asObject(payload.data) ?? {};
+  const sessionObj = asObject(dataObj.object) ?? {};
+  const sessionId = asString(sessionObj.session_id) ?? asString(sessionObj.id);
+  if (!sessionId) return jsonResponse(400, { ok: false, error: "mcsets_session_id_missing" });
+  const metadataObj = asObject(sessionObj.metadata) ?? {};
+  const packageSlug = asString(metadataObj.package_slug) ?? asString(sessionObj.package_slug);
+  const mcsetsPriceId = asString(metadataObj.mcsets_price_id) ?? asString(sessionObj.price_id);
+  const customerEmail = normalizeEmail(sessionObj.customer_email);
+
+  let userId =
+    asUuid(metadataObj.user_id) ??
+    asUuid(sessionObj.user_id);
+
+  const webhookMcUuid =
+    asString(metadataObj.mc_uuid) ??
+    asString(sessionObj.mc_uuid);
+  const webhookMcUsername =
+    asString(metadataObj.mc_username) ??
+    asString(sessionObj.mc_username);
+
+  if (!userId && webhookMcUuid) {
+    const { data: profileByUuid, error: profileByUuidError } = await admin
+      .from("commerce_profiles")
+      .select("user_id")
+      .eq("mc_uuid", webhookMcUuid)
+      .maybeSingle();
+    if (!profileByUuidError) {
+      userId = asUuid((profileByUuid as { user_id?: string | null } | null)?.user_id ?? null);
+    }
+  }
+  if (!userId && webhookMcUsername) {
+    const { data: profileByUsername, error: profileByUsernameError } = await admin
+      .from("commerce_profiles")
+      .select("user_id")
+      .ilike("username", webhookMcUsername)
+      .maybeSingle();
+    if (!profileByUsernameError) {
+      userId = asUuid((profileByUsername as { user_id?: string | null } | null)?.user_id ?? null);
+    }
+  }
+
+  const { data, error } = await admin.rpc("commerce_process_mcsets_payment_event", {
+    p_mcsets_event_id: eventId,
+    p_mcsets_session_id: sessionId,
+    p_email: customerEmail,
+    p_package_slug: packageSlug,
+    p_mcsets_price_id: mcsetsPriceId,
+    p_user_id: userId,
+    p_payload: payload,
+  });
+
+  if (error) {
+    console.error("MCSETS_WEBHOOK_CREDIT_FAIL", error.message, JSON.stringify({ eventId, eventType, sessionId }));
+    return jsonResponse(500, {
+      ok: false,
+      error: "mcsets_crediting_failed",
+      message: error.message,
+      event_id: eventId,
+      type: eventType,
+    });
+  }
+
+  const resultRow = Array.isArray(data) ? asObject(data[0]) : asObject(data);
+  return jsonResponse(200, {
+    ok: true,
+    received: true,
+    type: eventType,
+    event_id: eventId,
+    session_id: sessionId,
+    processed_status: asString(resultRow?.processed_status ?? null),
+    matched_user_id: asString(resultRow?.matched_user_id ?? null),
+    credited_amount_bb: asInt(resultRow?.credited_amount_bb ?? null) ?? 0,
+    balance_bb: asInt(resultRow?.balance_bb ?? null),
+    mcsets_event_row_id: asString(resultRow?.mcsets_event_row_id ?? null),
+    note: asString(resultRow?.note ?? null),
+  });
 }
 
 Deno.serve(async (request) => {
@@ -1287,8 +1436,8 @@ Deno.serve(async (request) => {
     if (request.method === "GET" && route === "/custom-cape/draft/latest") return handleCustomCapeDraftLatest(request);
     if (request.method === "POST" && route === "/custom-cape/draft") return handleCustomCapeDraft(request);
     if (request.method === "POST" && route === "/custom-cape/finalize") return handleCustomCapeFinalize(request);
-    if (request.method === "POST" && route === "/tebex/create-checkout") return handleTebexCreateCheckout(request);
-    if (request.method === "POST" && route === "/tebex/webhook") return handleTebexWebhook(request);
+    if (request.method === "POST" && route === "/mcsets/create-checkout") return handleMcsetsCreateCheckout(request);
+    if (request.method === "POST" && route === "/mcsets/webhook") return handleMcsetsWebhook(request);
 
 
     if (request.method === "GET" && route === "/curseforge/categories") {

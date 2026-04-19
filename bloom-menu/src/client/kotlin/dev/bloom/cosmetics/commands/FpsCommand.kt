@@ -13,6 +13,7 @@ import net.minecraft.client.option.GameOptions
 import net.minecraft.client.option.GraphicsMode
 import net.minecraft.particle.ParticlesMode
 import net.minecraft.client.render.ChunkBuilderMode
+import net.minecraft.sound.SoundCategory
 import net.minecraft.text.Text
 
 object FpsCommand {
@@ -123,6 +124,24 @@ object FpsCommand {
             vsync = false,
             bobView = false,
             chunkBuilderMode = ChunkBuilderMode.NONE
+        ),
+        OVERDRIVE_PLUS(
+            id = "overdrive+",
+            summary = "Nuclear preset: extreme visuals cut + non-essential audio muted.",
+            viewDistance = 2,
+            simulationDistance = 2,
+            entityDistanceScale = 0.35,
+            maxFps = 260,
+            particles = ParticlesMode.MINIMAL,
+            clouds = CloudRenderMode.OFF,
+            graphics = GraphicsMode.FAST,
+            mipmapLevels = 0,
+            biomeBlendRadius = 0,
+            ambientOcclusion = false,
+            entityShadows = false,
+            vsync = false,
+            bobView = false,
+            chunkBuilderMode = ChunkBuilderMode.NONE
         );
 
         companion object {
@@ -179,6 +198,14 @@ object FpsCommand {
         options.getEnableVsync().setValue(tier.vsync)
         options.getBobView().setValue(tier.bobView)
         options.getChunkBuilderMode().setValue(tier.chunkBuilderMode)
+
+        if (tier == Tier.OVERDRIVE || tier == Tier.OVERDRIVE_PLUS) {
+            applyOverdriveExtras(options)
+        }
+        if (tier == Tier.OVERDRIVE_PLUS) {
+            applyOverdrivePlusAudio(options)
+        }
+
         options.write()
         options.sendClientSettings()
 
@@ -187,6 +214,42 @@ object FpsCommand {
             client,
             "Applied /fps ${tier.id}: view ${tier.viewDistance}, sim ${tier.simulationDistance}, particles ${tier.particles.name.lowercase()}, clouds ${tier.clouds.name.lowercase()}."
         )
+    }
+
+    private fun applyOverdriveExtras(options: GameOptions) {
+        // Extra aggressive pass: push additional visual/FX settings down for max FPS bias.
+        options.getCloudRenderDistance().setValue(4)
+        options.getWeatherRadius().setValue(0)
+        options.getCutoutLeaves().setValue(false)
+        options.getVignette().setValue(false)
+        options.getImprovedTransparency().setValue(false)
+        options.getChunkFade().setValue(0.0)
+        options.getMenuBackgroundBlurriness().setValue(0)
+        options.getPanoramaSpeed().setValue(0.0)
+        options.getMaxAnisotropy().setValue(1)
+        options.getDistortionEffectScale().setValue(0.0)
+        options.getFovEffectScale().setValue(0.0)
+        options.getDarknessEffectScale().setValue(0.0)
+        options.getGlintSpeed().setValue(0.0)
+        options.getGlintStrength().setValue(0.0)
+        options.getDamageTiltStrength().setValue(0.0)
+        options.getShowSubtitles().setValue(false)
+        options.getDirectionalAudio().setValue(false)
+        options.getShowAutosaveIndicator().setValue(false)
+        options.getHideLightningFlashes().setValue(true)
+        options.getHideSplashTexts().setValue(true)
+        options.getMonochromeLogo().setValue(true)
+    }
+
+    private fun applyOverdrivePlusAudio(options: GameOptions) {
+        options.getSoundVolumeOption(SoundCategory.MUSIC).setValue(0.0)
+        options.getSoundVolumeOption(SoundCategory.WEATHER).setValue(0.0)
+        options.getSoundVolumeOption(SoundCategory.BLOCKS).setValue(0.0)
+        options.getSoundVolumeOption(SoundCategory.HOSTILE).setValue(0.0)
+        options.getSoundVolumeOption(SoundCategory.NEUTRAL).setValue(0.0)
+        options.getSoundVolumeOption(SoundCategory.PLAYERS).setValue(0.0)
+        options.getSoundVolumeOption(SoundCategory.AMBIENT).setValue(0.0)
+        options.getSoundVolumeOption(SoundCategory.VOICE).setValue(0.0)
     }
 
     private fun sendMessage(client: MinecraftClient, message: String) {

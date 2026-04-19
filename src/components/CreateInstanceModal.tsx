@@ -278,11 +278,12 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
   }, [releases, showSnapshots, snapshots]);
   const fabricOptions = useMemo<DropdownOption<string>[]>(() => {
     if (fabricLoading) return [{ value: '', label: 'Loading loaders...', hint: 'Fetching Fabric metadata' }];
-    if (fabricVersions.length === 0) return [{ value: '', label: 'No loader versions found', hint: 'Try another game version' }];
-    return fabricVersions.map((entry) => ({
+    const stableOnly = fabricVersions.filter((entry) => entry.loader.stable);
+    if (stableOnly.length === 0) return [{ value: '', label: 'No stable loader found', hint: 'Try another game version' }];
+    return stableOnly.map((entry) => ({
       value: entry.loader.version,
       label: entry.loader.version,
-      hint: entry.loader.stable ? 'Stable loader' : 'Preview loader'
+      hint: 'Stable loader'
     }));
   }, [fabricLoading, fabricVersions]);
   const resetAll = () => {
@@ -381,12 +382,20 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
     setLoading(true);
     setError(null);
     try {
+      const resolvedFabricVersion =
+        loader === 'fabric'
+          ? (latestStable || fabricVersions.find((entry) => entry.loader.stable)?.loader.version || '')
+          : undefined;
+      if (loader === 'fabric' && !resolvedFabricVersion) {
+        throw new Error('No stable Fabric loader is available for this Minecraft version.');
+      }
       setLoadingLabel('Creating base instance...');
       const created: Instance = {
         id: crypto.randomUUID(),
         name: name.trim(),
         mcVersion,
         loader,
+        renderer: 'opengl',
         createdAt: Date.now(),
         updatedAt: Date.now(),
         iconDataUrl,
@@ -396,7 +405,7 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
         java: {},
         memoryMb: 4096,
         jvmArgs: [],
-        fabricLoaderVersion: loader === 'fabric' ? fabricVersion : undefined,
+        fabricLoaderVersion: resolvedFabricVersion,
         resolution: { width: 854, height: 480, fullscreen: false }
       };
       await onSubmit(created);

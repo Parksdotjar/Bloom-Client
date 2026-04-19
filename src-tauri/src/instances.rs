@@ -23,6 +23,8 @@ pub struct Instance {
     pub name: String,
     pub mc_version: String,
     pub loader: String, // "vanilla" | "fabric"
+    #[serde(default = "default_instance_renderer")]
+    pub renderer: String, // "opengl" | "vulkan"
     pub fabric_loader_version: Option<String>,
     pub icon_data_url: Option<String>,
     pub cover_data_url: Option<String>,
@@ -151,6 +153,10 @@ pub struct MarketplacePack {
     pub downloads: u64,
     pub available_versions: Vec<String>,
     pub supported_loaders: Vec<String>,
+}
+
+fn default_instance_renderer() -> String {
+    "opengl".to_string()
 }
 
 #[derive(Serialize)]
@@ -336,6 +342,7 @@ fn build_default_instance(
         name,
         mc_version,
         loader,
+        renderer: default_instance_renderer(),
         fabric_loader_version: None,
         icon_data_url: None,
         cover_data_url: None,

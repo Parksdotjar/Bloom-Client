@@ -1,0 +1,94 @@
+{
+  "providers": [
+    {
+      "type": "bitmap",
+      "file": "bloomcosmetics:font/bloom_badge.png",
+      "ascent": 8,
+      "height": 10,
+      "chars": [
+        "\uE000"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "bloomcosmetics:font/partner_badge.png",
+      "ascent": 8,
+      "height": 10,
+      "chars": [
+        "\uE001"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "bloomcosmetics:font/owner_badge.png",
+      "ascent": 8,
+      "height": 10,
+      "chars": [
+        "\uE002"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "bloomcosmetics:font/manager_badge.png",
+      "ascent": 8,
+      "height": 10,
+      "chars": [
+        "\uE003"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "bloomcosmetics:font/partner_red_badge.png",
+      "ascent": 8,
+      "height": 10,
+      "chars": [
+        "\uE004"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "bloomcosmetics:font/partner_red_glow_badge.png",
+      "ascent": 8,
+      "height": 10,
+      "chars": [
+        "\uE005"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "bloomcosmetics:font/staff_gold_badge.png",
+      "ascent": 8,
+      "height": 10,
+      "chars": [
+        "\uE006"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "bloomcosmetics:font/staff_gold_glow_badge.png",
+      "ascent": 8,
+      "height": 10,
+      "chars": [
+        "\uE007"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "bloomcosmetics:font/owner_pink_badge.png",
+      "ascent": 8,
+      "height": 10,
+      "chars": [
+        "\uE008"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "bloomcosmetics:font/owner_pink_glow_badge.png",
+      "ascent": 8,
+      "height": 10,
+      "chars": [
+        "\uE009"
+      ]
+    }
+  ]
+}

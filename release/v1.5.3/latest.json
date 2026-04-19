@@ -1,0 +1,21 @@
+{
+  "version": "1.5.3",
+  "installerUrl": "https://sb.bloomclient.org/storage/v1/object/public/updates/Bloom%20Client_1.5.3_x64-setup.exe",
+  "assetName": "Bloom Client_1.5.3_x64-setup.exe",
+  "msiUrl": "https://sb.bloomclient.org/storage/v1/object/public/updates/Bloom%20Client_1.5.3_x64_en-US.msi",
+  "msiAssetName": "Bloom Client_1.5.3_x64_en-US.msi",
+  "fallbackInstallerUrls": [
+    "https://sb.bloomclient.org/storage/v1/object/public/updates/Bloom%20Client_latest_x64-setup.exe"
+  ],
+  "windows": {
+    "installerUrl": "https://sb.bloomclient.org/storage/v1/object/public/updates/Bloom%20Client_1.5.3_x64-setup.exe",
+    "assetName": "Bloom Client_1.5.3_x64-setup.exe",
+    "nsisUrl": "https://sb.bloomclient.org/storage/v1/object/public/updates/Bloom%20Client_1.5.3_x64-setup.exe",
+    "nsisAssetName": "Bloom Client_1.5.3_x64-setup.exe",
+    "msiUrl": "https://sb.bloomclient.org/storage/v1/object/public/updates/Bloom%20Client_1.5.3_x64_en-US.msi",
+    "msiAssetName": "Bloom Client_1.5.3_x64_en-US.msi",
+    "fallbackInstallerUrls": [
+      "https://sb.bloomclient.org/storage/v1/object/public/updates/Bloom%20Client_latest_x64-setup.exe"
+    ]
+  }
+}

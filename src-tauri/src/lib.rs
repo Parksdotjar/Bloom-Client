@@ -8,6 +8,7 @@ mod external_updater;
 mod fabric;
 mod instances;
 mod launcher;
+mod minecraft_prefs;
 mod mojang;
 mod paths;
 mod servers;
@@ -92,7 +93,10 @@ pub fn run() {
             auth::auth_pull_skin_by_username,
             mojang::mc_versions_list,
             downloader::instance_install,
+            downloader::instance_install_cancel,
             launcher::instance_launch,
+            minecraft_prefs::minecraft_preferences_get,
+            minecraft_prefs::minecraft_preferences_set,
             fabric::fabric_versions_list,
             external_updater::external_update_check,
             external_updater::external_update_install,

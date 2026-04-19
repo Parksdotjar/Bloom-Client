@@ -96,6 +96,7 @@ fn detect_java_requirement_from_log(log_text: &str) -> Option<u32> {
     None
 }
 
+#[allow(dead_code)]
 fn detect_required_java_major(mods_dir: &std::path::Path) -> Result<Option<u32>, String> {
     use std::fs;
     use std::io::Read;
@@ -155,6 +156,27 @@ fn detect_required_java_major(mods_dir: &std::path::Path) -> Result<Option<u32>,
     }
 
     Ok(required_major)
+}
+
+fn read_required_java_major_from_mod_jar(path: &std::path::Path) -> Option<u32> {
+    use std::fs;
+    use std::io::Read;
+    use zip::ZipArchive;
+
+    let file = fs::File::open(path).ok()?;
+    let mut archive = ZipArchive::new(file).ok()?;
+    let mut manifest = archive.by_name("fabric.mod.json").ok()?;
+
+    let mut manifest_str = String::new();
+    manifest.read_to_string(&mut manifest_str).ok()?;
+
+    let manifest_json: serde_json::Value = serde_json::from_str(&manifest_str).ok()?;
+    let requirement = manifest_json
+        .get("depends")
+        .and_then(|deps| deps.get("java"))
+        .and_then(|value| value.as_str())?;
+
+    parse_java_requirement(requirement)
 }
 
 fn discover_windows_java_binaries() -> Vec<String> {
@@ -494,11 +516,12 @@ fn build_java_launch_candidates(requested: &str, required_major: Option<u32>) ->
 #[tauri::command]
 pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(), String> {
     use crate::bloom_bridge::{ensure_launcher_bridge, LaunchBridgeBootstrap};
-    use crate::bloom_mod::ensure_bloom_cosmetics_mod;
+    use crate::bloom_mod::ensure_bloom_injected_mods;
     use crate::paths::{paths_get, AppPaths};
     use std::collections::HashMap;
     use std::fs;
-    use std::io::{self, Write};
+    use std::hash::{Hash, Hasher};
+    use std::io::{self, Read, Write};
     use std::process::{Command, Stdio};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use zip::ZipArchive;
@@ -511,16 +534,26 @@ pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(),
         .join(&config.instance_id)
         .join("instance.json");
     let instance_data = fs::read_to_string(&instance_path).map_err(|e| e.to_string())?;
-    let instance_json: serde_json::Value =
+    let mut instance_json: serde_json::Value =
         serde_json::from_str(&instance_data).map_err(|e| e.to_string())?;
 
     let mc_version = instance_json["mcVersion"]
         .as_str()
-        .ok_or("Missing mcVersion")?;
-    let loader_type = instance_json["loader"].as_str().unwrap_or("vanilla");
+        .ok_or("Missing mcVersion")?
+        .to_string();
+    let loader_type = instance_json["loader"]
+        .as_str()
+        .unwrap_or("vanilla")
+        .to_string();
+    let requested_renderer = instance_json
+        .get("renderer")
+        .and_then(|value| value.as_str())
+        .unwrap_or("opengl")
+        .to_string();
     let instance_dir = paths.instances.join(&config.instance_id);
 
-    ensure_bloom_cosmetics_mod(&instance_dir, loader_type, mc_version)?;
+    ensure_bloom_injected_mods(&instance_dir, &loader_type, &mc_version, &requested_renderer)
+        .await?;
 
     let bridge_runtime = ensure_launcher_bridge(LaunchBridgeBootstrap {
         minecraft_uuid: config.uuid.clone(),
@@ -532,6 +565,7 @@ pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(),
     // Guard against broken mod files that would crash Fabric with ZipException.
     if loader_type == "fabric" {
         let mods_dir = instance_dir.join("mods");
+        let mut scanned_mods_required_java_major: Option<u32> = None;
         if mods_dir.exists() {
             let mut invalid_mods: Vec<String> = Vec::new();
             let mut installed_mod_jars: Vec<String> = Vec::new();
@@ -560,9 +594,21 @@ pub async fn instance_launch(app: AppHandle, config: LaunchConfig) -> Result<(),
                     continue;
                 }
 
-                let bytes = fs::read(&path).map_err(|e| e.to_string())?;
-                if bytes.len() < 4 || bytes[0] != 0x50 || bytes[1] != 0x4B {
+                let mut file = fs::File::open(&path).map_err(|e| e.to_string())?;
+                let mut signature = [0u8; 4];
+                if file.read_exact(&mut signature).is_err()
+                    || signature[0] != 0x50
+                    || signature[1] != 0x4B
+                {
                     invalid_mods.push(file_name);
+                    continue;
+                }
+
+                if let Some(required_major) = read_required_java_major_from_mod_jar(&path) {
+                    scanned_mods_required_java_major = Some(
+                        scanned_mods_required_java_major
+                            .map_or(required_major, |current| current.max(required_major)),
+                    );
                 }
             }
 
@@ -641,13 +687,16 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                 );
             }
         }
+
+        instance_json["detectedModsRequiredJavaMajor"] =
+            serde_json::Value::from(scanned_mods_required_java_major.unwrap_or(0));
     }
 
     // 2. Read Version JSON
     let version_json_path = paths
         .cache
         .join("versions")
-        .join(mc_version)
+        .join(&mc_version)
         .join(format!("{}.json", mc_version));
     let v_json_str = fs::read_to_string(&version_json_path).map_err(|e| e.to_string())?;
     let v_data: serde_json::Value = serde_json::from_str(&v_json_str).map_err(|e| e.to_string())?;
@@ -720,7 +769,7 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     let client_jar = paths
         .runtimes
         .join("versions")
-        .join(mc_version)
+        .join(&mc_version)
         .join(format!("{}.jar", mc_version));
     cp_entries.push(client_jar.to_string_lossy().to_string());
 
@@ -827,43 +876,6 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     // 4. Setup natives
     let natives_root_dir = paths.instances.join(&config.instance_id).join("natives");
     fs::create_dir_all(&natives_root_dir).map_err(|e| e.to_string())?;
-
-    // Use a fresh natives directory per launch so Windows DLL locks from prior runs
-    // do not block the next launch.
-    let launch_nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_else(|_| Duration::from_secs(0))
-        .as_millis();
-    let natives_dir = natives_root_dir.join(format!("launch-{}", launch_nonce));
-    fs::create_dir_all(&natives_dir).map_err(|e| e.to_string())?;
-
-    let stale_cutoff = Duration::from_secs(60 * 60 * 24);
-    if let Ok(entries) = fs::read_dir(&natives_root_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
-                continue;
-            };
-            if !name.starts_with("launch-") || path == natives_dir {
-                continue;
-            }
-
-            let is_stale = entry
-                .metadata()
-                .ok()
-                .and_then(|metadata| metadata.modified().ok())
-                .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-                .map(|age| age >= stale_cutoff)
-                .unwrap_or(false);
-
-            if is_stale {
-                let _ = fs::remove_dir_all(&path);
-            }
-        }
-    }
 
     // Extract Windows native libraries (LWJGL/OpenAL/etc.) from native classifier jars.
     let mut native_jars: Vec<(std::path::PathBuf, Option<String>)> = Vec::new();
@@ -979,72 +991,141 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
         }
     }
 
-    for (native_jar, native_url) in native_jars {
-        if !native_jar.exists() {
-            if let Some(url) = native_url {
-                let response = reqwest::get(&url)
-                    .await
-                    .map_err(|e| format!("Failed to download native jar {}: {}", url, e))?;
-                if !response.status().is_success() {
-                    return Err(format!(
-                        "Failed to download native jar {} (HTTP {})",
-                        url,
-                        response.status()
-                    ));
+    let native_http_client = reqwest::Client::builder()
+        .user_agent("BloomClient/1.5.3")
+        .pool_idle_timeout(Duration::from_secs(30))
+        .pool_max_idle_per_host(16)
+        .tcp_nodelay(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    for (native_jar, native_url) in &native_jars {
+        if native_jar.exists() {
+            continue;
+        }
+        let Some(url) = native_url.clone() else {
+            continue;
+        };
+        let response = native_http_client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to download native jar {}: {}", url, e))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "Failed to download native jar {} (HTTP {})",
+                url,
+                response.status()
+            ));
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed reading native jar bytes {}: {}", url, e))?;
+        if let Some(parent) = native_jar.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::write(native_jar, bytes)
+            .map_err(|e| format!("Failed to write native jar {}: {}", native_jar.display(), e))?;
+    }
+
+    let mut natives_hasher = std::collections::hash_map::DefaultHasher::new();
+    for (native_jar, _) in &native_jars {
+        native_jar.to_string_lossy().hash(&mut natives_hasher);
+        if let Ok(metadata) = fs::metadata(native_jar) {
+            metadata.len().hash(&mut natives_hasher);
+            if let Ok(modified) = metadata.modified() {
+                if let Ok(duration) = modified.duration_since(UNIX_EPOCH) {
+                    duration.as_secs().hash(&mut natives_hasher);
+                    duration.subsec_nanos().hash(&mut natives_hasher);
                 }
-                let bytes = response
-                    .bytes()
-                    .await
-                    .map_err(|e| format!("Failed reading native jar bytes {}: {}", url, e))?;
-                if let Some(parent) = native_jar.parent() {
-                    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                }
-                fs::write(&native_jar, bytes).map_err(|e| {
-                    format!("Failed to write native jar {}: {}", native_jar.display(), e)
-                })?;
-            } else {
-                continue;
             }
         }
-        let file = fs::File::open(&native_jar)
-            .map_err(|e| format!("Failed to open native jar {}: {}", native_jar.display(), e))?;
-        let mut archive = ZipArchive::new(file)
-            .map_err(|e| format!("Invalid native jar {}: {}", native_jar.display(), e))?;
+    }
 
-        for i in 0..archive.len() {
-            let mut entry = archive.by_index(i).map_err(|e| {
-                format!(
-                    "Failed reading native jar entry {}: {}",
-                    native_jar.display(),
-                    e
-                )
-            })?;
-            let name = entry.name().replace('\\', "/");
-            if entry.is_dir() || name.starts_with("META-INF/") {
+    let natives_dir = natives_root_dir.join(format!("cache-{:016x}", natives_hasher.finish()));
+    let natives_complete_marker = natives_dir.join(".complete");
+    let needs_native_extract =
+        !natives_complete_marker.exists() || !natives_dir.join("lwjgl.dll").exists();
+
+    if needs_native_extract {
+        if natives_dir.exists() {
+            let _ = fs::remove_dir_all(&natives_dir);
+        }
+        fs::create_dir_all(&natives_dir).map_err(|e| e.to_string())?;
+
+        for (native_jar, _) in &native_jars {
+            let file = fs::File::open(native_jar)
+                .map_err(|e| format!("Failed to open native jar {}: {}", native_jar.display(), e))?;
+            let mut archive = ZipArchive::new(file)
+                .map_err(|e| format!("Invalid native jar {}: {}", native_jar.display(), e))?;
+
+            for i in 0..archive.len() {
+                let mut entry = archive.by_index(i).map_err(|e| {
+                    format!(
+                        "Failed reading native jar entry {}: {}",
+                        native_jar.display(),
+                        e
+                    )
+                })?;
+                let name = entry.name().replace('\\', "/");
+                if entry.is_dir() || name.starts_with("META-INF/") {
+                    continue;
+                }
+                if !name.to_ascii_lowercase().ends_with(".dll") {
+                    continue;
+                }
+
+                let file_name = match std::path::Path::new(&name)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                {
+                    Some(n) => n,
+                    None => continue,
+                };
+                let out_path = natives_dir.join(file_name);
+                let mut out_file = fs::File::create(&out_path).map_err(|e| {
+                    format!("Failed writing native file {}: {}", out_path.display(), e)
+                })?;
+                io::copy(&mut entry, &mut out_file).map_err(|e| {
+                    format!(
+                        "Failed extracting native file {}: {}",
+                        out_path.display(),
+                        e
+                    )
+                })?;
+                out_file.flush().map_err(|e| e.to_string())?;
+            }
+        }
+
+        fs::write(&natives_complete_marker, b"ok").map_err(|e| e.to_string())?;
+    }
+
+    let stale_cutoff = Duration::from_secs(60 * 60 * 24 * 7);
+    if let Ok(entries) = fs::read_dir(&natives_root_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() || path == natives_dir {
                 continue;
             }
-            if !name.to_ascii_lowercase().ends_with(".dll") {
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
                 continue;
-            }
-
-            let file_name = match std::path::Path::new(&name)
-                .file_name()
-                .and_then(|n| n.to_str())
-            {
-                Some(n) => n,
-                None => continue,
             };
-            let out_path = natives_dir.join(file_name);
-            let mut out_file = fs::File::create(&out_path)
-                .map_err(|e| format!("Failed writing native file {}: {}", out_path.display(), e))?;
-            io::copy(&mut entry, &mut out_file).map_err(|e| {
-                format!(
-                    "Failed extracting native file {}: {}",
-                    out_path.display(),
-                    e
-                )
-            })?;
-            out_file.flush().map_err(|e| e.to_string())?;
+            if !name.starts_with("cache-") {
+                continue;
+            }
+
+            let is_stale = entry
+                .metadata()
+                .ok()
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+                .map(|age| age >= stale_cutoff)
+                .unwrap_or(false);
+
+            if is_stale {
+                let _ = fs::remove_dir_all(&path);
+            }
         }
     }
 
@@ -1083,7 +1164,7 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     args.push("--username".to_string());
     args.push(config.username.clone());
     args.push("--version".to_string());
-    args.push(mc_version.to_string());
+    args.push(mc_version.clone());
     args.push("--gameDir".to_string());
     args.push(instance_dir.to_string_lossy().to_string());
     args.push("--assetsDir".to_string());
@@ -1109,7 +1190,10 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
 
     let working_dir = instance_dir;
     let mods_required_java_major = if loader_type == "fabric" {
-        detect_required_java_major(&working_dir.join("mods"))?
+        instance_json
+            .get("detectedModsRequiredJavaMajor")
+            .and_then(|value| value.as_u64())
+            .and_then(|value| if value == 0 { None } else { Some(value as u32) })
     } else {
         None
     };
@@ -1212,6 +1296,93 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     for _ in 0..25 {
         match child.try_wait() {
             Ok(Some(status)) => {
+                let using_vulkan = instance_json
+                    .get("renderer")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|value| value.eq_ignore_ascii_case("vulkan"));
+                if using_vulkan {
+                    instance_json["renderer"] = serde_json::Value::from("opengl");
+                    fs::write(
+                        &instance_path,
+                        serde_json::to_string_pretty(&instance_json).map_err(|e| e.to_string())?,
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                    ensure_bloom_injected_mods(&working_dir, &loader_type, &mc_version, "opengl")
+                        .await?;
+
+                    let mut fallback_last_err: Option<String> = None;
+                    let mut fallback_child: Option<std::process::Child> = None;
+                    for candidate in build_java_launch_candidates(&config.java_path, required_java_major) {
+                        let stdout_handle = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&launch_log)
+                            .map_err(|e| {
+                                format!(
+                                    "Failed to open launch log file {}: {}",
+                                    launch_log.display(),
+                                    e
+                                )
+                            })?;
+                        let stderr_handle = stdout_handle
+                            .try_clone()
+                            .map_err(|e| format!("Failed to clone launch log handle: {}", e))?;
+                        let mut fallback_command = Command::new(&candidate);
+                        fallback_command
+                            .args(&args)
+                            .env("BLOOM_BRIDGE_HOST", &bridge_runtime.host)
+                            .env("BLOOM_BRIDGE_PORT", bridge_runtime.port.to_string())
+                            .env("BLOOM_BRIDGE_TOKEN", &bridge_runtime.token)
+                            .stdout(Stdio::from(stdout_handle))
+                            .stderr(Stdio::from(stderr_handle))
+                            .current_dir(&working_dir);
+                        #[cfg(target_os = "windows")]
+                        {
+                            use std::os::windows::process::CommandExt;
+                            fallback_command.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+                        }
+
+                        match fallback_command.spawn() {
+                            Ok(spawned) => {
+                                fallback_child = Some(spawned);
+                                break;
+                            }
+                            Err(err) => {
+                                fallback_last_err = Some(format!("{} => {}", candidate, err));
+                            }
+                        }
+                    }
+
+                    let mut fallback_child = fallback_child.ok_or_else(|| {
+                        format!(
+                            "Vulkan failed and OpenGL fallback also failed to start. Last error: {}",
+                            fallback_last_err.unwrap_or_else(|| "unknown".to_string())
+                        )
+                    })?;
+
+                    for _ in 0..25 {
+                        match fallback_child.try_wait() {
+                            Ok(Some(fallback_status)) => {
+                                return Err(format!(
+                                    "Vulkan launch failed and OpenGL fallback also exited immediately (status: {}). Check launch log: {}",
+                                    fallback_status,
+                                    launch_log.display()
+                                ));
+                            }
+                            Ok(None) => return Ok(()),
+                            Err(e) => {
+                                return Err(format!(
+                                    "Failed while monitoring OpenGL fallback process: {}",
+                                    e
+                                ))
+                            }
+                        }
+                    }
+
+                    return Ok(());
+                }
+
                 if let Ok(log_text) = fs::read_to_string(&launch_log) {
                     if let Some(required_major) = detect_java_requirement_from_log(&log_text) {
                         return Err(format!(

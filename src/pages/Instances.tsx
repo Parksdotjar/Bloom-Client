@@ -14,7 +14,7 @@ export function Instances() {
   const navigate = useNavigate();
   const location = useLocation();
   const { instances, loading, error, loadInstances, deleteInstance, createInstance } = useInstances();
-  const { startDownload, activeDownloads, disableIncompatibleMods } = useDownloader();
+  const { startDownload, activeDownloads, cancelDownload, disableIncompatibleMods } = useDownloader();
   const { authState } = useAuth();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [launchingInstanceId, setLaunchingInstanceId] = useState<string | null>(null);
@@ -184,6 +184,7 @@ export function Instances() {
         title={launchStatus || 'Preparing launch...'}
         description="Bloom is installing files and starting Minecraft."
         progress={launchProgress}
+        onCancel={launchingInstanceId ? () => { void cancelDownload(launchingInstanceId); setLaunchingInstanceId(null); } : undefined}
       />
       <PageWidgets pageKey="instances" widgets={widgets} />
       <CreateInstanceModal

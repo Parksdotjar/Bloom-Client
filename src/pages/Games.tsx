@@ -65,6 +65,13 @@ const GRAVITY = 0.34;
 const FLAP_V = -7.1;
 
 const WHITEBOARD_COLORS = ['#ffffff', '#fdba74', '#fb7185', '#facc15', '#4ade80', '#38bdf8', '#c084fc', '#0f172a'];
+const CLICKER_COST_MULT = 120;
+const CLICKER_INCOME_MULT = 0.03;
+const CLICKER_OFFLINE_EFFICIENCY = 0.03;
+const CLICKER_PASSIVE_TICK_MS = 1000;
+const CLICKER_BURST_BASE = 1.12;
+const CLICKER_BURST_RITUAL_BONUS = 0.08;
+const CLICKER_BURST_FESTIVAL_BONUS = 0.03;
 
 const UPGRADES: UpgradeDef[] = [
   { id: 'petal_tap', name: 'Petal Tap', desc: '+1 click', cat: 'hand', base: 15, growth: 1.15, click: 1, unlock: 0 },
@@ -72,6 +79,7 @@ const UPGRADES: UpgradeDef[] = [
   { id: 'thorn_stylus', name: 'Thorn Stylus', desc: 'Click x1.20', cat: 'hand', base: 420, growth: 1.18, clickMult: 1.2 },
   { id: 'scent_focus', name: 'Scent Focus', desc: '+1.5% crit chance', cat: 'hand', base: 1200, growth: 1.19, crit: 0.015 },
   { id: 'ruby_pruners', name: 'Ruby Pruners', desc: '+22 click', cat: 'hand', base: 5300, growth: 1.19, click: 22 },
+  { id: 'obsidian_thimble', name: 'Obsidian Thimble', desc: 'Click x1.14', cat: 'hand', base: 21000, growth: 1.2, clickMult: 1.14 },
 
   { id: 'window_planter', name: 'Window Planter', desc: '+0.7 cps', cat: 'garden', base: 25, growth: 1.16, cps: 0.7, unlock: 0 },
   { id: 'patio_greenbeds', name: 'Patio Greenbeds', desc: '+2.4 cps', cat: 'garden', base: 120, growth: 1.17, cps: 2.4 },
@@ -85,6 +93,7 @@ const UPGRADES: UpgradeDef[] = [
   { id: 'seed_drones', name: 'Seed Drones', desc: '+2,900 cps', cat: 'automation', base: 370000, growth: 1.2, cps: 2900 },
   { id: 'petal_printers', name: 'Petal Printers', desc: 'CPS scales with click', cat: 'automation', base: 980000, growth: 1.21, special: 'cpsFromClick', strength: 0.36 },
   { id: 'robot_florists', name: 'Robot Florists', desc: '+7,600 cps', cat: 'automation', base: 2800000, growth: 1.21, cps: 7600 },
+  { id: 'nectar_refinery', name: 'Nectar Refinery', desc: '+13,500 cps', cat: 'automation', base: 8800000, growth: 1.22, cps: 13500 },
 
   { id: 'moonlit_dew', name: 'Moonlit Dew', desc: 'Click x1.34', cat: 'arcane', base: 19000, growth: 1.2, clickMult: 1.34 },
   { id: 'sunbeam_prisms', name: 'Sunbeam Prisms', desc: 'CPS x1.22', cat: 'arcane', base: 64000, growth: 1.2, cpsMult: 1.22 },
@@ -151,7 +160,7 @@ function createFlappyRuntime(): FlappyRuntime {
   return { birdY: FLAPPY_H * 0.45, birdVelocity: 0, pipes: [createPipe(FLAPPY_W + 64)], score: 0, status: 'idle', lastTs: 0 };
 }
 
-function upgradeCost(def: UpgradeDef, owned: number) { return Math.floor(def.base * Math.pow(def.growth, owned)); }
+function upgradeCost(def: UpgradeDef, owned: number) { return Math.floor(def.base * CLICKER_COST_MULT * Math.pow(def.growth, owned)); }
 
 function defaultClicker(now = Date.now()): ClickerState {
   return { petals: 0, total: 0, clicks: 0, owned: {}, burstUntil: 0, burstCooldownUntil: 0, lastTick: now };
@@ -200,11 +209,11 @@ function computeClickerStats(state: ClickerState): ClickerStats {
   const ritualLevel = state.owned.sunshower_ritual ?? 0;
   const festivalLevel = state.owned.aurora_festival ?? 0;
   return {
-    click: Math.max(1, clickAfter + bonusClick),
-    cps: Math.max(0, cpsAfter + bonusCps),
+    click: Math.max(1, (clickAfter + bonusClick) * CLICKER_INCOME_MULT),
+    cps: Math.max(0, (cpsAfter + bonusCps) * CLICKER_INCOME_MULT),
     critChance: clamp(critChance, 0, 0.85),
     critMult: Math.max(1.5, critMult),
-    burstMult: 1.65 + ritualLevel * 0.32 + festivalLevel * 0.08,
+    burstMult: CLICKER_BURST_BASE + ritualLevel * CLICKER_BURST_RITUAL_BONUS + festivalLevel * CLICKER_BURST_FESTIVAL_BONUS,
     ownedTotal,
     pollinators
   };
@@ -234,7 +243,7 @@ function loadClicker(): ClickerState {
     const offlineSec = clamp((now - restored.lastTick) / 1000, 0, 8 * 3600);
     if (offlineSec > 2) {
       const stats = computeClickerStats(restored);
-      const gain = stats.cps * offlineSec * 0.65;
+      const gain = stats.cps * offlineSec * CLICKER_OFFLINE_EFFICIENCY;
       restored.petals += gain;
       restored.total += gain;
     }
@@ -447,8 +456,8 @@ export function Games() {
       if (level <= 0) return prev;
       const time = Date.now();
       if (time < prev.burstUntil || time < prev.burstCooldownUntil) return prev;
-      const duration = 16 + level * 4;
-      const cooldown = Math.max(34, 86 - level * 6);
+      const duration = 8 + level * 2;
+      const cooldown = Math.max(80, 170 - level * 8);
       return { ...prev, burstUntil: time + duration * 1000, burstCooldownUntil: time + cooldown * 1000, lastTick: time };
     });
   }, []);
@@ -481,7 +490,7 @@ export function Games() {
         if (gain <= 0) return { ...prev, lastTick: time };
         return { ...prev, petals: prev.petals + gain, total: prev.total + gain, lastTick: time };
       });
-    }, 200);
+    }, CLICKER_PASSIVE_TICK_MS);
     return () => window.clearInterval(timer);
   }, []);
 

@@ -8,6 +8,7 @@ import {
   publishSpriteCapeProject,
   uploadSpriteCapeFrame
 } from '../../services/animatedSpriteCape';
+import { createCapeListing, type CommerceRole } from '../../services/cosmetics';
 import { CUSTOM_CAPE_EXPORT_PRESETS, loadImageElementFromUrl } from '../../services/customCapeAtlas';
 import { resolveMinecraftCapeTemplate } from '../../services/minecraftCapeLayout';
 
@@ -25,6 +26,10 @@ function getResolutionLabel(width: number) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function clampCapeName(value: string) {
+  return value.slice(0, 28);
 }
 
 function getOriginBaseUrl() {
@@ -124,9 +129,10 @@ type AnimatedSpriteSheetStudioProps = {
   playerUuid: string | null;
   playerName: string;
   playerSkinUrl?: string | null;
+  commerceRole?: CommerceRole;
 };
 
-export function AnimatedSpriteSheetStudio({ playerUuid, playerName, playerSkinUrl }: AnimatedSpriteSheetStudioProps) {
+export function AnimatedSpriteSheetStudio({ playerUuid, playerName, playerSkinUrl, commerceRole = 'user' }: AnimatedSpriteSheetStudioProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [capeName, setCapeName] = useState('Animated Sprite Cape');
@@ -146,6 +152,12 @@ export function AnimatedSpriteSheetStudio({ playerUuid, playerName, playerSkinUr
   const [error, setError] = useState<string | null>(null);
   const [publishedCapeId, setPublishedCapeId] = useState<string | null>(null);
   const [livePreviewTextureUrl, setLivePreviewTextureUrl] = useState<string>('');
+  const [ownerListingSlug, setOwnerListingSlug] = useState('');
+  const [ownerListingName, setOwnerListingName] = useState('Animated Sprite Cape');
+  const [ownerListingPrice, setOwnerListingPrice] = useState<number>(2000);
+  const [ownerListingDescription, setOwnerListingDescription] = useState('');
+  const [ownerListingTextureUrl, setOwnerListingTextureUrl] = useState('');
+  const [publishingToShop, setPublishingToShop] = useState(false);
 
   const frameHeight = useMemo(() => Math.floor(frameWidth / 2), [frameWidth]);
 
@@ -222,6 +234,12 @@ export function AnimatedSpriteSheetStudio({ playerUuid, playerName, playerSkinUr
 
   const activePreviewTextureUrl = publishedCapeId ? publishedTextureUrl : livePreviewTextureUrl;
 
+  useEffect(() => {
+    if (publishedTextureUrl) {
+      setOwnerListingTextureUrl(publishedTextureUrl);
+    }
+  }, [publishedTextureUrl]);
+
   const handleSelectSheet = async (file: File) => {
     if (!ACCEPTED_SHEET_TYPES.includes(file.type)) {
       setError('Only PNG/WEBP sprite sheets are allowed.');
@@ -290,6 +308,44 @@ export function AnimatedSpriteSheetStudio({ playerUuid, playerName, playerSkinUr
       setProgress('');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleOwnerPublishToShop = async () => {
+    if (commerceRole !== 'owner') {
+      setError('owner_role_required');
+      return;
+    }
+    const slug = ownerListingSlug.trim().toLowerCase();
+    const name = ownerListingName.trim();
+    const textureUrl = ownerListingTextureUrl.trim();
+    if (!slug || !name || !textureUrl) {
+      setError('Owner listing requires slug, name, and a texture URL.');
+      return;
+    }
+    setPublishingToShop(true);
+    setError(null);
+    try {
+      const created = await createCapeListing({
+        slug,
+        name,
+        description: ownerListingDescription.trim() || null,
+        texture_url: textureUrl,
+        preview_url: publishedCapeId
+          ? `${getOriginBaseUrl()}/functions/v1/main/gif-cape/capes/${publishedCapeId}/manifest`
+          : textureUrl,
+        price_bb: ownerListingPrice,
+        rarity: 'custom',
+        rarity_label: 'CUSTOM',
+        sort_order: 9999,
+        is_active: true,
+        is_featured: false
+      });
+      setStatus(`Uploaded to shop: ${created.name} (${created.slug})`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPublishingToShop(false);
     }
   };
 
@@ -424,6 +480,65 @@ export function AnimatedSpriteSheetStudio({ playerUuid, playerName, playerSkinUr
           <Upload size={14} />
           {busy ? 'Publishing...' : `Publish + Equip (${PUBLISH_PRICE_BB.toLocaleString()} BB)`}
         </button>
+
+        {commerceRole === 'owner' && (
+          <div className="mt-3 rounded-xl border border-white/15 bg-black/35 p-3">
+            <div className="inline-flex items-center rounded-xl border border-white/15 bg-white/[0.03] p-1 mb-2">
+              <button
+                type="button"
+                className="h-8 rounded-lg px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] border border-white/25 bg-white/[0.12] text-white"
+              >
+                Listing
+              </button>
+            </div>
+            <p className="text-[10px] uppercase tracking-[0.12em] font-black text-white/50">Owner Upload To Shop (Animated)</p>
+            <div className="mt-2 space-y-2">
+              <input
+                value={ownerListingSlug}
+                onChange={(event) => setOwnerListingSlug(event.target.value)}
+                placeholder="slug"
+                className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-xs font-bold text-white"
+              />
+              <input
+                value={ownerListingName}
+                onChange={(event) => setOwnerListingName(clampCapeName(event.target.value))}
+                placeholder="name"
+                maxLength={28}
+                className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-xs font-bold text-white"
+              />
+              <input
+                type="number"
+                min={0}
+                value={ownerListingPrice}
+                onChange={(event) => setOwnerListingPrice(Math.max(0, Number(event.target.value) || 0))}
+                placeholder="price_bb"
+                className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-xs font-bold text-white"
+              />
+              <textarea
+                value={ownerListingDescription}
+                onChange={(event) => setOwnerListingDescription(event.target.value)}
+                placeholder="description (optional)"
+                rows={2}
+                className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-xs font-bold text-white resize-y"
+              />
+              <input
+                value={ownerListingTextureUrl}
+                onChange={(event) => setOwnerListingTextureUrl(event.target.value)}
+                placeholder="texture_url (auto from latest animated publish)"
+                className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-[11px] text-white/90"
+              />
+              <button
+                onClick={() => {
+                  void handleOwnerPublishToShop();
+                }}
+                disabled={publishingToShop}
+                className="h-9 w-full rounded-lg border border-white/25 bg-white/[0.12] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white hover:bg-white/[0.18] disabled:opacity-50"
+              >
+                {publishingToShop ? 'Uploading...' : 'Upload To Shop'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {progress && <p className="mt-2 text-xs font-bold text-white/70">{progress}</p>}
         {status && <p className="mt-2 text-xs font-bold text-emerald-300">{status}</p>}

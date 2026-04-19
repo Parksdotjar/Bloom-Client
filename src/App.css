@@ -1003,12 +1003,13 @@ html[data-card-style='outline'] {
     background: var(--g-accent);
   }
 
-  .g-input {
-    border: 1px solid var(--g-border);
-    border-radius: calc(12px * var(--g-roundness-mult));
-    background: var(--g-soft);
-    color: var(--g-text);
-  }
+.g-input {
+  width: 100%;
+  border: 1px solid var(--g-border);
+  border-radius: calc(12px * var(--g-roundness-mult));
+  background: var(--g-soft);
+  color: var(--g-text);
+}
 
   .g-input::placeholder {
     color: color-mix(in srgb, var(--g-text) 55%, transparent);

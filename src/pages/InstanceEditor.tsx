@@ -119,7 +119,7 @@ export function InstanceEditor() {
 
   const { instances, updateInstance, loading, loadInstances, getInstance } = useInstances();
   const { authState } = useAuth();
-  const { startDownload, activeDownloads } = useDownloader();
+  const { startDownload, activeDownloads, cancelDownload } = useDownloader();
 
   const instance = useMemo(() => {
     if (!instanceId) return null;
@@ -142,6 +142,7 @@ export function InstanceEditor() {
   const [fabricLoaderVersion, setFabricLoaderVersion] = useState('');
   const [javaRuntime, setJavaRuntime] = useState<'system' | 'java17' | 'custom'>('system');
   const [javaPathOverride, setJavaPathOverride] = useState('');
+  const [renderer, setRenderer] = useState<'opengl' | 'vulkan'>('opengl');
   const [iconDataUrl, setIconDataUrl] = useState<string | undefined>(undefined);
   const [coverDataUrl, setCoverDataUrl] = useState<string | undefined>(undefined);
   const [instanceMediaLoaded, setInstanceMediaLoaded] = useState(false);
@@ -200,6 +201,7 @@ export function InstanceEditor() {
   const [transferOptions, setTransferOptions] = useState<InstanceTransferOptions>(DEFAULT_INSTANCE_TRANSFER_OPTIONS);
   const [transferSourceMenuOpen, setTransferSourceMenuOpen] = useState(false);
   const [fabricLoaderMenuOpen, setFabricLoaderMenuOpen] = useState(false);
+  const [fabricLoaderSaving, setFabricLoaderSaving] = useState(false);
   const { versions: fabricVersions, loading: fabricVersionsLoading, latestStable: latestFabricStable } = useFabric(
     instance?.mcVersion ?? '',
     instance?.loader === 'fabric'
@@ -227,6 +229,7 @@ export function InstanceEditor() {
       else if (instance.java?.pathOverride) setJavaRuntime('custom');
       else setJavaRuntime('system');
       setJavaPathOverride(instance.java?.pathOverride || '');
+      setRenderer((instance.renderer === 'vulkan' && instance.loader === 'fabric') ? 'vulkan' : 'opengl');
       setColorTag(instance.colorTag || '#9a65ff');
       setIconFrame(instance.iconFrame || 'rounded');
       setModsView('installed');
@@ -248,6 +251,7 @@ export function InstanceEditor() {
 
   useEffect(() => {
     if (!instance || instance.loader !== 'fabric') return;
+    if (instance.fabricLoaderVersion) return;
     if (!fabricLoaderVersion && latestFabricStable) {
       setFabricLoaderVersion(latestFabricStable);
     }
@@ -395,6 +399,7 @@ export function InstanceEditor() {
           pathOverride: javaRuntime === 'custom' ? (javaPathOverride.trim() || undefined) : (javaRuntime === 'java17' ? 'java17' : undefined),
           runtime: javaRuntime === 'system' ? undefined : javaRuntime
         },
+        renderer: instance.loader === 'fabric' ? renderer : 'opengl',
         fabricLoaderVersion:
           instance.loader === 'fabric'
             ? (fabricLoaderVersion.trim() || latestFabricStable || instance.fabricLoaderVersion || 'latest')
@@ -406,9 +411,33 @@ export function InstanceEditor() {
         updatedAt: Date.now()
       });
       setStatusMessage('Instance settings saved.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Failed to save instance settings: ${message}`);
     } finally {
       setSaving(false);
       setBlockingTitle(null);
+    }
+  };
+
+  const saveFabricLoaderVersion = async (nextVersion: string) => {
+    if (!instance || instance.loader !== 'fabric') return;
+    const resolvedVersion = nextVersion.trim() || latestFabricStable || instance.fabricLoaderVersion || 'latest';
+    setFabricLoaderVersion(resolvedVersion);
+    setFabricLoaderSaving(true);
+    try {
+      await updateInstance(instance.id, {
+        ...instance,
+        fabricLoaderVersion: resolvedVersion,
+        updatedAt: Date.now()
+      });
+      setStatusMessage(`Fabric loader version saved: ${resolvedVersion}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Failed to save Fabric loader version: ${message}`);
+      setFabricLoaderVersion(instance.fabricLoaderVersion || '');
+    } finally {
+      setFabricLoaderSaving(false);
     }
   };
 
@@ -1443,6 +1472,7 @@ export function InstanceEditor() {
         title={blockingTitle || launchStatus || 'Working...'}
         description={launchStatus ? 'Bloom is installing files and starting Minecraft.' : blockingTitle?.toLowerCase().includes('export') ? 'Bloom is building your portable .bloom archive.' : blockingTitle?.toLowerCase().includes('import') ? 'Bloom is copying the selected instance files into this profile.' : 'Bloom is applying changes to this instance.'}
         progress={launchStatus ? launchProgress : null}
+        onCancel={launchingInstanceId && !blockingTitle ? () => { void cancelDownload(launchingInstanceId); setLaunchingInstanceId(null); } : undefined}
       />
       {transferPanelOpen && (
         <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/65 px-4">
@@ -1892,7 +1922,7 @@ export function InstanceEditor() {
                         <button
                           type="button"
                           onClick={() => setFabricLoaderMenuOpen((open) => !open)}
-                          disabled={fabricVersionsLoading || fabricVersions.length === 0}
+                          disabled={fabricLoaderSaving || fabricVersionsLoading || fabricVersions.length === 0}
                           className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-left text-sm font-semibold text-slate-900 dark:text-white focus:outline-none disabled:opacity-60 inline-flex items-center justify-between gap-3"
                         >
                           <span className="truncate">
@@ -1913,7 +1943,7 @@ export function InstanceEditor() {
                                     key={entry.loader.version}
                                     type="button"
                                     onClick={() => {
-                                      setFabricLoaderVersion(entry.loader.version);
+                                      void saveFabricLoaderVersion(entry.loader.version);
                                       setFabricLoaderMenuOpen(false);
                                     }}
                                     className={[
@@ -1938,6 +1968,28 @@ export function InstanceEditor() {
                   )}
 
                   <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-xl border border-slate-300/80 dark:border-white/12 p-4 bg-white/70 dark:bg-white/[0.02]">
+                      <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Renderer</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          onClick={() => setRenderer('opengl')}
+                          className={['rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase', renderer === 'opengl' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5'].join(' ')}
+                        >
+                          OpenGL
+                        </button>
+                        <button
+                          onClick={() => setRenderer('vulkan')}
+                          disabled={instance.loader !== 'fabric'}
+                          className={['rounded-xl border px-3 py-2 text-xs font-black tracking-[0.14em] uppercase', renderer === 'vulkan' ? 'g-btn-accent' : 'border-slate-300 dark:border-white/15 bg-white dark:bg-white/5', instance.loader !== 'fabric' ? 'opacity-50 cursor-not-allowed' : ''].join(' ')}
+                        >
+                          Vulkan (Experimental)
+                        </button>
+                      </div>
+                      <p className="mt-2 text-xs text-slate-500 dark:text-white/52">
+                        Opt-in per instance. Vulkan auto-falls back to OpenGL if launch fails.
+                      </p>
+                    </div>
+
                     <div className="rounded-xl border border-slate-300/80 dark:border-white/12 p-4 bg-white/70 dark:bg-white/[0.02]">
                       <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Memory (MB)</label>
                       <input type="range" min={1024} max={16384} step={1024} value={memoryMb} onChange={(event) => setMemoryMb(Number(event.target.value))} className="w-full g-range" />

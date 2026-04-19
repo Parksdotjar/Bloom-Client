@@ -17,6 +17,7 @@ use tokio::sync::{broadcast, RwLock};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::protocol::Message as TungsteniteMessage;
 use uuid::Uuid;
+use crate::minecraft_prefs::read_preferences_from_disk;
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 18340;
@@ -93,6 +94,9 @@ struct BridgeCapeAssetPayload {
 struct BridgeEquippedCapePayload {
     minecraft_uuid: String,
     equipped_at: Option<String>,
+    role: Option<String>,
+    custom_badge_key: Option<String>,
+    badge_key: Option<String>,
     cape: Option<BridgeCapeAssetPayload>,
 }
 
@@ -106,12 +110,29 @@ struct BridgeLiveEventPayload {
     reason: Option<String>,
 }
 
+#[derive(Serialize, Clone)]
+struct BridgeClientPreferencesPayload {
+    show_bloom_nametag_logo: bool,
+    show_bloom_tab_logo: bool,
+    show_bloom_chat_logo: bool,
+    bloom_logo_side: String,
+}
+
 #[derive(Deserialize)]
 struct SupabaseRow {
     mc_uuid: Option<String>,
     equipped_cape_id: Option<String>,
     cape_slug: Option<String>,
     texture_url: Option<String>,
+    updated_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SupabaseBadgeIdentityRow {
+    mc_uuid: Option<String>,
+    role: Option<String>,
+    custom_badge_key: Option<String>,
+    badge_key: Option<String>,
     updated_at: Option<String>,
 }
 
@@ -143,6 +164,7 @@ pub async fn ensure_launcher_bridge(
 
     let router = Router::new()
         .route("/v1/session", get(handle_session))
+        .route("/v1/client/preferences", get(handle_client_preferences))
         .route("/v1/cosmetics/equipped", get(handle_local_equipped))
         .route("/v1/players/{uuid}/cape", get(handle_player_cape))
         .route("/v1/live", get(handle_live))
@@ -196,6 +218,19 @@ async fn handle_local_equipped(
         .ok()
         .flatten();
     Ok(Json(payload))
+}
+
+async fn handle_client_preferences(
+    headers: HeaderMap,
+) -> Result<Json<BridgeClientPreferencesPayload>, StatusCode> {
+    authorize(&headers, None)?;
+    let prefs = read_preferences_from_disk();
+    Ok(Json(BridgeClientPreferencesPayload {
+        show_bloom_nametag_logo: prefs.show_bloom_nametag_logo,
+        show_bloom_tab_logo: prefs.show_bloom_tab_logo,
+        show_bloom_chat_logo: prefs.show_bloom_chat_logo,
+        bloom_logo_side: prefs.bloom_logo_side,
+    }))
 }
 
 async fn handle_player_cape(
@@ -332,17 +367,20 @@ async fn run_supabase_realtime_once(shared: Arc<BridgeSharedState>) -> Result<()
                                         Ok(None) => {
                                             let normalized = normalize_uuid(&player_uuid);
                                             if !normalized.is_empty() {
-                                                let _ = shared.tx.send(BridgeLiveEventPayload {
-                                                    event_type: "player_cape_changed".to_string(),
-                                                    minecraft_uuid: Some(normalized.clone()),
-                                                    equipped: Some(BridgeEquippedCapePayload {
-                                                        minecraft_uuid: normalized,
-                                                        equipped_at: None,
-                                                        cape: None,
-                                                    }),
-                                                    players: None,
-                                                    reason: Some("unequipped".to_string()),
-                                                });
+                    let _ = shared.tx.send(BridgeLiveEventPayload {
+                                                event_type: "player_cape_changed".to_string(),
+                                                minecraft_uuid: Some(normalized.clone()),
+                                                equipped: Some(BridgeEquippedCapePayload {
+                                                    minecraft_uuid: normalized,
+                                                    equipped_at: None,
+                                                    role: None,
+                                                    custom_badge_key: None,
+                                                    badge_key: None,
+                                                    cape: None,
+                                                }),
+                                                players: None,
+                                                reason: Some("unequipped".to_string()),
+                                            });
                                             }
                                         }
                                         Err(error) => {
@@ -401,6 +439,9 @@ async fn run_local_cape_watch(shared: Arc<BridgeSharedState>) {
                             equipped: Some(BridgeEquippedCapePayload {
                                 minecraft_uuid: session.minecraft_uuid.clone(),
                                 equipped_at: None,
+                                role: None,
+                                custom_badge_key: None,
+                                badge_key: None,
                                 cape: None,
                             }),
                             players: None,
@@ -526,6 +567,8 @@ impl SupabaseBridgeClient {
             return Ok(None);
         }
 
+        let identity = self.fetch_badge_identity_by_player_uuid(&normalized).await?;
+
         let dashed = dashed_uuid(&normalized);
         let filter_value = format!("(player_uuid.eq.{dashed},player_uuid.eq.{normalized})");
         let filter = urlencoding::encode(&filter_value);
@@ -552,26 +595,62 @@ impl SupabaseBridgeClient {
             .json::<Vec<Value>>()
             .await
             .map_err(|e| e.to_string())?;
-        let Some(row) = rows.into_iter().next() else {
+        let maybe_row = rows.into_iter().next();
+        if maybe_row.is_none() && identity.is_none() {
             return Ok(None);
+        }
+        let row = maybe_row.unwrap_or(Value::Null);
+        let identity_uuid = identity
+            .as_ref()
+            .and_then(|row| row.mc_uuid.as_deref())
+            .map(normalize_uuid)
+            .filter(|value| !value.is_empty());
+        let row_uuid = if row.is_null() {
+            identity_uuid.unwrap_or_else(|| normalized.clone())
+        } else {
+            json_string_any(&row, &["player_uuid", "minecraft_uuid", "mc_uuid"])
+                .map(|value| normalize_uuid(&value))
+                .filter(|value| !value.is_empty())
+                .or(identity_uuid)
+                .unwrap_or_else(|| normalized.clone())
         };
-
-        let row_uuid = json_string_any(&row, &["player_uuid", "minecraft_uuid", "mc_uuid"])
-            .map(|value| normalize_uuid(&value))
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| normalized.clone());
+        let role = identity
+            .as_ref()
+            .and_then(|item| item.role.clone())
+            .and_then(|value| {
+                let trimmed = value.trim().to_string();
+                (!trimmed.is_empty()).then_some(trimmed)
+            });
+        let custom_badge_key = identity
+            .as_ref()
+            .and_then(|item| item.custom_badge_key.clone())
+            .and_then(|value| {
+                let trimmed = value.trim().to_string();
+                (!trimmed.is_empty()).then_some(trimmed)
+            });
+        let badge_key = identity
+            .as_ref()
+            .and_then(|item| item.badge_key.clone())
+            .and_then(|value| {
+                let trimmed = value.trim().to_string();
+                (!trimmed.is_empty()).then_some(trimmed)
+            });
 
         let texture_url = json_string_any(&row, &["signed_url", "texture_url", "cape_url", "asset_url"])
             .unwrap_or_default();
         let asset_id = json_string_any(&row, &["equipped_cape_id", "cosmetic_asset_id", "cape_id"])
             .unwrap_or_default();
         let slug = json_string_any(&row, &["cape_slug", "slug"]).unwrap_or_else(|| "cape".to_string());
-        let updated_at = json_string_any(&row, &["equipped_updated_at", "updated_at", "asset_updated_at"]);
+        let updated_at = json_string_any(&row, &["equipped_updated_at", "updated_at", "asset_updated_at"])
+            .or_else(|| identity.as_ref().and_then(|item| item.updated_at.clone()));
 
         if texture_url.trim().is_empty() || asset_id.trim().is_empty() {
             return Ok(Some(BridgeEquippedCapePayload {
                 minecraft_uuid: row_uuid,
                 equipped_at: updated_at,
+                role,
+                custom_badge_key,
+                badge_key,
                 cape: None,
             }));
         }
@@ -584,6 +663,9 @@ impl SupabaseBridgeClient {
         Ok(Some(BridgeEquippedCapePayload {
             minecraft_uuid: row_uuid,
             equipped_at: updated_at.clone(),
+            role,
+            custom_badge_key,
+            badge_key,
             cape: Some(BridgeCapeAssetPayload {
                 asset_id,
                 texture_url: texture_url.trim().to_string(),
@@ -603,6 +685,7 @@ impl SupabaseBridgeClient {
         if normalized.is_empty() {
             return Ok(None);
         }
+        let identity = self.fetch_badge_identity_by_player_uuid(&normalized).await?;
         let dashed = dashed_uuid(&normalized);
         let select = urlencoding::encode("mc_uuid,equipped_cape_id,cape_slug,texture_url,updated_at");
         let filter_value = format!("(mc_uuid.eq.{dashed},mc_uuid.eq.{normalized})");
@@ -630,8 +713,45 @@ impl SupabaseBridgeClient {
             .json::<Vec<SupabaseRow>>()
             .await
             .map_err(|e| e.to_string())?;
-        let Some(row) = rows.into_iter().next() else {
+        let maybe_row = rows.into_iter().next();
+        if maybe_row.is_none() && identity.is_none() {
             return Ok(None);
+        }
+        let role = identity
+            .as_ref()
+            .and_then(|item| item.role.clone())
+            .and_then(|value| {
+                let trimmed = value.trim().to_string();
+                (!trimmed.is_empty()).then_some(trimmed)
+            });
+        let custom_badge_key = identity
+            .as_ref()
+            .and_then(|item| item.custom_badge_key.clone())
+            .and_then(|value| {
+                let trimmed = value.trim().to_string();
+                (!trimmed.is_empty()).then_some(trimmed)
+            });
+        let badge_key = identity
+            .as_ref()
+            .and_then(|item| item.badge_key.clone())
+            .and_then(|value| {
+                let trimmed = value.trim().to_string();
+                (!trimmed.is_empty()).then_some(trimmed)
+            });
+        let Some(row) = maybe_row else {
+            return Ok(Some(BridgeEquippedCapePayload {
+                minecraft_uuid: identity
+                    .as_ref()
+                    .and_then(|item| item.mc_uuid.as_deref())
+                    .map(normalize_uuid)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(normalized),
+                equipped_at: identity.as_ref().and_then(|item| item.updated_at.clone()),
+                role,
+                custom_badge_key,
+                badge_key,
+                cape: None,
+            }));
         };
 
         let row_uuid = normalize_uuid(row.mc_uuid.as_deref().unwrap_or(&normalized));
@@ -644,6 +764,9 @@ impl SupabaseBridgeClient {
             return Ok(Some(BridgeEquippedCapePayload {
                 minecraft_uuid: row_uuid,
                 equipped_at,
+                role,
+                custom_badge_key,
+                badge_key,
                 cape: None,
             }));
         }
@@ -657,6 +780,9 @@ impl SupabaseBridgeClient {
         Ok(Some(BridgeEquippedCapePayload {
             minecraft_uuid: row_uuid,
             equipped_at,
+            role,
+            custom_badge_key,
+            badge_key,
             cape: Some(BridgeCapeAssetPayload {
                 asset_id: equipped_cape_id,
                 texture_url,
@@ -666,6 +792,44 @@ impl SupabaseBridgeClient {
                 updated_at,
             }),
         }))
+    }
+
+    async fn fetch_badge_identity_by_player_uuid(
+        &self,
+        player_uuid: &str,
+    ) -> Result<Option<SupabaseBadgeIdentityRow>, String> {
+        let normalized = normalize_uuid(player_uuid);
+        if normalized.is_empty() {
+            return Ok(None);
+        }
+        let dashed = dashed_uuid(&normalized);
+        let select = urlencoding::encode("mc_uuid,role,custom_badge_key,badge_key,updated_at");
+        let filter_value = format!("(mc_uuid.eq.{dashed},mc_uuid.eq.{normalized})");
+        let filter = urlencoding::encode(&filter_value);
+        let url = format!(
+            "{}/bloom_player_identity_public?select={}&or={}&limit=1",
+            self.rest_base_url, select, filter
+        );
+
+        let response = self
+            .http
+            .get(url)
+            .header("Accept", "application/json")
+            .header("apikey", &self.anon_key)
+            .header("Authorization", format!("Bearer {}", self.anon_key))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if !response.status().is_success() {
+            return Ok(None);
+        }
+
+        let rows = response
+            .json::<Vec<SupabaseBadgeIdentityRow>>()
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().next())
     }
 }
 
