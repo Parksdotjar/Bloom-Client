@@ -35,6 +35,7 @@ type CropBox = {
 const EXPORT_PRICE_BB = 800;
 const WATERMARK_TEXT = 'Preview Only';
 const CUSTOM_CAPE_TOS_ACCEPTED_STORAGE_KEY = 'bloom_custom_cape_tos_accepted_v1';
+const CAPE_NAME_MAX_LENGTH = 28;
 const ACCEPTED_FILE_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
 const VISIBLE_FACE_HEIGHT_TO_WIDTH_RATIO = 2;
 const MIN_VALID_CROP_FRACTION = 0.02;
@@ -57,6 +58,10 @@ function formatBytes(bytes: number | null) {
 
 function sanitizeFileName(name: string) {
   return name.replace(/[^\w.-]+/g, '_');
+}
+
+function clampCapeName(value: string) {
+  return value.slice(0, CAPE_NAME_MAX_LENGTH);
 }
 
 function getCapeAtlasResolutionLabel(exportWidth: number) {
@@ -555,7 +560,7 @@ export function CustomCape() {
       setStatusMessage('Image uploaded. Move and zoom to frame the visible cape face.');
       const safeBaseName = (sanitizeFileName(file.name).replace(/\.[^.]+$/, '') || 'custom-cape').toLowerCase();
       setOwnerListingSlug((current) => current || `custom-${safeBaseName}-${Date.now().toString().slice(-5)}`);
-      setOwnerListingName((current) => current || `${safeBaseName} cape`);
+      setOwnerListingName((current) => (current ? clampCapeName(current) : clampCapeName(`${safeBaseName} cape`)));
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -879,8 +884,9 @@ export function CustomCape() {
                 />
                 <input
                   value={ownerListingName}
-                  onChange={(event) => setOwnerListingName(event.target.value)}
+                  onChange={(event) => setOwnerListingName(clampCapeName(event.target.value))}
                   placeholder="name"
+                  maxLength={CAPE_NAME_MAX_LENGTH}
                   className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-xs font-bold text-white"
                 />
                 <input

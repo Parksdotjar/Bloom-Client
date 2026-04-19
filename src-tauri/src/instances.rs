@@ -1,6 +1,7 @@
 use crate::paths::paths_get;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashSet, VecDeque};
 use std::env;
 use std::fs;
 use std::io::{Cursor, Read};
@@ -152,11 +153,20 @@ pub struct MarketplacePack {
     pub supported_loaders: Vec<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketplaceInstallModResult {
+    pub file_name: String,
+    pub dependencies_installed: usize,
+}
+
 #[derive(Debug, Deserialize)]
 struct ModrinthVersion {
     pub game_versions: Vec<String>,
     pub loaders: Vec<String>,
     pub files: Vec<ModrinthFile>,
+    #[serde(default)]
+    pub dependencies: Vec<ModrinthVersionDependency>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -164,6 +174,12 @@ struct ModrinthFile {
     pub url: String,
     pub filename: String,
     pub primary: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModrinthVersionDependency {
+    pub project_id: Option<String>,
+    pub dependency_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1695,6 +1711,312 @@ fn maybe_delete_installed_mod_meta(mods_dir: &Path, file_name: &str) -> Result<(
     Ok(())
 }
 
+fn has_installed_project_id(mods_dir: &Path, project_id: &str) -> bool {
+    let entries = match fs::read_dir(mods_dir) {
+        Ok(entries) => entries,
+        Err(_) => return false,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
+            continue;
+        };
+        if !name.ends_with(".bloommeta.json") {
+            continue;
+        }
+        let Ok(raw) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(meta) = serde_json::from_str::<InstalledModMeta>(&raw) else {
+            continue;
+        };
+        if meta
+            .project_id
+            .as_ref()
+            .map(|id| id == project_id)
+            .unwrap_or(false)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+async fn install_modrinth_mod_with_required_dependencies(
+    instance: &Instance,
+    mods_dir: &Path,
+    project_id: &str,
+) -> Result<(String, InstalledModMeta, usize), String> {
+    let loader = instance.loader.to_ascii_lowercase();
+    let game_version = instance.mc_version.clone();
+    let client = reqwest::Client::new();
+    let mut queue: VecDeque<String> = VecDeque::new();
+    let mut visited: HashSet<String> = HashSet::new();
+    queue.push_back(project_id.to_string());
+    let mut root_result: Option<(String, InstalledModMeta)> = None;
+    let mut installed_count: usize = 0;
+
+    while let Some(current_project_id) = queue.pop_front() {
+        if !visited.insert(current_project_id.clone()) {
+            continue;
+        }
+        if has_installed_project_id(mods_dir, &current_project_id) {
+            continue;
+        }
+
+        let versions_url = format!(
+            "https://api.modrinth.com/v2/project/{}/version",
+            current_project_id
+        );
+        let versions: Vec<ModrinthVersion> = client
+            .get(versions_url)
+            .header("User-Agent", "BloomClient/0.1.0")
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let matching = versions
+            .into_iter()
+            .find(|v| {
+                v.game_versions.iter().any(|g| g == &game_version)
+                    && v.loaders.iter().any(|l| l.eq_ignore_ascii_case(&loader))
+            })
+            .ok_or_else(|| {
+                format!(
+                    "No compatible Modrinth file for {} {} (project {})",
+                    loader, game_version, current_project_id
+                )
+            })?;
+
+        for dep in &matching.dependencies {
+            let is_required = dep
+                .dependency_type
+                .as_ref()
+                .map(|value| value.eq_ignore_ascii_case("required"))
+                .unwrap_or(false);
+            if !is_required {
+                continue;
+            }
+            if let Some(dep_project_id) = dep.project_id.as_ref() {
+                let dep_id = dep_project_id.trim();
+                if !dep_id.is_empty() && !visited.contains(dep_id) {
+                    queue.push_back(dep_id.to_string());
+                }
+            }
+        }
+
+        let file = matching
+            .files
+            .iter()
+            .find(|f| f.primary.unwrap_or(false))
+            .or_else(|| matching.files.first())
+            .ok_or_else(|| "No downloadable file found.".to_string())?;
+
+        let bytes = client
+            .get(&file.url)
+            .header("User-Agent", "BloomClient/0.1.0")
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
+            .bytes()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if !is_valid_jar(&bytes) {
+            return Err("Downloaded file is not a valid .jar mod.".into());
+        }
+
+        let target = mods_dir.join(&file.filename);
+        fs::write(&target, bytes).map_err(|e| e.to_string())?;
+        installed_count += 1;
+
+        let project_info: serde_json::Value = client
+            .get(format!(
+                "https://api.modrinth.com/v2/project/{}",
+                current_project_id
+            ))
+            .header("User-Agent", "BloomClient/0.1.0")
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let meta = InstalledModMeta {
+            icon_url: project_info
+                .get("icon_url")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            source: Some("modrinth".to_string()),
+            project_id: Some(current_project_id.clone()),
+            title: project_info
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+        };
+        let _ = write_installed_mod_meta(mods_dir, &file.filename, &meta);
+
+        if current_project_id == project_id {
+            root_result = Some((file.filename.clone(), meta));
+        }
+    }
+
+    root_result
+        .map(|(file_name, meta)| (file_name, meta, installed_count.saturating_sub(1)))
+        .ok_or_else(|| "No compatible Modrinth file for the selected mod.".to_string())
+}
+
+async fn install_curseforge_mod_with_required_dependencies(
+    instance: &Instance,
+    mods_dir: &Path,
+    project_id: &str,
+) -> Result<(String, InstalledModMeta, usize), String> {
+    let game_version = instance.mc_version.clone();
+    let client = reqwest::Client::new();
+    let mut queue: VecDeque<String> = VecDeque::new();
+    let mut visited: HashSet<String> = HashSet::new();
+    queue.push_back(project_id.to_string());
+    let mut root_result: Option<(String, InstalledModMeta)> = None;
+    let mut installed_count: usize = 0;
+
+    while let Some(current_project_id) = queue.pop_front() {
+        if !visited.insert(current_project_id.clone()) {
+            continue;
+        }
+        if has_installed_project_id(mods_dir, &current_project_id) {
+            continue;
+        }
+
+        let files_query = format!(
+            "/v1/mods/{}/files?gameVersion={}&pageSize=40&index=0",
+            current_project_id,
+            urlencoding::encode(&game_version)
+        );
+        let body: serde_json::Value = curseforge_get_json(
+            &client,
+            &files_query,
+            &format!(
+                "/mods/{}/files?gameVersion={}&pageSize=40&index=0",
+                current_project_id,
+                urlencoding::encode(&game_version)
+            ),
+        )
+        .await?;
+        let data = body
+            .get("data")
+            .and_then(|v| v.as_array())
+            .ok_or("Invalid CurseForge files response.")?;
+
+        let file = data
+            .iter()
+            .find(|row| {
+                row.get("isAvailable")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true)
+                    && row
+                        .get("fileName")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_ascii_lowercase()
+                        .ends_with(".jar")
+            })
+            .ok_or_else(|| {
+                format!(
+                    "No downloadable CurseForge jar file found for project {}.",
+                    current_project_id
+                )
+            })?;
+
+        if let Some(deps) = file.get("dependencies").and_then(|v| v.as_array()) {
+            for dep in deps {
+                let relation_type = dep
+                    .get("relationType")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or_default();
+                if relation_type != 3 {
+                    continue;
+                }
+                if let Some(dep_id) = dep.get("modId").and_then(|v| v.as_i64()) {
+                    let dep_project_id = dep_id.to_string();
+                    if !visited.contains(&dep_project_id) {
+                        queue.push_back(dep_project_id);
+                    }
+                }
+            }
+        }
+
+        let download_url = file
+            .get("downloadUrl")
+            .and_then(|v| v.as_str())
+            .ok_or("CurseForge did not provide a direct download URL for this file.")?;
+        let file_name = file
+            .get("fileName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("mod.jar")
+            .to_string();
+
+        let bytes = client
+            .get(download_url)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
+            .bytes()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if !is_valid_jar(&bytes) {
+            return Err("Downloaded file is not a valid .jar mod.".into());
+        }
+
+        let target = mods_dir.join(&file_name);
+        fs::write(&target, bytes).map_err(|e| e.to_string())?;
+        installed_count += 1;
+
+        let mod_info: serde_json::Value = curseforge_get_json(
+            &client,
+            &format!("/v1/mods/{}", current_project_id),
+            &format!("/mods/{}", current_project_id),
+        )
+        .await?;
+        let meta = InstalledModMeta {
+            icon_url: mod_info
+                .get("data")
+                .and_then(|v| v.get("logo"))
+                .and_then(|v| v.get("url"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            source: Some("curseforge".to_string()),
+            project_id: Some(current_project_id.clone()),
+            title: mod_info
+                .get("data")
+                .and_then(|v| v.get("name"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+        };
+        let _ = write_installed_mod_meta(mods_dir, &file_name, &meta);
+
+        if current_project_id == project_id {
+            root_result = Some((file_name, meta));
+        }
+    }
+
+    root_result
+        .map(|(file_name, meta)| (file_name, meta, installed_count.saturating_sub(1)))
+        .ok_or_else(|| "No compatible CurseForge file for the selected mod.".to_string())
+}
+
 fn extract_mod_icon_data_url(path: &Path) -> Option<String> {
     let bytes = fs::read(path).ok()?;
     let cursor = Cursor::new(bytes);
@@ -1741,168 +2063,17 @@ async fn install_marketplace_mod_into_instance(
     mods_dir: &Path,
     source: &str,
     project_id: &str,
-) -> Result<(String, InstalledModMeta), String> {
+) -> Result<(String, InstalledModMeta, usize), String> {
     let source_mode = source.to_ascii_lowercase();
-    let loader = instance.loader.to_ascii_lowercase();
-    let game_version = instance.mc_version.clone();
-    let client = reqwest::Client::new();
 
     if source_mode == "modrinth" {
-        let versions_url = format!("https://api.modrinth.com/v2/project/{}/version", project_id);
-        let versions: Vec<ModrinthVersion> = client
-            .get(versions_url)
-            .header("User-Agent", "BloomClient/0.1.0")
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?
-            .json()
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let matching = versions
-            .into_iter()
-            .find(|v| {
-                v.game_versions.iter().any(|g| g == &game_version)
-                    && v.loaders.iter().any(|l| l.eq_ignore_ascii_case(&loader))
-            })
-            .ok_or_else(|| format!("No compatible Modrinth file for {} {}", loader, game_version))?;
-
-        let file = matching
-            .files
-            .iter()
-            .find(|f| f.primary.unwrap_or(false))
-            .or_else(|| matching.files.first())
-            .ok_or_else(|| "No downloadable file found.".to_string())?;
-
-        let bytes = client
-            .get(&file.url)
-            .header("User-Agent", "BloomClient/0.1.0")
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?
-            .bytes()
-            .await
-            .map_err(|e| e.to_string())?;
-
-        if !is_valid_jar(&bytes) {
-            return Err("Downloaded file is not a valid .jar mod.".into());
-        }
-
-        let target = mods_dir.join(&file.filename);
-        fs::write(&target, bytes).map_err(|e| e.to_string())?;
-        let project_info: serde_json::Value = client
-            .get(format!("https://api.modrinth.com/v2/project/{}", project_id))
-            .header("User-Agent", "BloomClient/0.1.0")
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?
-            .json()
-            .await
-            .map_err(|e| e.to_string())?;
-        let meta = InstalledModMeta {
-            icon_url: project_info
-                .get("icon_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            source: Some("modrinth".to_string()),
-            project_id: Some(project_id.to_string()),
-            title: project_info
-                .get("title")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-        };
-        let _ = write_installed_mod_meta(mods_dir, &file.filename, &meta);
-        return Ok((file.filename.clone(), meta));
+        return install_modrinth_mod_with_required_dependencies(instance, mods_dir, project_id)
+            .await;
     }
 
     if source_mode == "curseforge" {
-        let files_query = format!(
-            "/v1/mods/{}/files?gameVersion={}&pageSize=40&index=0",
-            project_id,
-            urlencoding::encode(&game_version)
-        );
-        let body: serde_json::Value = curseforge_get_json(
-            &client,
-            &files_query,
-            &format!("/mods/{}/files?gameVersion={}&pageSize=40&index=0", project_id, urlencoding::encode(&game_version)),
-        )
-        .await?;
-        let data = body
-            .get("data")
-            .and_then(|v| v.as_array())
-            .ok_or("Invalid CurseForge files response.")?;
-
-        let file = data
-            .iter()
-            .find(|row| {
-                row.get("isAvailable")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true)
-                    && row
-                        .get("fileName")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_ascii_lowercase()
-                        .ends_with(".jar")
-            })
-            .ok_or("No downloadable CurseForge jar file found.")?;
-
-        let download_url = file
-            .get("downloadUrl")
-            .and_then(|v| v.as_str())
-            .ok_or("CurseForge did not provide a direct download URL for this file.")?;
-        let file_name = file
-            .get("fileName")
-            .and_then(|v| v.as_str())
-            .unwrap_or("mod.jar")
-            .to_string();
-
-        let bytes = client
-            .get(download_url)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?
-            .bytes()
-            .await
-            .map_err(|e| e.to_string())?;
-
-        if !is_valid_jar(&bytes) {
-            return Err("Downloaded file is not a valid .jar mod.".into());
-        }
-
-        let target = mods_dir.join(&file_name);
-        fs::write(&target, bytes).map_err(|e| e.to_string())?;
-        let mod_info: serde_json::Value = curseforge_get_json(
-            &client,
-            &format!("/v1/mods/{}", project_id),
-            &format!("/mods/{}", project_id),
-        )
-        .await?;
-        let meta = InstalledModMeta {
-            icon_url: mod_info
-                .get("data")
-                .and_then(|v| v.get("logo"))
-                .and_then(|v| v.get("url"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            source: Some("curseforge".to_string()),
-            project_id: Some(project_id.to_string()),
-            title: mod_info
-                .get("data")
-                .and_then(|v| v.get("name"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-        };
-        let _ = write_installed_mod_meta(mods_dir, &file_name, &meta);
-        return Ok((file_name, meta));
+        return install_curseforge_mod_with_required_dependencies(instance, mods_dir, project_id)
+            .await;
     }
 
     Err("Unsupported source. Use modrinth or curseforge.".into())
@@ -2365,7 +2536,7 @@ pub async fn marketplace_install_mod(
     instance_id: String,
     source: String,
     project_id: String,
-) -> Result<String, String> {
+) -> Result<MarketplaceInstallModResult, String> {
     let paths = paths_get(app)?;
     let instance_dir = paths.instances.join(&instance_id);
     if !instance_dir.exists() {
@@ -2375,9 +2546,12 @@ pub async fn marketplace_install_mod(
     let instance = load_instance_from_dir(&instance_dir)?;
     let mods_dir = instance_dir.join("mods");
     fs::create_dir_all(&mods_dir).map_err(|e| e.to_string())?;
-    let (file_name, _) =
+    let (file_name, _, dependencies_installed) =
         install_marketplace_mod_into_instance(&instance, &mods_dir, &source, &project_id).await?;
-    Ok(file_name)
+    Ok(MarketplaceInstallModResult {
+        file_name,
+        dependencies_installed,
+    })
 }
 
 #[tauri::command]

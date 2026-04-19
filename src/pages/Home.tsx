@@ -307,6 +307,7 @@ export function Home() {
   };
 
   const launchStatus = launchingInstanceId ? activeDownloads[launchingInstanceId]?.status || 'Preparing launch...' : null;
+  const launchProgress = launchingInstanceId ? activeDownloads[launchingInstanceId]?.progress ?? null : null;
 
   const handleLaunch = async (instance: NonNullable<typeof selected>) => {
     if (activeDownloads[instance.id] && activeDownloads[instance.id].status !== 'Complete') return;
@@ -533,6 +534,7 @@ export function Home() {
         eyebrow="Launching"
         title={launchStatus || 'Preparing launch...'}
         description="Bloom is installing files and starting Minecraft."
+        progress={launchProgress}
       />
       <div className="max-w-[1400px] mx-auto min-h-full space-y-4">
         {showWidgetDocker && (

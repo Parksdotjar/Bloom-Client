@@ -706,8 +706,10 @@ export function createConsoleRegistry(): ConsoleCommandDefinition[] {
       const candidate = exact ?? results[0];
       const installResult = await context.installMarketplaceMod(target.id, candidate.source, candidate.id);
       const lines = [
-        `Installed ${candidate.title} (${candidate.source}) into ${target.name}.`,
-        installResult
+        installResult.dependenciesInstalled > 0
+          ? `Installed ${candidate.title} (${candidate.source}) + ${installResult.dependenciesInstalled} dependencies into ${target.name}.`
+          : `Installed ${candidate.title} (${candidate.source}) into ${target.name}.`,
+        installResult.fileName
       ];
       if (!exact && results.length > 1) {
         lines.push(`Tip: multiple matches found; installed top result "${candidate.title}".`);

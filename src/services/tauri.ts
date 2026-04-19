@@ -81,6 +81,11 @@ export interface MarketplacePack {
     supportedLoaders: string[];
 }
 
+export interface MarketplaceInstallModResult {
+    fileName: string;
+    dependenciesInstalled: number;
+}
+
 export interface HostedServer {
     id: string;
     name: string;
@@ -254,7 +259,7 @@ export const TauriApi = {
     marketplaceSearchMods: (query: string, source?: 'all' | 'modrinth' | 'curseforge', loader?: string, gameVersion?: string) =>
         invoke<MarketplaceMod[]>('marketplace_search_mods', { query, source, loader, gameVersion }),
     marketplaceInstallMod: (instanceId: string, source: 'modrinth' | 'curseforge', projectId: string) =>
-        invoke<string>('marketplace_install_mod', { instanceId, source, projectId }),
+        invoke<MarketplaceInstallModResult>('marketplace_install_mod', { instanceId, source, projectId }),
     marketplaceSearchModpacks: (query: string, source?: 'all' | 'modrinth' | 'curseforge') =>
         invoke<MarketplacePack[]>('marketplace_search_modpacks', { query, source }),
     marketplaceInstallModpackInstance: (source: 'modrinth' | 'curseforge', projectId: string, gameVersion: string) =>

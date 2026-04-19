@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { supabase } from './supabase';
 
 export type ExternalUpdate = {
   version: string;
@@ -13,6 +14,18 @@ export const UPDATE_SETTINGS_CHANGE_EVENT = 'bloom-update-settings-change';
 export type UpdatePreferences = {
   autoCheck: boolean;
   notifications: boolean;
+};
+
+type SupabaseManifest = {
+  version: string;
+  installerUrl: string;
+  assetName: string;
+  windows: {
+    installerUrl: string;
+    assetName: string;
+    nsisUrl: string;
+    nsisAssetName: string;
+  };
 };
 
 function isTauriRuntime() {
@@ -60,4 +73,68 @@ export async function downloadAndInstallLauncherUpdate(update: ExternalUpdate) {
     installerUrl: update.installerUrl,
     version: update.version
   });
+}
+
+function normalizeVersion(input: string) {
+  return input.trim().replace(/^v/i, '');
+}
+
+export async function publishSupabaseLauncherUpdate(versionInput: string, installerFile: File) {
+  const version = normalizeVersion(versionInput);
+  if (!version) {
+    throw new Error('Version is required (example: 1.4.2).');
+  }
+  if (!installerFile.name.toLowerCase().endsWith('.exe')) {
+    throw new Error('Installer must be a .exe file.');
+  }
+
+  const installerObjectPath = 'BloomClient-latest-x64-setup.exe';
+  const latestManifestPath = 'latest.json';
+
+  const uploadInstaller = await supabase.storage
+    .from('updates')
+    .upload(installerObjectPath, installerFile, {
+      upsert: true,
+      contentType: 'application/vnd.microsoft.portable-executable',
+      cacheControl: 'no-store'
+    });
+
+  if (uploadInstaller.error) {
+    throw new Error(`Failed to upload installer: ${uploadInstaller.error.message}`);
+  }
+
+  const publicUrl = supabase.storage.from('updates').getPublicUrl(installerObjectPath).data.publicUrl;
+  const installerUrl = `${publicUrl}?v=${encodeURIComponent(version)}`;
+
+  const manifest: SupabaseManifest = {
+    version,
+    installerUrl,
+    assetName: installerObjectPath,
+    windows: {
+      installerUrl,
+      assetName: installerObjectPath,
+      nsisUrl: installerUrl,
+      nsisAssetName: installerObjectPath
+    }
+  };
+
+  const manifestBlob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+  const uploadManifest = await supabase.storage
+    .from('updates')
+    .upload(latestManifestPath, manifestBlob, {
+      upsert: true,
+      contentType: 'application/json',
+      cacheControl: 'no-store'
+    });
+
+  if (uploadManifest.error) {
+    throw new Error(`Failed to upload latest.json: ${uploadManifest.error.message}`);
+  }
+
+  return {
+    version,
+    installerObjectPath,
+    latestManifestPath,
+    installerUrl
+  };
 }

@@ -5,6 +5,7 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 import { useInstances } from '../hooks/useInstances';
 import { useAuth } from '../hooks/useAuth';
 import { useDownloader } from '../hooks/useDownloader';
+import { useFabric } from '../hooks/useFabric';
 import { TauriApi, type BloomExportOptions, type InstanceContentFile, type InstanceExplorerEntry, type InstanceModFile, type InstanceTransferOptions, type MarketplaceMod, type MarketplacePack, type ModInstallResult } from '../services/tauri';
 import { UniversalLoadingOverlay } from '../components/UniversalLoadingOverlay';
 
@@ -100,6 +101,7 @@ function wait(ms: number) {
 
 const boxedControlClass = 'inline-flex items-center justify-center border bg-[#121212] text-white/82 transition hover:bg-[#181818] hover:text-white [border-radius:2px]';
 const boxedDangerControlClass = 'inline-flex items-center justify-center border bg-[#161112] text-red-100/90 transition hover:bg-[#221416] hover:text-red-50 [border-radius:2px]';
+const STRONG_LABEL_TEXT_SHADOW = '0 1px 0 rgba(0,0,0,0.95), 0 0 8px rgba(0,0,0,0.65)';
 
 export function InstanceEditor() {
   const navigate = useNavigate();
@@ -137,6 +139,7 @@ export function InstanceEditor() {
   const [name, setName] = useState('');
   const [memoryMb, setMemoryMb] = useState(4096);
   const [jvmArgs, setJvmArgs] = useState('');
+  const [fabricLoaderVersion, setFabricLoaderVersion] = useState('');
   const [javaRuntime, setJavaRuntime] = useState<'system' | 'java17' | 'custom'>('system');
   const [javaPathOverride, setJavaPathOverride] = useState('');
   const [iconDataUrl, setIconDataUrl] = useState<string | undefined>(undefined);
@@ -196,6 +199,11 @@ export function InstanceEditor() {
   const [transferSourceInstanceId, setTransferSourceInstanceId] = useState('');
   const [transferOptions, setTransferOptions] = useState<InstanceTransferOptions>(DEFAULT_INSTANCE_TRANSFER_OPTIONS);
   const [transferSourceMenuOpen, setTransferSourceMenuOpen] = useState(false);
+  const [fabricLoaderMenuOpen, setFabricLoaderMenuOpen] = useState(false);
+  const { versions: fabricVersions, loading: fabricVersionsLoading, latestStable: latestFabricStable } = useFabric(
+    instance?.mcVersion ?? '',
+    instance?.loader === 'fabric'
+  );
 
   const selectedTransferSource = useMemo(
     () => transferableInstances.find((item) => item.id === transferSourceInstanceId) || null,
@@ -206,12 +214,14 @@ export function InstanceEditor() {
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement | null>(null);
   const transferSourceMenuRef = useRef<HTMLDivElement | null>(null);
+  const fabricLoaderMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (instance) {
       setName(instance.name);
       setMemoryMb(instance.memoryMb);
       setJvmArgs(instance.jvmArgs.join(' '));
+      setFabricLoaderVersion(instance.fabricLoaderVersion || '');
       const savedRuntime = (instance.java?.runtime || '').toLowerCase();
       if (savedRuntime === 'java17') setJavaRuntime('java17');
       else if (instance.java?.pathOverride) setJavaRuntime('custom');
@@ -235,6 +245,13 @@ export function InstanceEditor() {
       setInstanceMediaLoaded(false);
     }
   }, [instance]);
+
+  useEffect(() => {
+    if (!instance || instance.loader !== 'fabric') return;
+    if (!fabricLoaderVersion && latestFabricStable) {
+      setFabricLoaderVersion(latestFabricStable);
+    }
+  }, [fabricLoaderVersion, instance, latestFabricStable]);
 
   useEffect(() => {
     let active = true;
@@ -286,6 +303,17 @@ export function InstanceEditor() {
     window.addEventListener('mousedown', onPointerDown);
     return () => window.removeEventListener('mousedown', onPointerDown);
   }, [transferSourceMenuOpen]);
+
+  useEffect(() => {
+    if (!fabricLoaderMenuOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (fabricLoaderMenuRef.current && event.target instanceof Node && !fabricLoaderMenuRef.current.contains(event.target)) {
+        setFabricLoaderMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    return () => window.removeEventListener('mousedown', onPointerDown);
+  }, [fabricLoaderMenuOpen]);
 
 
   const goBack = () => navigate('/instances');
@@ -367,6 +395,10 @@ export function InstanceEditor() {
           pathOverride: javaRuntime === 'custom' ? (javaPathOverride.trim() || undefined) : (javaRuntime === 'java17' ? 'java17' : undefined),
           runtime: javaRuntime === 'system' ? undefined : javaRuntime
         },
+        fabricLoaderVersion:
+          instance.loader === 'fabric'
+            ? (fabricLoaderVersion.trim() || latestFabricStable || instance.fabricLoaderVersion || 'latest')
+            : undefined,
         iconDataUrl,
         coverDataUrl,
         colorTag,
@@ -502,6 +534,7 @@ export function InstanceEditor() {
   }, [instance, activeTab, selectedFilePath, saveSettings]);
 
   const launchStatus = launchingInstanceId ? activeDownloads[launchingInstanceId]?.status || 'Preparing launch...' : null;
+  const launchProgress = launchingInstanceId ? activeDownloads[launchingInstanceId]?.progress ?? null : null;
 
   const handleLaunch = async () => {
     if (!instance) return;
@@ -775,10 +808,15 @@ export function InstanceEditor() {
     const startedAt = beginInstallVisual(setModInstallVisuals, rowId, `Installing ${mod.title}`);
     setStatusMessage(`Installing ${mod.title}...`);
     try {
-      const file = await TauriApi.marketplaceInstallMod(instance.id, mod.source, mod.id);
+      const result = await TauriApi.marketplaceInstallMod(instance.id, mod.source, mod.id);
       await reloadMods();
       setInstalledMarketplaceMods((current) => new Set(current).add(rowId));
-      setStatusMessage(`Installed ${file} into ${instance.name}.`);
+      const deps = Number(result.dependenciesInstalled) || 0;
+      setStatusMessage(
+        deps > 0
+          ? `Installed ${result.fileName} + ${deps} dependencies into ${instance.name}.`
+          : `Installed ${result.fileName} into ${instance.name}.`
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(`Install failed: ${message}`);
@@ -1404,6 +1442,7 @@ export function InstanceEditor() {
         eyebrow={launchStatus ? 'Launching' : blockingTitle?.toLowerCase().includes('export') ? 'Exporting' : blockingTitle?.toLowerCase().includes('import') ? 'Importing' : 'Working'}
         title={blockingTitle || launchStatus || 'Working...'}
         description={launchStatus ? 'Bloom is installing files and starting Minecraft.' : blockingTitle?.toLowerCase().includes('export') ? 'Bloom is building your portable .bloom archive.' : blockingTitle?.toLowerCase().includes('import') ? 'Bloom is copying the selected instance files into this profile.' : 'Bloom is applying changes to this instance.'}
+        progress={launchStatus ? launchProgress : null}
       />
       {transferPanelOpen && (
         <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/65 px-4">
@@ -1584,12 +1623,12 @@ export function InstanceEditor() {
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="relative z-[80]" ref={actionsMenuRef}>
+            <div className="relative z-[2147482000]" ref={actionsMenuRef}>
               <button onClick={() => setActionsMenuOpen((current) => !current)} className="g-btn h-11 w-11 inline-flex items-center justify-center">
                 <MoreHorizontal size={16} />
               </button>
               {actionsMenuOpen && (
-                <div className="absolute right-0 top-[calc(100%+8px)] z-[140] min-w-[220px] overflow-hidden rounded-2xl border border-white/10 bg-black shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
+                <div className="absolute right-0 top-[calc(100%+8px)] z-[2147482001] min-w-[220px] overflow-hidden rounded-2xl border border-white/10 bg-black shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
                   <div className="border-b border-white/8 px-3 py-2">
                     <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/38">Instance Actions</p>
                   </div>
@@ -1723,7 +1762,8 @@ export function InstanceEditor() {
                     style={{
                       borderRadius: 'calc(14px * var(--g-roundness-mult))',
                       background: settingsSubTab === 'profile' ? 'var(--g-accent-gradient)' : 'transparent',
-                      color: settingsSubTab === 'profile' ? 'white' : 'color-mix(in srgb, var(--g-text) 58%, transparent)'
+                      color: settingsSubTab === 'profile' ? 'white' : 'color-mix(in srgb, var(--g-text) 58%, transparent)',
+                      textShadow: STRONG_LABEL_TEXT_SHADOW
                     }}
                   >
                     Profile
@@ -1734,7 +1774,8 @@ export function InstanceEditor() {
                     style={{
                       borderRadius: 'calc(14px * var(--g-roundness-mult))',
                       background: settingsSubTab === 'launch' ? 'var(--g-accent-gradient)' : 'transparent',
-                      color: settingsSubTab === 'launch' ? 'white' : 'color-mix(in srgb, var(--g-text) 58%, transparent)'
+                      color: settingsSubTab === 'launch' ? 'white' : 'color-mix(in srgb, var(--g-text) 58%, transparent)',
+                      textShadow: STRONG_LABEL_TEXT_SHADOW
                     }}
                   >
                     Launch
@@ -1761,7 +1802,8 @@ export function InstanceEditor() {
                       style={{
                         borderRadius: 'calc(12px * var(--g-roundness-mult))',
                         background: settingsSubTab === tab ? 'var(--g-accent-gradient)' : 'transparent',
-                        color: settingsSubTab === tab ? 'white' : 'color-mix(in srgb, var(--g-text) 58%, transparent)'
+                        color: settingsSubTab === tab ? 'white' : 'color-mix(in srgb, var(--g-text) 58%, transparent)',
+                        textShadow: STRONG_LABEL_TEXT_SHADOW
                       }}
                     >
                       {label}
@@ -1841,6 +1883,60 @@ export function InstanceEditor() {
                 </div>
               ) : (
                 <div className="space-y-5">
+                  {instance.loader === 'fabric' && (
+                    <div className="rounded-xl border border-slate-300/80 dark:border-white/12 p-4 bg-white/70 dark:bg-white/[0.02]">
+                      <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">
+                        Fabric Loader Version
+                      </label>
+                      <div className="relative" ref={fabricLoaderMenuRef}>
+                        <button
+                          type="button"
+                          onClick={() => setFabricLoaderMenuOpen((open) => !open)}
+                          disabled={fabricVersionsLoading || fabricVersions.length === 0}
+                          className="w-full rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-black/25 px-4 py-3 text-left text-sm font-semibold text-slate-900 dark:text-white focus:outline-none disabled:opacity-60 inline-flex items-center justify-between gap-3"
+                        >
+                          <span className="truncate">
+                            {fabricVersionsLoading
+                              ? 'Loading Fabric versions...'
+                              : fabricLoaderVersion || latestFabricStable || 'No versions found'}
+                          </span>
+                          <ChevronDown size={14} className={fabricLoaderMenuOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
+                        </button>
+                        {fabricLoaderMenuOpen && !fabricVersionsLoading && fabricVersions.length > 0 && (
+                          <div className="absolute z-[2147482001] mt-2 w-full overflow-hidden rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-[#09090a] shadow-[0_12px_40px_rgba(0,0,0,0.45)]">
+                            <div className="max-h-[360px] overflow-y-auto py-1">
+                              {fabricVersions.map((entry) => {
+                                const label = `${entry.loader.version}${entry.loader.stable ? ' (stable)' : ' (preview)'}`;
+                                const selected = fabricLoaderVersion === entry.loader.version;
+                                return (
+                                  <button
+                                    key={entry.loader.version}
+                                    type="button"
+                                    onClick={() => {
+                                      setFabricLoaderVersion(entry.loader.version);
+                                      setFabricLoaderMenuOpen(false);
+                                    }}
+                                    className={[
+                                      'flex w-full items-center justify-between px-3 py-2.5 text-left text-sm font-semibold transition',
+                                      selected
+                                        ? 'bg-[var(--g-accent-soft)] text-slate-900 dark:text-white'
+                                        : 'text-slate-800 dark:text-white/90 hover:bg-slate-100 dark:hover:bg-white/[0.08]'
+                                    ].join(' ')}
+                                  >
+                                    <span>{label}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <p className="mt-2 text-xs text-slate-500 dark:text-white/52">
+                        Saved per instance. Launch/install uses this Fabric loader for this instance.
+                      </p>
+                    </div>
+                  )}
+
                   <div className="grid gap-4 lg:grid-cols-2">
                     <div className="rounded-xl border border-slate-300/80 dark:border-white/12 p-4 bg-white/70 dark:bg-white/[0.02]">
                       <label className="block text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 dark:text-white/45 mb-2">Memory (MB)</label>

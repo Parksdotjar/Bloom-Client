@@ -5,6 +5,11 @@ const ADOPTIUM_JAVA_21_PAGE: &str = "https://adoptium.net/temurin/releases/?vers
 const ADOPTIUM_JAVA_21_WINDOWS_X64_ZIP: &str =
     "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse";
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+#[cfg(target_os = "windows")]
+const DETACHED_PROCESS: u32 = 0x00000008;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LaunchConfig {
     pub instance_id: String,
@@ -27,8 +32,17 @@ fn push_unique_case_insensitive(values: &mut Vec<String>, candidate: String) {
 
 fn detect_java_major(java_path: &str) -> Option<u32> {
     use std::process::Command;
+    #[cfg(target_os = "windows")]
+    use std::os::windows::process::CommandExt;
 
-    let output = Command::new(java_path).arg("-version").output().ok()?;
+    let mut command = Command::new(java_path);
+    command.arg("-version");
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = command.output().ok()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let combined = format!("{}\n{}", stderr, stdout);
@@ -1159,14 +1173,22 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
             .try_clone()
             .map_err(|e| format!("Failed to clone launch log handle: {}", e))?;
 
-        match Command::new(&candidate)
+        let mut launch_command = Command::new(&candidate);
+        launch_command
             .args(&args)
             .env("BLOOM_BRIDGE_HOST", &bridge_runtime.host)
             .env("BLOOM_BRIDGE_PORT", bridge_runtime.port.to_string())
             .env("BLOOM_BRIDGE_TOKEN", &bridge_runtime.token)
             .stdout(Stdio::from(stdout_handle))
             .stderr(Stdio::from(stderr_handle))
-            .current_dir(&working_dir)
+            .current_dir(&working_dir);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            launch_command.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+        }
+
+        match launch_command
             .spawn()
         {
             Ok(child) => {

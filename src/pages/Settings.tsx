@@ -4,8 +4,11 @@ import { APP_VERSION } from '../constants/version';
 import { TauriApi } from '../services/tauri';
 import {
   UniversalLoadingOverlay,
+  UNIVERSAL_LOADING_MODE_KEY,
   UNIVERSAL_LOADING_STYLE_KEY,
+  readUniversalLoadingMode,
   readUniversalLoadingStyle,
+  type UniversalLoadingMode,
   type UniversalLoadingStyle
 } from '../components/UniversalLoadingOverlay';
 import {
@@ -36,17 +39,42 @@ import {
   type ExternalUpdate
 } from '../services/updater';
 import {
+  ownerGenerateCustomCapeRewardCode,
+  ownerGetMemberBadgeByUserId,
+  ownerGetCustomCapeFreeCreditsByUserId,
+  ownerLoadPartnerApplications,
+  ownerLoadCustomCapeRewardCodes,
+  ownerSetMemberBadgeByUserId,
+  ownerUpsertPartnerApplicationForm,
+  loadPartnerApplicationForms,
+  ownerSetCustomCapeFreeCreditsByUserId,
+  ownerGetPartnerWalletBalanceByUserId,
+  ownerGrantPartnerWalletByUserId,
+  ownerRevokeCapeFromUserById,
+  loadOwnerCapesLite,
   isCurrentUserOwner,
   loadOwnerMembers,
   ownerGrantCapeToUser,
+  setUserRoleById,
   setUserWalletBalanceById,
-  type OwnerMemberRecord
+  type PartnerApplicationAudience,
+  type PartnerApplicationForm,
+  type PartnerApplicationQuestion,
+  type PartnerApplicationQuestionType,
+  type PartnerApplicationRecord,
+  type CustomCapeRewardCodeRecord,
+  type OwnerMemberRecord,
+  type OwnerMemberBadgeRecord,
+  type BadgeKey,
+  type OwnerCapeLiteRecord,
+  type PartnerWalletRecord
 } from '../services/cosmetics';
 import {
   FART_KEYBIND_UNLOCK_EVENT,
   FART_KEYBIND_UNLOCK_KEY,
   readFartKeybindUnlocked
 } from '../constants/fartKeybind';
+import { BUD_ENABLED_KEY, BUD_SETTINGS_CHANGE_EVENT, readBudEnabled } from '../constants/bud';
 
 type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'custom';
@@ -112,9 +140,15 @@ type AppearancePresetExportFileV1 = {
 };
 
 type SettingsTab = 'general' | 'appearance' | 'keybinds' | 'widgets' | 'updates' | 'owner-utility' | 'extra';
-type AppearanceSection = 'animation' | 'background' | 'sidebar' | 'style' | 'presets' | 'shop';
+type AppearanceSection = 'animation' | 'background' | 'sidebar' | 'style' | 'presets' | 'shop' | 'minecraft';
 type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help' | 'information';
 type SidebarTabsVisibility = Record<SidebarTabId, boolean>;
+type OwnerUtilityTab = 'members-economy' | 'cape-tools' | 'mcsets-events' | 'system';
+type PartnerApplyEditorAudience = PartnerApplicationAudience;
+
+type PartnerApplyQuestionDraft = PartnerApplicationQuestion & {
+  options_text?: string;
+};
 
 const APPEARANCE_SECTIONS: { id: AppearanceSection; label: string; description: string }[] = [
   { id: 'animation', label: 'Animation', description: 'FPS, easing, and motion profile settings.' },
@@ -131,8 +165,8 @@ const SIDEBAR_TABS_VISIBILITY_DEFAULTS: SidebarTabsVisibility = {
   marketplace: true,
   importer: true,
   widgets: true,
-  cosmetics: true,
-  'custom-cape': true,
+  cosmetics: false,
+  'custom-cape': false,
   chat: false,
   'script-studio': false,
   'host-server': false,
@@ -354,6 +388,40 @@ const UNIVERSAL_LOADING_STYLES: { id: UniversalLoadingStyle; label: string; desc
   { id: 'pulse', label: 'Pulse', description: 'Soft expanding rings with a minimal center.' }
 ];
 
+const OWNER_BADGE_OPTIONS: Array<{ value: 'auto' | BadgeKey; label: string; description: string }> = [
+  { value: 'auto', label: 'Auto', description: 'Uses the role default. user -> bloom, partner -> partner, owner -> owner.' },
+  { value: 'none', label: 'None', description: 'Shows no badge icon at all.' },
+  { value: 'bloom', label: 'Bloom', description: 'Uses the default Bloom logo badge.' },
+  { value: 'partner', label: 'Partner', description: 'Uses the partner badge for creators or affiliates.' },
+  { value: 'partner-red', label: 'Partner Red', description: 'Red gradient partner badge without glow.' },
+  { value: 'partner-red-glow', label: 'Partner Red Glow', description: 'Red gradient partner badge with glow.' },
+  { value: 'owner', label: 'Owner', description: 'Uses the owner badge.' },
+  { value: 'owner-pink', label: 'Owner Pink', description: 'Pink gradient owner badge without glow.' },
+  { value: 'owner-pink-glow', label: 'Owner Pink Glow', description: 'Pink gradient owner badge with glow.' },
+  { value: 'staff-gold', label: 'Staff Gold', description: 'Gold gradient staff badge without glow.' },
+  { value: 'staff-gold-glow', label: 'Staff Gold Glow', description: 'Gold gradient staff badge with glow.' },
+  { value: 'manager', label: 'Manager', description: 'Uses the manager badge.' }
+];
+
+const OWNER_BADGE_ASSET_META: Record<BadgeKey, { file: string; char: string }> = {
+  none: { file: 'none', char: 'none' },
+  bloom: { file: 'bloom_badge.png', char: 'U+E000' },
+  partner: { file: 'partner_badge.png', char: 'U+E001' },
+  owner: { file: 'owner_badge.png', char: 'U+E002' },
+  manager: { file: 'manager_badge.png', char: 'U+E003' },
+  'partner-red': { file: 'partner_red_badge.png', char: 'U+E004' },
+  'partner-red-glow': { file: 'partner_red_glow_badge.png', char: 'U+E005' },
+  'staff-gold': { file: 'staff_gold_badge.png', char: 'U+E006' },
+  'staff-gold-glow': { file: 'staff_gold_glow_badge.png', char: 'U+E007' },
+  'owner-pink': { file: 'owner_pink_badge.png', char: 'U+E008' },
+  'owner-pink-glow': { file: 'owner_pink_glow_badge.png', char: 'U+E009' }
+};
+
+const UNIVERSAL_LOADING_MODES: { id: UniversalLoadingMode; label: string; description: string }[] = [
+  { id: 'fullscreen', label: 'Fullscreen', description: 'Current full-screen loading overlay.' },
+  { id: 'compact', label: 'Compact Card', description: 'Picture-in-picture style loading card.' }
+];
+
 const SHOP_RARITY_LABELS: Record<ShopRarityKey, string> = {
   common: 'Common',
   uncommon: 'Uncommon',
@@ -465,8 +533,8 @@ function readSidebarTabsVisibility(): SidebarTabsVisibility {
       marketplace: typeof parsed.marketplace === 'boolean' ? parsed.marketplace : SIDEBAR_TABS_VISIBILITY_DEFAULTS.marketplace,
       importer: typeof parsed.importer === 'boolean' ? parsed.importer : SIDEBAR_TABS_VISIBILITY_DEFAULTS.importer,
       widgets: typeof parsed.widgets === 'boolean' ? parsed.widgets : SIDEBAR_TABS_VISIBILITY_DEFAULTS.widgets,
-      cosmetics: typeof parsed.cosmetics === 'boolean' ? parsed.cosmetics : SIDEBAR_TABS_VISIBILITY_DEFAULTS.cosmetics,
-      'custom-cape': typeof parsed['custom-cape'] === 'boolean' ? parsed['custom-cape'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['custom-cape'],
+      cosmetics: false,
+      'custom-cape': false,
       chat: typeof parsed.chat === 'boolean' ? parsed.chat : SIDEBAR_TABS_VISIBILITY_DEFAULTS.chat,
       'script-studio': typeof parsed['script-studio'] === 'boolean' ? parsed['script-studio'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['script-studio'],
       'host-server': typeof parsed['host-server'] === 'boolean' ? parsed['host-server'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['host-server'],
@@ -791,14 +859,107 @@ function serializeKeybindMap(map: Record<string, string>) {
   return JSON.stringify(Object.entries(map).sort(([left], [right]) => left.localeCompare(right)));
 }
 
+const PARTNER_APPLICATION_QUESTION_TYPES: Array<{ value: PartnerApplicationQuestionType; label: string }> = [
+  { value: 'short_text', label: 'Short Text' },
+  { value: 'long_text', label: 'Long Text' },
+  { value: 'number', label: 'Number' },
+  { value: 'single_choice', label: 'Single Choice' },
+  { value: 'multi_choice', label: 'Multi Choice' },
+  { value: 'link', label: 'Link' }
+];
+
+function createDefaultPartnerQuestion(): PartnerApplyQuestionDraft {
+  return {
+    id: `q_${Math.random().toString(36).slice(2, 10)}`,
+    label: '',
+    type: 'short_text',
+    required: true,
+    placeholder: '',
+    helper_text: '',
+    helper_link: '',
+    options: [],
+    options_text: ''
+  };
+}
+
+function toQuestionDraft(question: PartnerApplicationQuestion): PartnerApplyQuestionDraft {
+  return {
+    ...question,
+    options_text: (question.options ?? []).join('\n')
+  };
+}
+
+function fromQuestionDraft(question: PartnerApplyQuestionDraft): PartnerApplicationQuestion {
+  const options = (question.options_text ?? '')
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const requiresOptions = question.type === 'single_choice' || question.type === 'multi_choice';
+  return {
+    id: question.id.trim() || `q_${Math.random().toString(36).slice(2, 10)}`,
+    label: question.label.trim(),
+    type: question.type,
+    required: Boolean(question.required),
+    placeholder: question.placeholder?.trim() || null,
+    helper_text: question.helper_text?.trim() || null,
+    helper_link: question.helper_link?.trim() || null,
+    options: requiresOptions ? options : null
+  };
+}
+
+function defaultPartnerApplicationForm(audience: PartnerApplicationAudience): PartnerApplicationForm {
+  return {
+    audience,
+    title: audience === 'server' ? 'Server Partner Application' : 'Creator Partner Application',
+    description:
+      audience === 'server'
+        ? 'Apply as a Minecraft server for Bloom partner collaboration.'
+        : 'Apply as an individual creator for the Bloom partner program.',
+    questions: [
+      {
+        id: 'intro',
+        label: audience === 'server' ? 'Tell us about your server' : 'Tell us about yourself',
+        type: 'long_text',
+        required: true,
+        placeholder: audience === 'server' ? 'Community, playerbase, goals...' : 'Content style, audience, goals...'
+      }
+    ],
+    updated_by: null,
+    updated_at: new Date(0).toISOString()
+  };
+}
+
+function normalizePartnerApplicationForms(forms: PartnerApplicationForm[]) {
+  const byAudience = new Map<PartnerApplicationAudience, PartnerApplicationForm>();
+  for (const form of forms) {
+    if (form.audience === 'individual' || form.audience === 'server') {
+      byAudience.set(form.audience, form);
+    }
+  }
+  if (!byAudience.has('individual')) byAudience.set('individual', defaultPartnerApplicationForm('individual'));
+  if (!byAudience.has('server')) byAudience.set('server', defaultPartnerApplicationForm('server'));
+  return ['individual', 'server'].map((audience) => byAudience.get(audience as PartnerApplicationAudience) as PartnerApplicationForm);
+}
+
 export function Settings() {
   const [tab, setTab] = useState<SettingsTab>('general');
   const [appearanceSection, setAppearanceSection] = useState<AppearanceSection>('animation');
+  const [minecraftPrefs, setMinecraftPrefs] = useState({
+    showBloomNametagLogo: true,
+    showBloomTabLogo: true,
+    showBloomChatLogo: true,
+    bloomLogoSide: 'right' as 'left' | 'right'
+  });
+  const [minecraftPrefsLoading, setMinecraftPrefsLoading] = useState(true);
+  const [minecraftPrefsStatus, setMinecraftPrefsStatus] = useState<string | null>(null);
+  const [minecraftPrefsError, setMinecraftPrefsError] = useState<string | null>(null);
   const [universalLoadingStyle, setUniversalLoadingStyle] = useState<UniversalLoadingStyle>(() => readUniversalLoadingStyle());
+  const [universalLoadingMode, setUniversalLoadingMode] = useState<UniversalLoadingMode>(() => readUniversalLoadingMode());
   const [showUniversalLoadingPreview, setShowUniversalLoadingPreview] = useState(false);
   const [showWidgetDocker, setShowWidgetDocker] = useState<boolean>(() => localStorage.getItem(SHOW_WIDGET_DOCKER_KEY) === 'true');
   const [hideEmptyWidgetSlots, setHideEmptyWidgetSlots] = useState<boolean>(() => localStorage.getItem(HIDE_EMPTY_WIDGET_SLOTS_KEY) === 'true');
   const [showGamesSection, setShowGamesSection] = useState<boolean>(() => localStorage.getItem(SHOW_GAMES_SECTION_KEY) === 'true');
+  const [budEnabled, setBudEnabled] = useState<boolean>(() => readBudEnabled());
   const [routeTabAnimationsEnabled, setRouteTabAnimationsEnabled] = useState<boolean>(() => localStorage.getItem(ROUTE_TAB_ANIMATIONS_KEY) === 'true');
   const [sidebarDockHoverEnabled, setSidebarDockHoverEnabled] = useState<boolean>(() => localStorage.getItem(SIDEBAR_DOCK_HOVER_ENABLED_KEY) === 'true');
   const [sidebarDockGrowSize, setSidebarDockGrowSize] = useState<number>(() => {
@@ -899,15 +1060,40 @@ export function Settings() {
   const [publishingUpdate, setPublishingUpdate] = useState(false);
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
   const [ownerUtilityOpen, setOwnerUtilityOpen] = useState(false);
+  const [ownerUtilityTab, setOwnerUtilityTab] = useState<OwnerUtilityTab>('members-economy');
   const [ownerMembers, setOwnerMembers] = useState<OwnerMemberRecord[]>([]);
   const [ownerMembersLoading, setOwnerMembersLoading] = useState(false);
   const [ownerMembersError, setOwnerMembersError] = useState<string | null>(null);
   const [ownerMemberSearch, setOwnerMemberSearch] = useState('');
   const [selectedOwnerMemberId, setSelectedOwnerMemberId] = useState<string | null>(null);
   const [ownerBalanceDraft, setOwnerBalanceDraft] = useState('');
+  const [ownerPartnerBucksDraft, setOwnerPartnerBucksDraft] = useState('');
+  const [ownerSelectedPartnerWallet, setOwnerSelectedPartnerWallet] = useState<PartnerWalletRecord | null>(null);
+  const [ownerCustomCapeCreditsDraft, setOwnerCustomCapeCreditsDraft] = useState('0');
+  const [ownerRoleDraft, setOwnerRoleDraft] = useState<'user' | 'partner' | 'owner'>('user');
+  const [ownerBadgeDraft, setOwnerBadgeDraft] = useState<'auto' | BadgeKey>('auto');
+  const [ownerSelectedMemberBadge, setOwnerSelectedMemberBadge] = useState<OwnerMemberBadgeRecord | null>(null);
   const [ownerCapeGrantInput, setOwnerCapeGrantInput] = useState('');
+  const [ownerCapeRevokeId, setOwnerCapeRevokeId] = useState('');
+  const [ownerCapeOptions, setOwnerCapeOptions] = useState<OwnerCapeLiteRecord[]>([]);
   const [ownerUtilityBusy, setOwnerUtilityBusy] = useState(false);
   const [ownerUtilityStatus, setOwnerUtilityStatus] = useState<string | null>(null);
+  const [customCapeCodeLength, setCustomCapeCodeLength] = useState('12');
+  const [customCapeCodeCharset, setCustomCapeCodeCharset] = useState<'letters' | 'numbers' | 'both'>('both');
+  const [customCapeCodes, setCustomCapeCodes] = useState<CustomCapeRewardCodeRecord[]>([]);
+  const [customCapeCodesLoading, setCustomCapeCodesLoading] = useState(false);
+  const [partnerApplyEditorOpen, setPartnerApplyEditorOpen] = useState(false);
+  const [partnerApplyResponsesOpen, setPartnerApplyResponsesOpen] = useState(false);
+  const [partnerApplyAudience, setPartnerApplyAudience] = useState<PartnerApplyEditorAudience>('individual');
+  const [partnerApplyForms, setPartnerApplyForms] = useState<PartnerApplicationForm[]>([]);
+  const [partnerApplyQuestionsDraft, setPartnerApplyQuestionsDraft] = useState<PartnerApplyQuestionDraft[]>([]);
+  const [partnerApplyTitleDraft, setPartnerApplyTitleDraft] = useState('');
+  const [partnerApplyDescriptionDraft, setPartnerApplyDescriptionDraft] = useState('');
+  const [partnerApplyEditorBusy, setPartnerApplyEditorBusy] = useState(false);
+  const [partnerApplyEditorStatus, setPartnerApplyEditorStatus] = useState<string | null>(null);
+  const [partnerApplyResponses, setPartnerApplyResponses] = useState<PartnerApplicationRecord[]>([]);
+  const [partnerApplyResponsesBusy, setPartnerApplyResponsesBusy] = useState(false);
+  const [selectedPartnerApplyResponseId, setSelectedPartnerApplyResponseId] = useState<string | null>(null);
   const [updateAutoCheckEnabled, setUpdateAutoCheckEnabled] = useState<boolean>(() => readUpdatePreferences().autoCheck);
   const [updateNotificationsEnabled, setUpdateNotificationsEnabled] = useState<boolean>(() => readUpdatePreferences().notifications);
   const [themeMode, setThemeMode] = useState<LauncherTheme>(() => {
@@ -1600,6 +1786,67 @@ export function Settings() {
     [ownerMembers, selectedOwnerMemberId]
   );
 
+  const selectedPartnerApplyForm = useMemo(
+    () => partnerApplyForms.find((form) => form.audience === partnerApplyAudience) ?? null,
+    [partnerApplyAudience, partnerApplyForms]
+  );
+
+  const selectedPartnerApplyResponse = useMemo(
+    () => partnerApplyResponses.find((row) => row.id === selectedPartnerApplyResponseId) ?? null,
+    [partnerApplyResponses, selectedPartnerApplyResponseId]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadMinecraftPrefs = async () => {
+      setMinecraftPrefsLoading(true);
+      setMinecraftPrefsError(null);
+      try {
+        const prefs = await TauriApi.minecraftPreferencesGet();
+        if (!cancelled) {
+          setMinecraftPrefs(prefs);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setMinecraftPrefsError(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setMinecraftPrefsLoading(false);
+        }
+      }
+    };
+    void loadMinecraftPrefs();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const persistMinecraftPrefs = async (next: typeof minecraftPrefs) => {
+    setMinecraftPrefs(next);
+    setMinecraftPrefsStatus(null);
+    setMinecraftPrefsError(null);
+    try {
+      const saved = await TauriApi.minecraftPreferencesSet(next);
+      setMinecraftPrefs(saved);
+      setMinecraftPrefsStatus('Saved Minecraft settings.');
+    } catch (error) {
+      setMinecraftPrefsError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedPartnerApplyForm) {
+      setPartnerApplyTitleDraft('');
+      setPartnerApplyDescriptionDraft('');
+      setPartnerApplyQuestionsDraft([]);
+      return;
+    }
+    setPartnerApplyTitleDraft(selectedPartnerApplyForm.title || '');
+    setPartnerApplyDescriptionDraft(selectedPartnerApplyForm.description || '');
+    setPartnerApplyQuestionsDraft((selectedPartnerApplyForm.questions ?? []).map(toQuestionDraft));
+  }, [selectedPartnerApplyForm?.audience, selectedPartnerApplyForm?.updated_at]);
+
   const refreshOwnerMembers = async () => {
     if (!updateOwnerAccess) return;
     setOwnerMembersLoading(true);
@@ -1610,9 +1857,11 @@ export function Settings() {
       if (rows.length === 0) {
         setSelectedOwnerMemberId(null);
         setOwnerBalanceDraft('');
+        setOwnerCustomCapeCreditsDraft('0');
       } else if (!selectedOwnerMemberId || !rows.some((member) => member.user_id === selectedOwnerMemberId)) {
         setSelectedOwnerMemberId(rows[0].user_id);
         setOwnerBalanceDraft(String(rows[0].balance_bb ?? 0));
+        setOwnerCustomCapeCreditsDraft('0');
       }
     } catch (error) {
       setOwnerMembersError(error instanceof Error ? error.message : String(error));
@@ -1624,14 +1873,165 @@ export function Settings() {
   const openOwnerUtility = async () => {
     setOwnerUtilityStatus(null);
     setOwnerCapeGrantInput('');
+    setOwnerCapeRevokeId('');
+    setOwnerPartnerBucksDraft('');
+    setOwnerSelectedPartnerWallet(null);
+    setOwnerUtilityTab('members-economy');
     setOwnerUtilityOpen(true);
-    await refreshOwnerMembers();
+    await Promise.all([refreshOwnerMembers(), refreshOwnerCustomCapeCodes()]);
+    if (updateOwnerAccess) {
+      try {
+        const capes = await loadOwnerCapesLite();
+        setOwnerCapeOptions(capes);
+        if (capes.length > 0) setOwnerCapeRevokeId(capes[0].id);
+      } catch (error) {
+        setOwnerUtilityStatus(`Cape list failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  };
+
+  const applyBudEnabled = (next: boolean) => {
+    setBudEnabled(next);
+    localStorage.setItem(BUD_ENABLED_KEY, next ? 'true' : 'false');
+    window.dispatchEvent(new CustomEvent(BUD_SETTINGS_CHANGE_EVENT, { detail: { enabled: next } }));
+  };
+
+  const refreshOwnerCustomCapeCodes = async () => {
+    if (!updateOwnerAccess) return;
+    setCustomCapeCodesLoading(true);
+    try {
+      const rows = await ownerLoadCustomCapeRewardCodes(200);
+      setCustomCapeCodes(rows);
+    } catch (error) {
+      setOwnerUtilityStatus(`Code list failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setCustomCapeCodesLoading(false);
+    }
+  };
+
+  const refreshPartnerApplicationForms = async () => {
+    if (!updateOwnerAccess) return;
+    setPartnerApplyEditorBusy(true);
+    setPartnerApplyEditorStatus(null);
+    try {
+      const forms = normalizePartnerApplicationForms(await loadPartnerApplicationForms());
+      setPartnerApplyForms(forms);
+      if (!forms.some((form) => form.audience === partnerApplyAudience)) {
+        setPartnerApplyAudience('individual');
+      }
+    } catch (error) {
+      setPartnerApplyEditorStatus(`Form load failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setPartnerApplyEditorBusy(false);
+    }
+  };
+
+  const refreshPartnerApplicationResponses = async () => {
+    if (!updateOwnerAccess) return;
+    setPartnerApplyResponsesBusy(true);
+    try {
+      const rows = await ownerLoadPartnerApplications();
+      setPartnerApplyResponses(rows);
+      if (!selectedPartnerApplyResponseId || !rows.some((row) => row.id === selectedPartnerApplyResponseId)) {
+        setSelectedPartnerApplyResponseId(rows[0]?.id ?? null);
+      }
+    } finally {
+      setPartnerApplyResponsesBusy(false);
+    }
+  };
+
+  const openPartnerApplicationEditor = async () => {
+    setPartnerApplyEditorOpen(true);
+    await refreshPartnerApplicationForms();
+  };
+
+  const openPartnerApplicationResponses = async () => {
+    setPartnerApplyResponsesOpen(true);
+    await refreshPartnerApplicationResponses();
+  };
+
+  const handleSavePartnerApplicationForm = async () => {
+    if (!updateOwnerAccess) return;
+    const preparedQuestions = partnerApplyQuestionsDraft.map(fromQuestionDraft).filter((question) => question.label.length > 0);
+    if (!partnerApplyTitleDraft.trim()) {
+      setPartnerApplyEditorStatus('Form title is required.');
+      return;
+    }
+    if (preparedQuestions.length === 0) {
+      setPartnerApplyEditorStatus('Add at least one question.');
+      return;
+    }
+    setPartnerApplyEditorBusy(true);
+    setPartnerApplyEditorStatus(null);
+    try {
+      const savedForm = await ownerUpsertPartnerApplicationForm({
+        audience: partnerApplyAudience,
+        title: partnerApplyTitleDraft,
+        description: partnerApplyDescriptionDraft,
+        questions: preparedQuestions
+      });
+      setPartnerApplyForms((current) => {
+        const next = current.filter((form) => form.audience !== savedForm.audience);
+        next.push(savedForm);
+        return normalizePartnerApplicationForms(next);
+      });
+      setPartnerApplyTitleDraft(savedForm.title || '');
+      setPartnerApplyDescriptionDraft(savedForm.description || '');
+      setPartnerApplyQuestionsDraft((savedForm.questions ?? []).map(toQuestionDraft));
+      setPartnerApplyEditorStatus('Application form saved.');
+    } catch (error) {
+      setPartnerApplyEditorStatus(`Save failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setPartnerApplyEditorBusy(false);
+    }
   };
 
   const handleOwnerSelectMember = (member: OwnerMemberRecord) => {
     setSelectedOwnerMemberId(member.user_id);
     setOwnerBalanceDraft(String(member.balance_bb ?? 0));
+    setOwnerPartnerBucksDraft('');
+    setOwnerSelectedPartnerWallet(null);
+    setOwnerRoleDraft(member.role);
+    setOwnerCustomCapeCreditsDraft('0');
     setOwnerUtilityStatus(null);
+  };
+
+  const handleOwnerApplyRole = async () => {
+    if (!selectedOwnerMember) return;
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      const profile = await setUserRoleById(selectedOwnerMember.user_id, ownerRoleDraft);
+      const badge = await ownerGetMemberBadgeByUserId(selectedOwnerMember.user_id);
+      setOwnerMembers((current) =>
+        current.map((member) => (member.user_id === selectedOwnerMember.user_id ? { ...member, role: profile.role } : member))
+      );
+      setOwnerSelectedMemberBadge(badge);
+      setOwnerBadgeDraft(badge.custom_badge_key ?? 'auto');
+      setOwnerRoleDraft(profile.role);
+      setOwnerUtilityStatus(`Updated role for ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id} to ${profile.role}.`);
+    } catch (error) {
+      setOwnerUtilityStatus(`Role update failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
+  const handleOwnerApplyBadge = async () => {
+    if (!selectedOwnerMember) return;
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      const badge = await ownerSetMemberBadgeByUserId(selectedOwnerMember.user_id, ownerBadgeDraft);
+      setOwnerSelectedMemberBadge(badge);
+      setOwnerUtilityStatus(
+        `Updated badge for ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id} to ${badge.effective_badge_key}.`
+      );
+    } catch (error) {
+      setOwnerUtilityStatus(`Badge update failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
   };
 
   const handleOwnerApplyBalance = async () => {
@@ -1681,6 +2081,123 @@ export function Settings() {
     }
   };
 
+  const handleOwnerRevokeCape = async () => {
+    if (!selectedOwnerMember) return;
+    const capeId = ownerCapeRevokeId.trim();
+    if (!capeId) {
+      setOwnerUtilityStatus('Select a cape to remove first.');
+      return;
+    }
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      const result = await ownerRevokeCapeFromUserById(selectedOwnerMember.user_id, capeId);
+      setOwnerUtilityStatus(
+        result.removed
+          ? `Removed ${result.cape_slug} from ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id}.`
+          : `${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id} does not own ${result.cape_slug}.`
+      );
+    } catch (error) {
+      setOwnerUtilityStatus(`Cape removal failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
+  const handleOwnerRefreshPartnerWallet = async () => {
+    if (!selectedOwnerMember) return;
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      const row = await ownerGetPartnerWalletBalanceByUserId(selectedOwnerMember.user_id);
+      setOwnerSelectedPartnerWallet(row);
+      setOwnerUtilityStatus(
+        `Partner bucks for ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id}: ${row.balance_bb.toLocaleString()} BB.`
+      );
+    } catch (error) {
+      setOwnerUtilityStatus(`Partner bucks fetch failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
+  const handleOwnerGrantPartnerBucks = async () => {
+    if (!selectedOwnerMember) return;
+    const parsed = Number(ownerPartnerBucksDraft);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setOwnerUtilityStatus('Partner bucks grant must be greater than 0.');
+      return;
+    }
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      const row = await ownerGrantPartnerWalletByUserId(selectedOwnerMember.user_id, Math.floor(parsed));
+      setOwnerSelectedPartnerWallet(row);
+      setOwnerPartnerBucksDraft('');
+      setOwnerUtilityStatus(
+        `Granted ${Math.floor(parsed).toLocaleString()} partner bucks to ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id}. New balance: ${row.balance_bb.toLocaleString()} BB.`
+      );
+    } catch (error) {
+      setOwnerUtilityStatus(`Partner bucks grant failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
+  const handleOwnerApplyCustomCapeCredits = async () => {
+    if (!selectedOwnerMember) return;
+    const parsed = Number(ownerCustomCapeCreditsDraft);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setOwnerUtilityStatus('Free code credits must be a non-negative number.');
+      return;
+    }
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      const creditsRow = await ownerSetCustomCapeFreeCreditsByUserId(selectedOwnerMember.user_id, Math.floor(parsed));
+      setOwnerCustomCapeCreditsDraft(String(creditsRow.credits_remaining));
+      setOwnerUtilityStatus(
+        `Updated free custom cape code credits for ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id} to ${creditsRow.credits_remaining}.`
+      );
+    } catch (error) {
+      setOwnerUtilityStatus(`Free code credits update failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
+  const handleOwnerGenerateCustomCapeCode = async () => {
+    const lengthRaw = Number(customCapeCodeLength);
+    const length = Number.isFinite(lengthRaw) ? Math.max(4, Math.min(64, Math.floor(lengthRaw))) : 12;
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      const row = await ownerGenerateCustomCapeRewardCode(length, customCapeCodeCharset);
+      if (!row) throw new Error('code_generation_failed');
+      setCustomCapeCodeLength(String(length));
+      setCustomCapeCodes((current) => [row, ...current.filter((item) => item.id !== row.id)]);
+      setOwnerUtilityStatus(`Generated one-time code: ${row.code}`);
+    } catch (error) {
+      setOwnerUtilityStatus(`Code generation failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
+  const handleAddPartnerApplyQuestion = () => {
+    setPartnerApplyQuestionsDraft((current) => [...current, createDefaultPartnerQuestion()]);
+  };
+
+  const handleRemovePartnerApplyQuestion = (questionId: string) => {
+    setPartnerApplyQuestionsDraft((current) => current.filter((question) => question.id !== questionId));
+  };
+
+  const handlePatchPartnerApplyQuestion = (questionId: string, patch: Partial<PartnerApplyQuestionDraft>) => {
+    setPartnerApplyQuestionsDraft((current) =>
+      current.map((question) => (question.id === questionId ? { ...question, ...patch } : question))
+    );
+  };
+
   useEffect(() => {
     let mounted = true;
     const loadOwnerAccess = async () => {
@@ -1705,7 +2222,66 @@ export function Settings() {
   useEffect(() => {
     if (!selectedOwnerMember) return;
     setOwnerBalanceDraft(String(selectedOwnerMember.balance_bb ?? 0));
+    setOwnerRoleDraft(selectedOwnerMember.role);
   }, [selectedOwnerMember?.user_id, selectedOwnerMember?.balance_bb]);
+
+  useEffect(() => {
+    if (!selectedOwnerMember || !updateOwnerAccess) return;
+    let cancelled = false;
+    void ownerGetMemberBadgeByUserId(selectedOwnerMember.user_id)
+      .then((row) => {
+        if (cancelled) return;
+        setOwnerSelectedMemberBadge(row);
+        setOwnerBadgeDraft(row.custom_badge_key ?? 'auto');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setOwnerSelectedMemberBadge(null);
+        setOwnerBadgeDraft('auto');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOwnerMember?.user_id, updateOwnerAccess]);
+
+  useEffect(() => {
+    if (ownerCapeRevokeId && ownerCapeOptions.some((cape) => cape.id === ownerCapeRevokeId)) return;
+    setOwnerCapeRevokeId(ownerCapeOptions[0]?.id ?? '');
+  }, [ownerCapeOptions, ownerCapeRevokeId]);
+
+  useEffect(() => {
+    if (!selectedOwnerMember || !updateOwnerAccess) return;
+    let cancelled = false;
+    void ownerGetCustomCapeFreeCreditsByUserId(selectedOwnerMember.user_id)
+      .then((credits) => {
+        if (cancelled) return;
+        setOwnerCustomCapeCreditsDraft(String(credits));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setOwnerCustomCapeCreditsDraft('0');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOwnerMember?.user_id, updateOwnerAccess]);
+
+  useEffect(() => {
+    if (!selectedOwnerMember || !updateOwnerAccess) return;
+    let cancelled = false;
+    void ownerGetPartnerWalletBalanceByUserId(selectedOwnerMember.user_id)
+      .then((row) => {
+        if (cancelled) return;
+        setOwnerSelectedPartnerWallet(row);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setOwnerSelectedPartnerWallet(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOwnerMember?.user_id, updateOwnerAccess]);
 
   useEffect(() => {
     const syncFartKeybind = () => {
@@ -2099,6 +2675,11 @@ export function Settings() {
     localStorage.setItem(UNIVERSAL_LOADING_STYLE_KEY, next);
   };
 
+  const applyUniversalLoadingMode = (next: UniversalLoadingMode) => {
+    setUniversalLoadingMode(next);
+    localStorage.setItem(UNIVERSAL_LOADING_MODE_KEY, next);
+  };
+
   useEffect(() => {
     if (!showUniversalLoadingPreview) return;
     const timer = window.setTimeout(() => setShowUniversalLoadingPreview(false), 1300);
@@ -2136,13 +2717,68 @@ export function Settings() {
             <div className="flex items-center justify-between gap-3 pb-3 border-b border-white/10">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.16em] font-black g-accent-text">Owner Utility</p>
-                <h3 className="text-2xl font-extrabold text-white mt-1">Members & Economy</h3>
+                <h3 className="text-2xl font-extrabold text-white mt-1">
+                  {ownerUtilityTab === 'members-economy'
+                    ? 'Members & Economy'
+                    : ownerUtilityTab === 'cape-tools'
+                      ? 'Cape Tools'
+                      : ownerUtilityTab === 'mcsets-events'
+                        ? 'MCsets Events'
+                        : 'System'}
+                </h3>
               </div>
               <button
                 onClick={() => setOwnerUtilityOpen(false)}
                 className="g-btn h-10 px-3 text-xs font-extrabold uppercase tracking-[0.12em]"
               >
                 Close
+              </button>
+            </div>
+
+            <div className="mt-3 inline-flex w-full items-center gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-1">
+              <button
+                onClick={() => setOwnerUtilityTab('members-economy')}
+                className={clsx(
+                  'h-9 flex-1 rounded-lg border text-[10px] font-extrabold uppercase tracking-[0.12em]',
+                  ownerUtilityTab === 'members-economy'
+                    ? 'border-[var(--g-accent)] bg-white/[0.08] text-white'
+                    : 'border-white/12 bg-white/[0.02] text-white/70 hover:bg-white/[0.06]'
+                )}
+              >
+                Members & Economy
+              </button>
+              <button
+                onClick={() => setOwnerUtilityTab('cape-tools')}
+                className={clsx(
+                  'h-9 flex-1 rounded-lg border text-[10px] font-extrabold uppercase tracking-[0.12em]',
+                  ownerUtilityTab === 'cape-tools'
+                    ? 'border-[var(--g-accent)] bg-white/[0.08] text-white'
+                    : 'border-white/12 bg-white/[0.02] text-white/70 hover:bg-white/[0.06]'
+                )}
+              >
+                Cape Tools
+              </button>
+              <button
+                onClick={() => setOwnerUtilityTab('mcsets-events')}
+                className={clsx(
+                  'h-9 flex-1 rounded-lg border text-[10px] font-extrabold uppercase tracking-[0.12em]',
+                  ownerUtilityTab === 'mcsets-events'
+                    ? 'border-[var(--g-accent)] bg-white/[0.08] text-white'
+                    : 'border-white/12 bg-white/[0.02] text-white/70 hover:bg-white/[0.06]'
+                )}
+              >
+                MCsets Events
+              </button>
+              <button
+                onClick={() => setOwnerUtilityTab('system')}
+                className={clsx(
+                  'h-9 flex-1 rounded-lg border text-[10px] font-extrabold uppercase tracking-[0.12em]',
+                  ownerUtilityTab === 'system'
+                    ? 'border-[var(--g-accent)] bg-white/[0.08] text-white'
+                    : 'border-white/12 bg-white/[0.02] text-white/70 hover:bg-white/[0.06]'
+                )}
+              >
+                System
               </button>
             </div>
 
@@ -2187,7 +2823,7 @@ export function Settings() {
               </aside>
 
               <section className="min-h-0 rounded-xl border border-white/10 bg-white/[0.02] p-4 overflow-auto space-y-4">
-                {selectedOwnerMember ? (
+                {(ownerUtilityTab === 'members-economy' || ownerUtilityTab === 'cape-tools') && selectedOwnerMember ? (
                   <>
                     <div className="rounded-lg border border-white/10 bg-black/40 p-3">
                       <p className="text-[11px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Selected Member</p>
@@ -2196,53 +2832,488 @@ export function Settings() {
                       <p className="text-xs text-white/55 mt-1">Role: {selectedOwnerMember.role}</p>
                     </div>
 
-                    <div className="rounded-lg border border-white/10 bg-black/40 p-3 space-y-3">
-                      <p className="text-[11px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Set Balance</p>
-                      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
-                        <input
-                          value={ownerBalanceDraft}
-                          onChange={(event) => setOwnerBalanceDraft(event.target.value)}
-                          placeholder="Balance BB"
-                          className="g-input h-10 text-sm"
-                        />
-                        <button
-                          onClick={() => { void handleOwnerApplyBalance(); }}
-                          disabled={ownerUtilityBusy}
-                          className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
-                        >
-                          Apply Balance
-                        </button>
+                    {ownerUtilityTab === 'members-economy' && (
+                      <div className="rounded-lg border border-white/10 bg-black/40 p-3 space-y-3">
+                        <p className="text-[11px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Member Controls</p>
+                        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                          <select
+                            value={ownerRoleDraft}
+                            onChange={(event) => setOwnerRoleDraft(event.target.value as 'user' | 'partner' | 'owner')}
+                            className="g-input h-10 text-sm"
+                          >
+                            <option value="user">user</option>
+                            <option value="partner">partner</option>
+                            <option value="owner">owner</option>
+                          </select>
+                          <button
+                            onClick={() => { void handleOwnerApplyRole(); }}
+                            disabled={ownerUtilityBusy}
+                            className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                          >
+                            Set Role
+                          </button>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-black/30 p-3 space-y-2">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-[10px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Tab/Chat/Nametag Badge</p>
+                              <p className="text-xs text-white/60 mt-1">
+                                Current live badge: {ownerSelectedMemberBadge?.effective_badge_key ?? 'loading'}
+                                {ownerSelectedMemberBadge?.custom_badge_key ? ` | custom override: ${ownerSelectedMemberBadge.custom_badge_key}` : ' | using role default'}
+                              </p>
+                              <p className="text-xs text-white/45 mt-1">
+                                Asset: {ownerSelectedMemberBadge ? `bloom-menu/src/client/resources/assets/bloomcosmetics/textures/font/${OWNER_BADGE_ASSET_META[ownerSelectedMemberBadge.effective_badge_key].file}` : 'loading'}
+                              </p>
+                              <p className="text-xs text-white/45 mt-1">
+                                Glyph: {ownerSelectedMemberBadge ? OWNER_BADGE_ASSET_META[ownerSelectedMemberBadge.effective_badge_key].char : 'loading'}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                            <select
+                              value={ownerBadgeDraft}
+                              onChange={(event) => setOwnerBadgeDraft(event.target.value as 'auto' | BadgeKey)}
+                              className="g-input h-10 text-sm"
+                            >
+                              {OWNER_BADGE_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => { void handleOwnerApplyBadge(); }}
+                              disabled={ownerUtilityBusy}
+                              className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                            >
+                              Set Badge
+                            </button>
+                          </div>
+                          <p className="text-xs text-white/45">
+                            {OWNER_BADGE_OPTIONS.find((option) => option.value === ownerBadgeDraft)?.description}
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                          <input
+                            value={ownerBalanceDraft}
+                            onChange={(event) => setOwnerBalanceDraft(event.target.value)}
+                            placeholder="Balance BB"
+                            className="g-input h-10 text-sm"
+                          />
+                          <button
+                            onClick={() => { void handleOwnerApplyBalance(); }}
+                            disabled={ownerUtilityBusy}
+                            className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                          >
+                            Apply Balance
+                          </button>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-2">
+                          <p className="text-[10px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Partner Bucks</p>
+                          <p className="text-sm font-extrabold text-white mt-1">
+                            {(ownerSelectedPartnerWallet?.balance_bb ?? 0).toLocaleString()} BB
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-2">
+                          <input
+                            value={ownerPartnerBucksDraft}
+                            onChange={(event) => setOwnerPartnerBucksDraft(event.target.value)}
+                            placeholder="Partner bucks to grant"
+                            className="g-input h-10 text-sm"
+                          />
+                          <button
+                            onClick={() => { void handleOwnerRefreshPartnerWallet(); }}
+                            disabled={ownerUtilityBusy}
+                            className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                          >
+                            Refresh Bucks
+                          </button>
+                          <button
+                            onClick={() => { void handleOwnerGrantPartnerBucks(); }}
+                            disabled={ownerUtilityBusy}
+                            className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                          >
+                            Grant Bucks
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                          <input
+                            value={ownerCustomCapeCreditsDraft}
+                            onChange={(event) => setOwnerCustomCapeCreditsDraft(event.target.value)}
+                            placeholder="Free custom cape code credits"
+                            className="g-input h-10 text-sm"
+                          />
+                          <button
+                            onClick={() => { void handleOwnerApplyCustomCapeCredits(); }}
+                            disabled={ownerUtilityBusy}
+                            className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                          >
+                            Apply Credits
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    )}
 
-                    <div className="rounded-lg border border-white/10 bg-black/40 p-3 space-y-3">
-                      <p className="text-[11px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Grant Cape For Free</p>
-                      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
-                        <input
-                          value={ownerCapeGrantInput}
-                          onChange={(event) => setOwnerCapeGrantInput(event.target.value)}
-                          placeholder="Cape name or slug"
-                          className="g-input h-10 text-sm"
-                        />
-                        <button
-                          onClick={() => { void handleOwnerGrantCape(); }}
-                          disabled={ownerUtilityBusy}
-                          className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
-                        >
-                          Grant Cape
-                        </button>
+                    {ownerUtilityTab === 'cape-tools' && (
+                      <div className="rounded-lg border border-white/10 bg-black/40 p-3 space-y-3">
+                        <p className="text-[11px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Grant Cape For Free</p>
+                        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                          <input
+                            value={ownerCapeGrantInput}
+                            onChange={(event) => setOwnerCapeGrantInput(event.target.value)}
+                            placeholder="Cape name or slug"
+                            className="g-input h-10 text-sm"
+                          />
+                          <button
+                            onClick={() => { void handleOwnerGrantCape(); }}
+                            disabled={ownerUtilityBusy}
+                            className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                          >
+                            Grant Cape
+                          </button>
+                        </div>
+                        <p className="text-[11px] uppercase tracking-[0.12em] text-white/55 font-extrabold pt-2">Remove Cape From User</p>
+                        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                          <select
+                            value={ownerCapeRevokeId}
+                            onChange={(event) => setOwnerCapeRevokeId(event.target.value)}
+                            className="g-input h-10 text-sm"
+                          >
+                            {ownerCapeOptions.map((cape) => (
+                              <option key={cape.id} value={cape.id}>
+                                {cape.name} ({cape.slug})
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => { void handleOwnerRevokeCape(); }}
+                            disabled={ownerUtilityBusy || !ownerCapeRevokeId}
+                            className="h-10 px-4 rounded-lg border border-red-400/40 bg-red-500/15 text-xs font-extrabold uppercase tracking-[0.12em] text-red-100 disabled:opacity-50"
+                          >
+                            Remove Cape
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    )}
 
                     {ownerUtilityStatus && (
                       <p className="text-xs text-white/70">{ownerUtilityStatus}</p>
                     )}
                   </>
                 ) : (
-                  <p className="text-sm text-white/60">Select a member from the left panel.</p>
+                  ownerUtilityTab === 'mcsets-events' ? (
+                    <div className="rounded-lg border border-white/10 bg-black/40 p-4 space-y-2">
+                      <p className="text-sm font-extrabold text-white">MCsets Events</p>
+                      <p className="text-xs text-white/60">Webhook processing is active in Supabase Edge Functions.</p>
+                      <p className="text-xs text-white/60">Use server queries/logs to inspect `commerce_mcsets_events` and `commerce_wallet_ledger` entries.</p>
+                    </div>
+                  ) : ownerUtilityTab === 'system' ? (
+                    <div className="rounded-lg border border-white/10 bg-black/40 p-4 space-y-4">
+                      <p className="text-sm font-extrabold text-white">Custom Cape One-Time Codes</p>
+                      <p className="text-xs text-white/60">Generate single-use codes that grant one free custom cape export.</p>
+                      <div className="grid grid-cols-1 md:grid-cols-[120px_180px_auto] gap-2">
+                        <input
+                          value={customCapeCodeLength}
+                          onChange={(event) => setCustomCapeCodeLength(event.target.value)}
+                          className="g-input h-10 text-sm"
+                          placeholder="Length"
+                        />
+                        <select
+                          value={customCapeCodeCharset}
+                          onChange={(event) => setCustomCapeCodeCharset(event.target.value as 'letters' | 'numbers' | 'both')}
+                          className="g-input h-10 text-sm"
+                        >
+                          <option value="letters">letters</option>
+                          <option value="numbers">numbers</option>
+                          <option value="both">both</option>
+                        </select>
+                        <button
+                          onClick={() => { void handleOwnerGenerateCustomCapeCode(); }}
+                          disabled={ownerUtilityBusy}
+                          className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                        >
+                          Generate One-Time Code
+                        </button>
+                      </div>
+                      <div className="rounded-lg border border-white/10 bg-black/30 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-[11px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Recent Codes</p>
+                          <button
+                            onClick={() => { void refreshOwnerCustomCapeCodes(); }}
+                            disabled={customCapeCodesLoading}
+                            className="g-btn h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                          >
+                            {customCapeCodesLoading ? 'Refreshing...' : 'Refresh'}
+                          </button>
+                        </div>
+                        <div className="max-h-56 overflow-auto space-y-1 pr-1">
+                          {customCapeCodes.map((code) => (
+                            <div key={code.id} className="rounded border border-white/10 bg-white/[0.02] px-2.5 py-2">
+                              <p className="text-sm font-extrabold text-white">{code.code}</p>
+                              <p className="text-[10px] text-white/60 mt-1">
+                                {code.charset} | len {code.code_length} | used {code.used_count}/{code.max_uses} | {code.is_active ? 'active' : 'inactive'}
+                              </p>
+                            </div>
+                          ))}
+                          {!customCapeCodesLoading && customCapeCodes.length === 0 && (
+                            <p className="text-xs text-white/55">No codes generated yet.</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-white/60">Select a member from the left panel.</p>
+                  )
                 )}
                 {ownerMembersError && (
                   <p className="text-xs text-red-300">{ownerMembersError}</p>
+                )}
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+      {partnerApplyEditorOpen && (
+        <div className="fixed inset-0 z-[210]">
+          <button
+            aria-label="Close Partner Form Editor"
+            onClick={() => setPartnerApplyEditorOpen(false)}
+            className="absolute inset-0 bg-black/75 backdrop-blur-sm"
+          />
+          <div className="absolute left-1/2 top-1/2 w-[min(1100px,96vw)] h-[min(780px,94vh)] -translate-x-1/2 -translate-y-1/2 rounded-[22px] border border-white/20 bg-[#08090a] p-5 flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.16em] font-black text-white/45">Owner Settings</p>
+                <h3 className="text-2xl font-extrabold text-white mt-1">Partner Apply Form Builder</h3>
+              </div>
+              <button onClick={() => setPartnerApplyEditorOpen(false)} className="g-btn h-10 px-3 text-xs font-extrabold uppercase tracking-[0.12em]">
+                Close
+              </button>
+            </div>
+
+            <div className="mt-4 flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-1">
+              {(['individual', 'server'] as PartnerApplyEditorAudience[]).map((audience) => (
+                <button
+                  key={audience}
+                  onClick={() => setPartnerApplyAudience(audience)}
+                  className={clsx(
+                    'h-9 flex-1 rounded-lg border text-[10px] font-extrabold uppercase tracking-[0.12em]',
+                    partnerApplyAudience === audience
+                      ? 'border-[var(--g-accent)] bg-white/[0.08] text-white'
+                      : 'border-white/12 bg-white/[0.02] text-white/70 hover:bg-white/[0.06]'
+                  )}
+                >
+                  {audience === 'individual' ? 'For Individual Creator' : 'For Server Application'}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-4 min-h-0 flex-1 grid grid-cols-1 xl:grid-cols-[340px_1fr] gap-3">
+              <aside className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-3 overflow-auto">
+                <label className="block">
+                  <p className="text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/55">Form Title</p>
+                  <input
+                    value={partnerApplyTitleDraft}
+                    onChange={(event) => setPartnerApplyTitleDraft(event.target.value)}
+                    className="g-input mt-2 h-10 text-sm"
+                    placeholder="Partner Application"
+                  />
+                </label>
+                <label className="block">
+                  <p className="text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/55">Form Description</p>
+                  <textarea
+                    value={partnerApplyDescriptionDraft}
+                    onChange={(event) => setPartnerApplyDescriptionDraft(event.target.value)}
+                    className="g-input mt-2 h-24 text-sm resize-none"
+                    placeholder="Short description shown at the top."
+                  />
+                </label>
+                <div className="rounded-lg border border-white/10 bg-black/40 p-3">
+                  <p className="text-[10px] uppercase tracking-[0.12em] font-extrabold text-white/55">Tips</p>
+                  <p className="text-xs text-white/60 mt-1">
+                    Add helper links per question. Users can click those links directly in the apply modal.
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => { void refreshPartnerApplicationForms(); }}
+                    disabled={partnerApplyEditorBusy}
+                    className="g-btn h-10 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                  >
+                    Refresh
+                  </button>
+                  <button
+                    onClick={() => { void handleSavePartnerApplicationForm(); }}
+                    disabled={partnerApplyEditorBusy}
+                    className="g-btn-accent h-10 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                  >
+                    {partnerApplyEditorBusy ? 'Saving...' : 'Save Form'}
+                  </button>
+                </div>
+                {partnerApplyEditorStatus && <p className="text-xs text-white/70">{partnerApplyEditorStatus}</p>}
+              </aside>
+
+              <section className="rounded-xl border border-white/10 bg-white/[0.02] p-3 overflow-auto">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/55">Questions</p>
+                  <button onClick={handleAddPartnerApplyQuestion} className="g-btn h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]">
+                    Add Question
+                  </button>
+                </div>
+                <div className="mt-3 space-y-3">
+                  {partnerApplyQuestionsDraft.map((question, index) => (
+                    <div key={question.id} className="rounded-lg border border-white/10 bg-black/35 p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] uppercase tracking-[0.12em] font-extrabold text-white/55">Question {index + 1}</p>
+                        <button
+                          onClick={() => handleRemovePartnerApplyQuestion(question.id)}
+                          className="h-7 px-2 rounded-md border border-red-300/40 bg-red-500/20 text-[10px] font-extrabold uppercase tracking-[0.12em] text-red-100"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <input
+                        value={question.label}
+                        onChange={(event) => handlePatchPartnerApplyQuestion(question.id, { label: event.target.value })}
+                        placeholder="Question text..."
+                        className="g-input h-10 text-sm"
+                      />
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                        <select
+                          value={question.type}
+                          onChange={(event) => handlePatchPartnerApplyQuestion(question.id, { type: event.target.value as PartnerApplicationQuestionType })}
+                          className="g-input h-10 text-sm"
+                        >
+                          {PARTNER_APPLICATION_QUESTION_TYPES.map((type) => (
+                            <option key={type.value} value={type.value}>{type.label}</option>
+                          ))}
+                        </select>
+                        <input
+                          value={question.placeholder ?? ''}
+                          onChange={(event) => handlePatchPartnerApplyQuestion(question.id, { placeholder: event.target.value })}
+                          placeholder="Placeholder..."
+                          className="g-input h-10 text-sm"
+                        />
+                        <label className="h-10 rounded-lg border border-white/10 bg-white/[0.03] px-3 inline-flex items-center gap-2 text-xs font-extrabold uppercase tracking-[0.12em] text-white/70">
+                          <input
+                            type="checkbox"
+                            checked={question.required}
+                            onChange={(event) => handlePatchPartnerApplyQuestion(question.id, { required: event.target.checked })}
+                          />
+                          Required
+                        </label>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <input
+                          value={question.helper_text ?? ''}
+                          onChange={(event) => handlePatchPartnerApplyQuestion(question.id, { helper_text: event.target.value })}
+                          placeholder="Helper text..."
+                          className="g-input h-10 text-sm"
+                        />
+                        <input
+                          value={question.helper_link ?? ''}
+                          onChange={(event) => handlePatchPartnerApplyQuestion(question.id, { helper_link: event.target.value })}
+                          placeholder="Helper link (https://...)"
+                          className="g-input h-10 text-sm"
+                        />
+                      </div>
+                      {(question.type === 'single_choice' || question.type === 'multi_choice') && (
+                        <textarea
+                          value={question.options_text ?? ''}
+                          onChange={(event) => handlePatchPartnerApplyQuestion(question.id, { options_text: event.target.value })}
+                          placeholder={'Options (one per line)\nYouTube\nTikTok\nDiscord'}
+                          className="g-input h-24 text-sm resize-none"
+                        />
+                      )}
+                    </div>
+                  ))}
+                  {partnerApplyQuestionsDraft.length === 0 && (
+                    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4 text-sm text-white/60">
+                      No questions yet. Add your first question.
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+      {partnerApplyResponsesOpen && (
+        <div className="fixed inset-0 z-[210]">
+          <button
+            aria-label="Close Partner Application Responses"
+            onClick={() => setPartnerApplyResponsesOpen(false)}
+            className="absolute inset-0 bg-black/75 backdrop-blur-sm"
+          />
+          <div className="absolute left-1/2 top-1/2 w-[min(1100px,96vw)] h-[min(780px,94vh)] -translate-x-1/2 -translate-y-1/2 rounded-[22px] border border-white/20 bg-[#08090a] p-5 flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.16em] font-black text-white/45">Owner Settings</p>
+                <h3 className="text-2xl font-extrabold text-white mt-1">Partner Application Responses</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { void refreshPartnerApplicationResponses(); }}
+                  disabled={partnerApplyResponsesBusy}
+                  className="g-btn h-10 px-3 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                >
+                  Refresh
+                </button>
+                <button onClick={() => setPartnerApplyResponsesOpen(false)} className="g-btn h-10 px-3 text-xs font-extrabold uppercase tracking-[0.12em]">
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 min-h-0 flex-1 grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-3">
+              <aside className="rounded-xl border border-white/10 bg-white/[0.02] p-3 overflow-auto space-y-1">
+                {partnerApplyResponses.map((application) => {
+                  const active = application.id === selectedPartnerApplyResponseId;
+                  const label = application.applicant_name || application.username || application.display_name || application.user_id;
+                  return (
+                    <button
+                      key={application.id}
+                      onClick={() => setSelectedPartnerApplyResponseId(application.id)}
+                      className={clsx(
+                        'w-full rounded-lg border p-3 text-left',
+                        active
+                          ? 'border-[var(--g-accent)] bg-[color:color-mix(in_srgb,var(--g-accent)_14%,transparent)]'
+                          : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.05]'
+                      )}
+                    >
+                      <p className="text-sm font-extrabold text-white truncate">{label}</p>
+                      <p className="text-[10px] text-white/60 mt-1 uppercase tracking-[0.12em]">{application.audience === 'server' ? 'Server' : 'Individual'}</p>
+                      <p className="text-[10px] text-white/45 mt-1">{new Date(application.created_at).toLocaleString()}</p>
+                    </button>
+                  );
+                })}
+                {!partnerApplyResponsesBusy && partnerApplyResponses.length === 0 && (
+                  <p className="text-xs text-white/55 px-1 py-2">No responses yet.</p>
+                )}
+              </aside>
+
+              <section className="rounded-xl border border-white/10 bg-white/[0.02] p-4 overflow-auto">
+                {selectedPartnerApplyResponse ? (
+                  <>
+                    <div className="rounded-lg border border-white/10 bg-black/35 p-3">
+                      <p className="text-[10px] uppercase tracking-[0.12em] font-extrabold text-white/55">Application Info</p>
+                      <p className="text-xl font-extrabold text-white mt-1">{selectedPartnerApplyResponse.applicant_name || selectedPartnerApplyResponse.username || selectedPartnerApplyResponse.display_name || selectedPartnerApplyResponse.user_id}</p>
+                      <p className="text-xs text-white/60 mt-1">Type: {selectedPartnerApplyResponse.audience === 'server' ? 'Server' : 'Individual'}</p>
+                      <p className="text-xs text-white/60 mt-1">Submitted: {new Date(selectedPartnerApplyResponse.created_at).toLocaleString()}</p>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {Object.entries((selectedPartnerApplyResponse.answers ?? {}) as Record<string, unknown>).map(([key, value]) => (
+                        <div key={key} className="rounded-lg border border-white/10 bg-black/30 p-3">
+                          <p className="text-[10px] uppercase tracking-[0.12em] font-extrabold text-white/55">{key.replace(/_/g, ' ')}</p>
+                          <p className="text-sm text-white/85 mt-1 break-words">
+                            {Array.isArray(value) ? value.join(', ') : value === null || value === undefined || value === '' ? '—' : String(value)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-white/60">Select an application from the left panel.</p>
                 )}
               </section>
             </div>
@@ -2261,9 +3332,7 @@ export function Settings() {
         <button onClick={() => setTab('keybinds')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'keybinds' ? 'bg-white/15 text-white' : 'text-white/55')}>Keybinds</button>
         <button onClick={() => setTab('widgets')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'widgets' ? 'bg-white/15 text-white' : 'text-white/55')}>Widgets</button>
         <button onClick={() => setTab('updates')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'updates' ? 'bg-white/15 text-white' : 'text-white/55')}>Updates</button>
-        {updateOwnerAccess && (
-          <button onClick={() => setTab('owner-utility')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'owner-utility' ? 'bg-white/15 text-white' : 'text-white/55')}>Owner Utility</button>
-        )}
+        <button onClick={() => setTab('owner-utility')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'owner-utility' ? 'bg-white/15 text-white' : 'text-white/55')}>Owner Utility</button>
         <button onClick={() => setTab('extra')} className={clsx('px-4 py-2 rounded-lg text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'extra' ? 'bg-white/15 text-white' : 'text-white/55')}>Extra</button>
       </section>
 
@@ -2612,6 +3681,26 @@ export function Settings() {
                   Preview
                 </button>
               </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {UNIVERSAL_LOADING_MODES.map((mode) => (
+                  <button
+                    key={mode.id}
+                    onClick={() => {
+                      applyUniversalLoadingMode(mode.id);
+                      setShowUniversalLoadingPreview(true);
+                    }}
+                    className={clsx(
+                      'rounded-lg border p-3 text-left transition',
+                      universalLoadingMode === mode.id
+                        ? 'border-[var(--g-accent)] bg-white/[0.06] shadow-[0_0_0_1px_var(--g-accent-soft)]'
+                        : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.04]'
+                    )}
+                  >
+                    <p className="text-sm font-extrabold text-white">{mode.label}</p>
+                    <p className="mt-1 text-xs g-muted">{mode.description}</p>
+                  </button>
+                ))}
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                 {UNIVERSAL_LOADING_STYLES.map((style) => (
                   <button
@@ -2740,6 +3829,69 @@ export function Settings() {
           </AppearanceDropdown>
               )}
 
+              {appearanceSection === 'minecraft' && (
+                <>
+                  <AppearanceDropdown title="Bloom Logo Visibility" description="Client-side Bloom badge visibility for player labels.">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {[
+                        { key: 'showBloomNametagLogo', title: 'Nametags', body: 'Show or hide the Bloom logo next to player nametags.' },
+                        { key: 'showBloomTabLogo', title: 'Tab List', body: 'Show or hide the Bloom logo in the tab list.' },
+                        { key: 'showBloomChatLogo', title: 'Chat', body: 'Show or hide the Bloom logo in chat messages.' }
+                      ].map((item) => {
+                        const enabled = minecraftPrefs[item.key as keyof typeof minecraftPrefs] as boolean;
+                        return (
+                          <div key={item.key} className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+                            <div>
+                              <p className="text-sm font-extrabold text-white">{item.title}</p>
+                              <p className="mt-1 text-xs g-muted">{item.body}</p>
+                            </div>
+                            <button
+                              onClick={() => {
+                                void persistMinecraftPrefs({
+                                  ...minecraftPrefs,
+                                  [item.key]: !enabled
+                                });
+                              }}
+                              disabled={minecraftPrefsLoading}
+                              className={clsx('g-btn h-10 w-full px-4 text-xs font-extrabold uppercase tracking-[0.12em]', enabled ? 'g-btn-accent' : '')}
+                            >
+                              {enabled ? 'Visible' : 'Hidden'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+                      <div>
+                        <p className="text-sm font-extrabold text-white">Logo Side</p>
+                        <p className="mt-1 text-xs g-muted">Choose whether the Bloom logo appears to the left or right of player names. This updates live in-game.</p>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {([
+                          { id: 'left', label: 'Left Of Name', body: 'Render the logo before the player name.' },
+                          { id: 'right', label: 'Right Of Name', body: 'Render the logo after the player name.' }
+                        ] as const).map((option) => (
+                          <button
+                            key={option.id}
+                            onClick={() => { void persistMinecraftPrefs({ ...minecraftPrefs, bloomLogoSide: option.id }); }}
+                            disabled={minecraftPrefsLoading}
+                            className={clsx(
+                              'rounded-xl border p-3 text-left disabled:opacity-50',
+                              minecraftPrefs.bloomLogoSide === option.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]'
+                            )}
+                          >
+                            <p className="text-sm font-extrabold text-white">{option.label}</p>
+                            <p className="mt-1 text-xs g-muted">{option.body}</p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {minecraftPrefsStatus && <p className="text-xs text-emerald-200">{minecraftPrefsStatus}</p>}
+                    {minecraftPrefsError && <p className="text-xs text-red-300">{minecraftPrefsError}</p>}
+                  </AppearanceDropdown>
+                </>
+              )}
+
               {appearanceSection === 'sidebar' && (
                 <>
           <AppearanceDropdown title="Layout Density" description="Controls overall spacing and scale.">
@@ -2826,8 +3978,6 @@ export function Settings() {
                 { id: 'marketplace', label: 'Marketplace' },
                 { id: 'importer', label: 'Importer' },
                 { id: 'widgets', label: 'Widgets' },
-                { id: 'cosmetics', label: 'Cosmetic Locker' },
-                { id: 'custom-cape', label: 'Custom Cape' },
                 { id: 'chat', label: 'Chat' },
                 { id: 'script-studio', label: 'Script Studio (IDE)' },
                 { id: 'host-server', label: 'Host Server' },
@@ -3329,17 +4479,46 @@ export function Settings() {
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
               <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Owner Utility</p>
               <p className="text-xs g-muted mt-1">Manage Bloom members. Set balances and grant capes for free from one panel.</p>
-              <button
-                onClick={() => { void openOwnerUtility(); }}
-                className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]"
-              >
-                Open Owner Utility
-              </button>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <button
+                  onClick={() => { void openOwnerUtility(); }}
+                  className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]"
+                >
+                  Open Owner Utility
+                </button>
+                <button
+                  onClick={() => { void openPartnerApplicationEditor(); }}
+                  className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]"
+                >
+                  Edit Apply Form
+                </button>
+                <button
+                  onClick={() => { void openPartnerApplicationResponses(); }}
+                  className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]"
+                >
+                  Application Responses
+                </button>
+              </div>
             </div>
           )}
         </section>
       ) : (
         <section className="g-panel p-6 space-y-4">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">BUD Assistant</p>
+                <p className="text-xs g-muted mt-1">Show the built-in Bloom assistant in the bottom-right corner for install help, settings guidance, and common troubleshooting.</p>
+              </div>
+              <button
+                data-on={budEnabled}
+                onClick={() => applyBudEnabled(!budEnabled)}
+                className="g-toggle"
+                aria-label="Toggle BUD assistant"
+              />
+            </div>
+          </div>
+
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -3494,3 +4673,4 @@ export function Settings() {
     </div>
   );
 }
+

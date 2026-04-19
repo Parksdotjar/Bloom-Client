@@ -52,6 +52,7 @@ export function Instances() {
   }, [activeDownloads, launchingInstanceId]);
 
   const launchStatus = launchingInstanceId ? activeDownloads[launchingInstanceId]?.status || 'Preparing launch...' : null;
+  const launchProgress = launchingInstanceId ? activeDownloads[launchingInstanceId]?.progress ?? null : null;
 
   const handleLaunch = async (inst: typeof instances[number]) => {
     if (activeDownloads[inst.id] && activeDownloads[inst.id].status !== 'Complete') return;
@@ -182,6 +183,7 @@ export function Instances() {
         eyebrow="Launching"
         title={launchStatus || 'Preparing launch...'}
         description="Bloom is installing files and starting Minecraft."
+        progress={launchProgress}
       />
       <PageWidgets pageKey="instances" widgets={widgets} />
       <CreateInstanceModal

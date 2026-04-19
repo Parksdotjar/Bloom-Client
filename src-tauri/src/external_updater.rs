@@ -5,6 +5,8 @@ use tauri::AppHandle;
 
 const GITHUB_LATEST_RELEASE_API: &str =
     "https://api.github.com/repos/Parksdotjar/Bloom-Client/releases/latest";
+const SUPABASE_LATEST_JSON_URL: &str =
+    "https://sb.bloomclient.org/storage/v1/object/public/updates/latest.json";
 
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {
@@ -16,6 +18,24 @@ struct GitHubRelease {
 struct GitHubAsset {
     name: String,
     browser_download_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupabaseManifest {
+    version: String,
+    installer_url: Option<String>,
+    asset_name: Option<String>,
+    windows: Option<SupabaseWindowsManifest>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupabaseWindowsManifest {
+    installer_url: Option<String>,
+    asset_name: Option<String>,
+    nsis_url: Option<String>,
+    nsis_asset_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -64,9 +84,67 @@ fn find_windows_installer(assets: &[GitHubAsset]) -> Option<&GitHubAsset> {
     })
 }
 
+async fn external_update_check_supabase(
+    current_version: &str,
+) -> Result<Option<ExternalUpdateInfo>, String> {
+    let client = reqwest::Client::new();
+    let response = client
+        .get(SUPABASE_LATEST_JSON_URL)
+        .header(reqwest::header::USER_AGENT, "BloomClientUpdater/1.0")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch Supabase latest.json: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Supabase latest.json returned HTTP {}",
+            response.status()
+        ));
+    }
+
+    let manifest: SupabaseManifest = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Supabase latest.json: {e}"))?;
+
+    let latest_version = normalize_version(&manifest.version);
+    if compare_versions(current_version, &latest_version) != std::cmp::Ordering::Less {
+        return Ok(None);
+    }
+
+    let mut installer_url = manifest
+        .windows
+        .as_ref()
+        .and_then(|w| w.installer_url.clone())
+        .or_else(|| manifest.windows.as_ref().and_then(|w| w.nsis_url.clone()))
+        .or(manifest.installer_url.clone())
+        .ok_or_else(|| "Supabase manifest missing installer URL".to_string())?;
+
+    let asset_name = manifest
+        .windows
+        .as_ref()
+        .and_then(|w| w.asset_name.clone())
+        .or_else(|| manifest.windows.as_ref().and_then(|w| w.nsis_asset_name.clone()))
+        .or(manifest.asset_name.clone())
+        .unwrap_or_else(|| "BloomClient-latest-x64-setup.exe".to_string());
+
+    // Guard against manifest URLs containing raw spaces that can 400 in downloader.
+    installer_url = installer_url.replace(' ', "%20");
+
+    Ok(Some(ExternalUpdateInfo {
+        version: latest_version,
+        installer_url,
+        asset_name,
+    }))
+}
+
 #[tauri::command]
 pub async fn external_update_check(app: AppHandle) -> Result<Option<ExternalUpdateInfo>, String> {
-    let current_version = app.package_info().version.to_string();
+    let current_version = normalize_version(&app.package_info().version.to_string());
+
+    if let Ok(update) = external_update_check_supabase(&current_version).await {
+        return Ok(update);
+    }
 
     let client = reqwest::Client::new();
     let response = client
@@ -86,7 +164,6 @@ pub async fn external_update_check(app: AppHandle) -> Result<Option<ExternalUpda
         .map_err(|e| format!("Failed to parse release response: {e}"))?;
 
     let latest_version = normalize_version(&release.tag_name);
-    let current_version = normalize_version(&current_version);
 
     if compare_versions(&current_version, &latest_version) != std::cmp::Ordering::Less {
         return Ok(None);

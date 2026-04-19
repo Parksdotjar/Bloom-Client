@@ -47,7 +47,8 @@
   --g-btn-font-family: var(--g-font-family);
   --g-btn-font-weight: 800;
   --g-btn-letter-spacing: 0.02em;
-  --g-dropdown-opacity: 92%;
+  --g-dropdown-opacity: 60%;
+  --g-text-shadow: 0px 1px 6px rgba(0,0,0,0.96), 0 0 8px rgba(0,0,0,0.58);
 }
 
 html[data-theme='dark'] {
@@ -734,6 +735,10 @@ html[data-card-style='outline'] {
   h3 {
     font-weight: var(--g-heading-weight);
     letter-spacing: -0.02em;
+  }
+
+  .g-window-shell :is(h1, h2, h3, h4, h5, h6, p, span, label, button, a, li, dt, dd, small, strong) {
+    text-shadow: var(--g-text-shadow);
   }
 
   * {

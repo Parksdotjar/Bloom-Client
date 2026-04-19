@@ -1,0 +1,25 @@
+{
+  "version": "1.4.2",
+  "installerUrl": "https://sb.bloomclient.org/storage/v1/object/public/updates/Bloom%20Client_1.4.2_x64-setup.exe",
+  "assetName": "Bloom Client_1.4.2_x64-setup.exe",
+  "windows": {
+    "installerUrl": "https://sb.bloomclient.org/storage/v1/object/public/updates/Bloom%20Client_1.4.2_x64-setup.exe",
+    "assetName": "Bloom Client_1.4.2_x64-setup.exe",
+    "nsisUrl": "https://sb.bloomclient.org/storage/v1/object/public/updates/Bloom%20Client_1.4.2_x64-setup.exe",
+    "nsisAssetName": "Bloom Client_1.4.2_x64-setup.exe",
+    "msiUrl": "https://sb.bloomclient.org/storage/v1/object/public/updates/Bloom%20Client_1.4.2_x64_en-US.msi",
+    "msiAssetName": "Bloom Client_1.4.2_x64_en-US.msi"
+  },
+  "artifacts": {
+    "nsis": {
+      "fileName": "Bloom Client_1.4.2_x64-setup.exe",
+      "size": 13085565,
+      "sha256": "EC450C076DC3E7F978AF281E26934FC58B027C8A012C33C37EDE78822CD85A6C"
+    },
+    "msi": {
+      "fileName": "Bloom Client_1.4.2_x64_en-US.msi",
+      "size": 15429632,
+      "sha256": "AAE83F10AC097F363BE4BEEB928E5EEF21A4B0541C5C053545AAE16E001FDCDE"
+    }
+  }
+}

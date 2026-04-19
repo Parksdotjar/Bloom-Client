@@ -1,4 +1,4 @@
-import type { Instance, MarketplaceMod } from '../services/tauri';
+import type { Instance, MarketplaceInstallModResult, MarketplaceMod } from '../services/tauri';
 import type { ConsoleLogLevel } from '../constants/console';
 
 export type ConsoleOutputKind = 'command' | 'info' | 'success' | 'warn' | 'error';
@@ -65,7 +65,7 @@ export type ConsoleCommandContext = {
     loader?: string,
     gameVersion?: string
   ) => Promise<MarketplaceMod[]>;
-  installMarketplaceMod: (instanceId: string, source: 'modrinth' | 'curseforge', projectId: string) => Promise<string>;
+  installMarketplaceMod: (instanceId: string, source: 'modrinth' | 'curseforge', projectId: string) => Promise<MarketplaceInstallModResult>;
   installFabricApi: (instanceId: string) => Promise<string>;
   getModuleEnabled: (moduleId: string) => boolean;
   setModuleEnabled: (moduleId: string, enabled: boolean) => void;

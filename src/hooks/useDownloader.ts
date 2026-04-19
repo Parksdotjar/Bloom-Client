@@ -23,6 +23,18 @@ const DownloaderContext = createContext<DownloaderContextValue | null>(null);
 function useDownloaderController(): DownloaderContextValue {
     const [activeDownloads, setActiveDownloads] = useState<Record<string, DownloadProgressEvent>>({});
 
+    const isInstanceMissingError = (message: string) => {
+        const normalized = message.toLowerCase();
+        return normalized.includes('instance') && normalized.includes('not found');
+    };
+
+    const toUserSafeError = (raw: string) => {
+        if (isInstanceMissingError(raw)) {
+            return 'This instance no longer exists. Refresh instances and launch again.';
+        }
+        return raw;
+    };
+
     useEffect(() => {
         let unlisten: UnlistenFn | null = null;
 
@@ -48,6 +60,9 @@ function useDownloaderController(): DownloaderContextValue {
     const startDownload = async (instance: Instance, authState?: any) => {
         const instanceId = instance.id;
         try {
+            // Preflight to avoid noisy backend errors with stale/deleted instance ids.
+            await TauriApi.instancesGet(instanceId);
+
             // Seed initial state so UI knows it started
             setActiveDownloads(prev => ({
                 ...prev,
@@ -125,6 +140,7 @@ function useDownloaderController(): DownloaderContextValue {
         } catch (e: any) {
             console.error("Downloader error:", e);
             const message = e?.message ?? e?.toString?.() ?? String(e);
+            const safeMessage = toUserSafeError(message);
             const needsEssentialFix = message.toLowerCase().includes('compatibility check failed')
                 && message.toLowerCase().includes('essential');
             // Update state to show error
@@ -132,7 +148,7 @@ function useDownloaderController(): DownloaderContextValue {
                 ...prev,
                 [instanceId]: {
                     id: instanceId,
-                    status: `Error: ${message}`,
+                    status: `Error: ${safeMessage}`,
                     progress: 0,
                     speed: '',
                     remediation: needsEssentialFix ? 'disable_essential_conflict' : undefined
