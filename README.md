@@ -1,158 +1,144 @@
 # Bloom Client
 
-A premium, modern desktop Minecraft launcher built with Tauri v2, React, TypeScript, and Tailwind CSS.
-Features a League of Legends inspired client aesthetic.
+Bloom Client is a desktop Minecraft launcher built with Tauri v2, React, TypeScript, and Tailwind CSS.
 
-## Architecture & Tech Stack
+## Stack
 
-- **Frontend**: React + Vite + Tailwind CSS
-- **Backend**: Tauri v2 (Rust)
-- **Data Storage**: Local JSON files securely stored in the OS AppData directory.
+- **Frontend**: React, Vite, Tailwind CSS
+- **Desktop shell**: Tauri v2
+- **Local data**: JSON-backed app data managed by the Tauri backend
+- **Remote services**: Supabase-backed commerce, updates, and relay endpoints
 
-## Current Progress
-
-- **Phase 1 (Complete)**: UI Shell, React Router Layout, Custom Window configuration, Instances Rust Backend (CRUD logic storing `instance.json`), and Download Simulator.
-- **Phase 2 (Complete)**: Microsoft Device Code OAuth flow, XBL/XSTS token exchange, and Minecraft identity fetching.
-
-## Build/Run Instructions
+## Development
 
 ### Prerequisites
-- NodeJS (v18+)
-- Rust (via `rustup`)
-- **Windows**: WebView2
-- **macOS**: Xcode CLI tools (`xcode-select --install`)
 
-### Local Development
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
-2. Run the Tauri dev server (hot-reload for both React and Rust):
-   ```bash
-   npm run tauri dev
-   ```
+- Node.js 18 or newer
+- Rust via `rustup`
+- Windows: WebView2
+- macOS: Xcode command line tools (`xcode-select --install`)
 
-### Building for Production
-To produce standard standalone installer executables (.exe, .dmg, .app):
+### Install
+
+```bash
+npm install
+```
+
+### Run Locally
+
+```bash
+npm run tauri dev
+```
+
+### Build
+
 ```bash
 npm run tauri build
 ```
-Binaries will be output to `src-tauri/target/release/bundle`.
 
-## Auto-Updates (No New EXE Sharing)
+Tauri build artifacts are written under `src-tauri/target/release/bundle`.
 
-Bloom Client is now wired for Tauri updater releases.
+## Auto-Updates
 
-### One-time setup
-1. Generate updater keys locally:
+Bloom uses the Tauri updater release flow.
+
+### Signing Setup
+
+Generate updater keys locally:
+
+```bash
+npm run tauri signer generate -- --write-keys .tauri/updater.key --ci
+```
+
+Keep `.tauri/updater.key` out of source control. Configure these GitHub repository secrets:
+
+- `TAURI_SIGNING_PRIVATE_KEY`: full contents of `.tauri/updater.key`
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: key password, or an empty value when no password is used
+
+### Release Flow
+
+1. Bump the version in `package.json`.
+2. Bump the version in `src-tauri/tauri.conf.json`.
+3. Commit and push the version change.
+4. Create and push a matching version tag:
+
    ```bash
-   npm run tauri signer generate -- --write-keys .tauri/updater.key --ci
+   git tag v1.5.7
+   git push origin v1.5.7
    ```
-2. Keep `.tauri/updater.key` secret. Do not commit it.
-3. Add GitHub repo secrets:
-   - `TAURI_SIGNING_PRIVATE_KEY` = full contents of `.tauri/updater.key`
-   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` = key password (leave empty if none)
 
-### Ship an update
-1. Bump versions:
-   - `package.json` version
-   - `src-tauri/tauri.conf.json` version
-2. Commit and push.
-3. Create and push a tag matching the version:
-   ```bash
-   git tag v0.1.1
-   git push origin v0.1.1
-   ```
-4. GitHub Actions workflow `.github/workflows/release.yml` builds, signs, and publishes installers plus updater metadata.
-5. Existing users can update from inside the app via Settings -> Extra -> App Updates.
-
-## Next Steps (Phases 3-5)
-- **Vanilla Launch Logic**: Fetch Mojang manifests, download libraries, extract natives, build the JVM launch command.
-- **Fabric Launch Logic**: Fetch Fabric metadata, install loaders, inject Mixins.
-- **Polish**: Crash log catchers, auto-updaters, and user settings panel wiring.
+5. `.github/workflows/release.yml` builds, signs, and publishes installers plus updater metadata.
+6. Users update from Settings -> Extra -> App Updates.
 
 ## Bloom Console
 
-Bloom now includes an in-app developer console overlay designed for power users.
+Bloom includes an in-app console overlay for launcher commands and diagnostics.
 
-- **UI wiring**: Mounted in `src/components/Layout.tsx` as `<BloomConsole />` so it shares the existing shell, theme variables, blur, motion, and overlay stack.
-- **Component**: `src/components/BloomConsole.tsx` handles keyboard UX, history navigation, autocomplete, inline suggestions, and formatted output rendering.
-- **Command runtime**:
-  - Parser: `src/console/parser.ts`
-  - Executor/validation: `src/console/executor.ts`
-  - Registry (commands + metadata): `src/console/registry.ts`
-  - Suggestions: `src/console/suggestions.ts`
-  - Store/history: `src/console/store.ts`
-- **Settings keys**: Shared in `src/constants/console.ts` (hotkey, history persistence, startup tip, dev-help visibility, log level).
-- **Adding commands**: Add a typed command definition in `createConsoleRegistry()` inside `src/console/registry.ts` with `name`, `usage`, `description`, optional `args`, optional `autocomplete`, and a safe `handler` that uses the provided runtime context (no shell/eval access).
+- **Mount point**: `src/components/Layout.tsx`
+- **UI component**: `src/components/BloomConsole.tsx`
+- **Parser**: `src/console/parser.ts`
+- **Executor and validation**: `src/console/executor.ts`
+- **Command registry**: `src/console/registry.ts`
+- **Suggestions**: `src/console/suggestions.ts`
+- **History/store**: `src/console/store.ts`
+- **Settings keys**: `src/constants/console.ts`
 
-## Script Studio (BloomScript IDE)
+Add commands in `createConsoleRegistry()` with a typed command definition: `name`, `usage`, `description`, optional `args`, optional `autocomplete`, and a handler that uses the provided runtime context. Console commands do not expose shell or eval access.
 
-Bloom now includes an IDE-style in-app scripting surface for power users.
+## Script Studio
 
-- **Route/UI**: `src/pages/ScriptStudio.tsx` mounted at `/script-studio` and wired into sidebar/search.
-- **Language tooling** (`src/ide/`):
-  - `types.ts`: typed AST/execution shapes
-  - `bridge.ts`: maps dot-style BloomScript commands to console command definitions/aliases
-  - `parser.ts`: tokenizer/parser + static diagnostics
-  - `runtime.ts`: safe executor that routes commands through Bloom's internal command runtime (no OS shell, no eval)
-  - `language.ts`: Monaco language registration, custom syntax theme, completion provider, and marker mapping
-- **How command execution works**:
-  1. BloomScript parses statements (`let`, commands, variables like `$name`)
-  2. Command names resolve against the existing Bloom console registry
-  3. Execution is forwarded through `executeConsoleInput(...)` with typed context handlers
-- **Adding future language commands**: add/update console commands in `src/console/registry.ts`; BloomScript command index and autocomplete will pick them up automatically through the bridge layer.
+Script Studio provides a BloomScript editor and runtime on the `/script-studio` route.
 
-## Host Server (Local + Relay-Ready)
+- `src/pages/ScriptStudio.tsx`: route UI
+- `src/ide/types.ts`: AST and execution types
+- `src/ide/bridge.ts`: command mapping from BloomScript to console definitions
+- `src/ide/parser.ts`: tokenizer, parser, and static diagnostics
+- `src/ide/runtime.ts`: executor that routes commands through the console runtime
+- `src/ide/language.ts`: Monaco registration, syntax theme, completions, and marker mapping
 
-Bloom now includes a built-in local server hosting surface with a compact control panel.
+BloomScript parses statements, resolves command names against the console registry, and forwards execution through `executeConsoleInput(...)` with typed runtime handlers. New language commands should be added through the console registry so the bridge and autocomplete stay in sync.
 
-- **Route/UI**: `src/pages/HostServer.tsx` mounted at `/host-server`, linked in sidebar + search.
-- **State/provider**: `src/hooks/useHostedServers.ts` wraps server CRUD/lifecycle actions.
-- **Tauri bridge**: `src/services/tauri.ts` exposes hosted-server commands and typed payloads.
-- **Backend module**: `src-tauri/src/servers.rs` handles:
-  - local server records and folders under app data `servers/`
-  - vanilla server jar provisioning from Mojang metadata
-  - process lifecycle (`start`, `stop`, `restart`, status polling)
-  - live log capture + command stdin forwarding
-  - file browser actions (list/read/write/create/rename/delete)
-  - backup actions (create/list/delete/restore)
-  - tunnel session wiring points (`hosted_servers_tunnel_open/close`)
+## Host Server
 
-### Hidden IP model
+Bloom includes local server hosting tools with relay integration points.
 
-- Server process always runs on host machine locally (for example `127.0.0.1:<port>`).
-- Public shareable address uses Bloom hostname metadata (`<subdomain>.playbloom.gg`).
-- The client is wired for outbound relay negotiation via environment variables:
-  - `BLOOM_RELAY_API_URL` (optional API handshake endpoint)
-  - `BLOOM_RELAY_API_KEY` (optional bearer token)
-  - `BLOOM_RELAY_ENDPOINT` (optional informational relay endpoint string)
-- Without relay API configuration, tunnel commands remain safe placeholders (no raw home-IP exposure flow is added in renderer).
+- **Route/UI**: `src/pages/HostServer.tsx`
+- **State provider**: `src/hooks/useHostedServers.ts`
+- **Tauri bridge**: `src/services/tauri.ts`
+- **Backend module**: `src-tauri/src/servers.rs`
+
+The backend manages server records, local server folders, vanilla server jar provisioning, process lifecycle actions, live logs, command input, file browser actions, backups, and tunnel session commands.
+
+### Hidden IP Model
+
+- Server processes run locally on the host machine.
+- Public addresses use Bloom hostname metadata, such as `<subdomain>.playbloom.gg`.
+- Relay negotiation is configured with:
+  - `BLOOM_RELAY_API_URL`
+  - `BLOOM_RELAY_API_KEY`
+  - `BLOOM_RELAY_ENDPOINT`
+- Without relay API configuration, tunnel commands do not expose the user's home IP from the renderer.
 
 ## CurseForge Relay
 
-Bloom now supports a safer CurseForge integration path for shipped desktop clients.
+Bloom supports CurseForge access through a relay endpoint for distributed desktop builds.
 
-- The desktop app will use `CURSEFORGE_API_KEY` directly only if you set it locally for development.
-- Otherwise it falls back to a relay endpoint, which by default points to:
+- Local development can use `CURSEFORGE_API_KEY` directly.
+- Desktop builds otherwise use the relay endpoint:
   - `https://sb.bloomclient.org/functions/v1/main/curseforge`
-- Override that relay URL with:
-  - `BLOOM_CURSEFORGE_RELAY_URL`
+- Override the relay URL with `BLOOM_CURSEFORGE_RELAY_URL`.
 
-### Recommended production setup
+### Production Setup
 
 1. Deploy the Supabase edge function in `supabase/functions/main`.
-2. Set the edge function secret:
-   - `CURSEFORGE_API_KEY=<your official curseforge api key>`
-3. Optional hardening:
-   - `BLOOM_RELAY_SHARED_KEY=<shared secret>`
-   - If you set this, also set the same value in the desktop runtime as `BLOOM_RELAY_SHARED_KEY`.
+2. Set `CURSEFORGE_API_KEY=<your official CurseForge API key>` on the edge function.
+3. Optionally set `BLOOM_RELAY_SHARED_KEY=<shared secret>` on the edge function and desktop runtime.
 
-### Relay endpoints used by the client
+### Relay Endpoints
 
 - `GET /curseforge/categories`
 - `GET /curseforge/mods/search`
 - `GET /curseforge/mods/:id`
 - `GET /curseforge/mods/:id/files`
 
-This keeps the real CurseForge key on infrastructure you control instead of embedding it in the Tauri binary shipped to end users.
+The relay keeps the CurseForge key on controlled infrastructure instead of embedding it in shipped Tauri binaries.

@@ -478,7 +478,7 @@ export function AnimatedSpriteSheetStudio({ playerUuid, playerName, playerSkinUr
           className="g-btn-accent mt-2 h-10 w-full text-[11px] font-extrabold uppercase tracking-[0.12em] inline-flex items-center justify-center gap-2 disabled:opacity-45"
         >
           <Upload size={14} />
-          {busy ? 'Publishing...' : `Publish + Equip (${PUBLISH_PRICE_BB.toLocaleString()} BB)`}
+          {busy ? 'Publishing...' : `Publish and Equip (${PUBLISH_PRICE_BB.toLocaleString()} BB)`}
         </button>
 
         {commerceRole === 'owner' && (
@@ -491,18 +491,18 @@ export function AnimatedSpriteSheetStudio({ playerUuid, playerName, playerSkinUr
                 Listing
               </button>
             </div>
-            <p className="text-[10px] uppercase tracking-[0.12em] font-black text-white/50">Owner Upload To Shop (Animated)</p>
+            <p className="text-[10px] uppercase tracking-[0.12em] font-black text-white/50">Owner Shop Upload</p>
             <div className="mt-2 space-y-2">
               <input
                 value={ownerListingSlug}
                 onChange={(event) => setOwnerListingSlug(event.target.value)}
-                placeholder="slug"
+                placeholder="Slug"
                 className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-xs font-bold text-white"
               />
               <input
                 value={ownerListingName}
                 onChange={(event) => setOwnerListingName(clampCapeName(event.target.value))}
-                placeholder="name"
+                placeholder="Name"
                 maxLength={28}
                 className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-xs font-bold text-white"
               />
@@ -511,20 +511,20 @@ export function AnimatedSpriteSheetStudio({ playerUuid, playerName, playerSkinUr
                 min={0}
                 value={ownerListingPrice}
                 onChange={(event) => setOwnerListingPrice(Math.max(0, Number(event.target.value) || 0))}
-                placeholder="price_bb"
+                placeholder="Price (BB)"
                 className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-xs font-bold text-white"
               />
               <textarea
                 value={ownerListingDescription}
                 onChange={(event) => setOwnerListingDescription(event.target.value)}
-                placeholder="description (optional)"
+                placeholder="Description (optional)"
                 rows={2}
                 className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-xs font-bold text-white resize-y"
               />
               <input
                 value={ownerListingTextureUrl}
                 onChange={(event) => setOwnerListingTextureUrl(event.target.value)}
-                placeholder="texture_url (auto from latest animated publish)"
+                placeholder="Texture URL (defaults to latest publish)"
                 className="w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-[11px] text-white/90"
               />
               <button

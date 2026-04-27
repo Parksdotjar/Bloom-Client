@@ -214,7 +214,7 @@ export function ResourcePacksMarket() {
               </article>
             );
           })}
-          {results.length === 0 && <p className="text-sm g-muted py-6 text-center">Featured resource packs load here first, then search can refine it.</p>}
+          {results.length === 0 && <p className="text-sm g-muted py-6 text-center">Featured resource packs appear here. Search to narrow the list.</p>}
         </div>
       </section>
   );

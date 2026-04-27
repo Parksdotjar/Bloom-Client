@@ -77,7 +77,7 @@ export function Home() {
         return defaults.map((entry) => ({ ...entry, visible: byId.get(entry.id) ?? entry.visible }));
       }
     } catch {
-      // ignore
+      return defaults;
     }
     return defaults;
   });
@@ -324,7 +324,7 @@ export function Home() {
           <div className="mt-2 flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
             <div>
               <h1 className="text-5xl font-extrabold leading-[0.95] text-white">{selected ? selected.name : 'Create your first instance'}</h1>
-              <p className="mt-2 text-sm g-muted">Dark control panel style with launcher logic intact.</p>
+              <p className="mt-2 text-sm g-muted">Launch, manage, and monitor your active Minecraft setup.</p>
               <div className="mt-4 flex flex-wrap gap-2">
                 {chips.map((chip) => (
                   <span key={chip} className="g-chip px-3 py-1 text-[10px] uppercase tracking-[0.14em] font-extrabold text-white/80">{chip}</span>
@@ -442,11 +442,11 @@ export function Home() {
       <section className="space-y-4 h-full">
         <div className="g-panel p-4">
           <div className="inline-flex items-center gap-2 text-white/75"><Sparkles size={15} /><p className="text-xs font-extrabold uppercase tracking-[0.14em]">Theme</p></div>
-          <p className="mt-2 text-sm g-muted">GIGACAT-inspired shell active across pages.</p>
+          <p className="mt-2 text-sm g-muted">Current launcher theme and appearance settings.</p>
         </div>
         <div className="g-panel p-4">
           <div className="inline-flex items-center gap-2 text-white/75"><Shield size={15} /><p className="text-xs font-extrabold uppercase tracking-[0.14em]">Status</p></div>
-          <p className="mt-2 text-sm g-muted">Install, auth, mod tools, and launch flow are still active.</p>
+          <p className="mt-2 text-sm g-muted">Install tools, account state, and launch services are available.</p>
         </div>
       </section>
     ),

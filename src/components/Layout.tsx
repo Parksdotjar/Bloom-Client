@@ -1150,17 +1150,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
     } catch {
       try {
         await windowRef.toggleMaximize();
-      } catch {
-        // no-op
-      }
+      } catch {}
     }
 
     try {
       const max = await windowRef.isMaximized();
       setIsMaximized(max);
-    } catch {
-      // no-op
-    }
+    } catch {}
   }, []);
 
   useEffect(() => {
@@ -2138,7 +2134,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     dumpConfig: dumpConsoleConfig,
     resetLayout: resetConsoleLayout,
     mockNotification: () => {
-      setUpdateStatusMessage('Console notification test ping.');
+      setUpdateStatusMessage('Console notification sent.');
       setNotificationsOpen(true);
     },
     inspectTheme: inspectConsoleTheme
@@ -2427,7 +2423,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   setSearchQuery(event.target.value);
                   setSearchOpen(true);
                 }}
-                placeholder="Search pages, actions, settings..."
+                placeholder="Search pages, actions, or settings"
                 className="w-full h-11 rounded-xl border border-white/12 bg-white/[0.04] pl-9 pr-20 text-sm font-semibold text-white placeholder:text-white/45 outline-none"
               />
               <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-extrabold tracking-widest border border-white/15 rounded-md px-2 py-1 text-white/60">CTRL K</span>

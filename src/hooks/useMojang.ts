@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 export interface VersionEntry {
     id: string;
-    type: string; // "release", "snapshot", "old_beta", "old_alpha"
+    type: string;
     url: string;
     time: string;
     releaseTime: string;

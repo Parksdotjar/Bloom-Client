@@ -215,7 +215,7 @@ export function createConsoleRegistry(): ConsoleCommandDefinition[] {
       kind: 'info',
       lines: [
         `Bloom v${context.appVersion}`,
-        'Power-user controls, premium launcher visuals, and fast instance workflows.'
+        'Instance management, launcher settings, and Bloom console workflows.'
       ]
     })
   });

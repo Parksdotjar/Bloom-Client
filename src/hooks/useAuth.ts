@@ -200,8 +200,6 @@ function useAuthController(): AuthContextValue {
             || authDebug.activeVerificationUri
             || FALLBACK_MS_LINK;
 
-        console.log('[auth] opening browser URL', targetUrl);
-
         try {
             await withTimeout(
                 invoke('auth_open_browser', { url: targetUrl }),
@@ -309,7 +307,6 @@ function useAuthController(): AuthContextValue {
                 'Timed out contacting Microsoft login service.'
             );
             const res = normalizeDeviceCodeResponse(raw);
-            console.log('[auth] login_start response', res);
             if (isUnmountedRef.current) return;
 
             setDeviceCode(res);
@@ -327,7 +324,6 @@ function useAuthController(): AuthContextValue {
                 lastMessage: 'Waiting for approval in your browser.'
             });
 
-            console.log('[auth] starting poll loop', { sessionId, interval: res.interval });
             setTimeout(() => {
                 if (pollSessionIdRef.current !== sessionId) return;
                 void pollLogin(res.deviceCode, res.interval, expiresAtMs, 0, sessionId);
@@ -389,7 +385,6 @@ function useAuthController(): AuthContextValue {
         }
 
         const attempt = previousAttempts + 1;
-        console.log('[auth] poll attempt', { sessionId, attempt });
         setAuthDebug(prev => ({
             ...prev,
             phase: 'polling',
@@ -410,7 +405,6 @@ function useAuthController(): AuthContextValue {
             if (isUnmountedRef.current) return;
 
             if (res) {
-                console.log('[auth] poll approved', { sessionId, attempt, profile: res.profile?.name });
                 setAuthState(res);
                 localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(res));
                 setLoading(false);
@@ -427,7 +421,6 @@ function useAuthController(): AuthContextValue {
                 setDeviceCode(null);
                 void syncCommerceIdentityForAuth(res);
             } else {
-                console.log('[auth] poll pending', { sessionId, attempt });
                 setAuthDebug(prev => ({
                     ...prev,
                     phase: 'awaiting_approval',

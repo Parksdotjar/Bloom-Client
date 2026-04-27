@@ -264,7 +264,7 @@ export function BloomConsole({ open, hotkeyLabel, commands, context, onClose }: 
                     value={input}
                     onChange={(event) => setInput(event.target.value)}
                     onKeyDown={onInputKeyDown}
-                    placeholder="Type a Bloom command..."
+                    placeholder="Enter a Bloom command"
                     className="h-11 w-full bg-transparent font-mono text-[13px] text-white outline-none placeholder:text-white/35"
                     autoCorrect="off"
                     autoCapitalize="off"

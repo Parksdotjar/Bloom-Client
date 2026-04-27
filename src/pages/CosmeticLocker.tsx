@@ -2471,7 +2471,7 @@ const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: Ow
                       <p className="text-[11px] uppercase tracking-[0.13em] font-extrabold text-white/62">{pack.name}</p>
                       <p className="text-xl font-extrabold text-white mt-1">{pack.total_bb.toLocaleString()} BB</p>
                       <p className="text-xs text-white/55 mt-1">
-                        ${Number(pack.price_usd).toFixed(2)} � base {pack.base_bb.toLocaleString()} + bonus {pack.bonus_bb.toLocaleString()}
+                        ${Number(pack.price_usd).toFixed(2)} | base {pack.base_bb.toLocaleString()} + bonus {pack.bonus_bb.toLocaleString()}
                       </p>
                       <button
                         onClick={() => {
@@ -2854,7 +2854,7 @@ const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: Ow
               {selectedCape ? (
                 <>
                   <p className="text-sm font-extrabold text-white">{selectedCape.name}</p>
-                    <p className="text-[11px] text-white/58 mt-1">{pickRarityLabel(selectedCape)} � {selectedCape.slug}</p>
+                    <p className="text-[11px] text-white/58 mt-1">{pickRarityLabel(selectedCape)} | {selectedCape.slug}</p>
                   <p className="text-xs text-white/65 mt-2">{selectedCape.description || 'No description.'}</p>
                   <div className="mt-3 flex gap-2">
                     {selectedOwned ? (
@@ -2906,7 +2906,7 @@ const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: Ow
                           disabled={actionBusy || !customCapeTosAccepted}
                           className="g-btn-accent h-10 w-full text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-55"
                         >
-                          Buy � {selectedCape.price_bb.toLocaleString()} BB
+                          Buy - {selectedCape.price_bb.toLocaleString()} BB
                         </button>
                         {hasPartnerWalletAccess && (
                           <>
@@ -2917,7 +2917,7 @@ const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: Ow
                               disabled={actionBusy || !customCapeTosAccepted}
                               className="h-10 w-full text-[11px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-55 rounded-lg border border-white/25 bg-[color:color-mix(in_srgb,var(--g-accent)_24%,black)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]"
                             >
-                              Partner Wallet � {selectedCape.price_bb.toLocaleString()} BB
+                              Partner Wallet - {selectedCape.price_bb.toLocaleString()} BB
                             </button>
                             <div className="rounded-lg border border-white/10 bg-black/30 p-2.5 space-y-2">
                               <p className="text-[10px] uppercase tracking-[0.13em] font-extrabold text-white/55">Gift From Partner Wallet</p>
@@ -4236,7 +4236,7 @@ const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: Ow
                   className="h-10 w-10 rounded-full border border-white/18 bg-white/[0.04] text-white/75 hover:bg-white/[0.08] disabled:opacity-40"
                   disabled={actionBusy}
                 >
-                  �
+                  X
                 </button>
               </div>
 

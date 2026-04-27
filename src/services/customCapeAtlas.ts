@@ -159,7 +159,6 @@ export async function generateCustomCapeAtlas(input: GenerateCustomCapeAtlasInpu
   croppedSourceCtx.clearRect(0, 0, sourceW, sourceH);
   croppedSourceCtx.imageSmoothingEnabled = false;
   croppedSourceCtx.drawImage(input.image, sourceX, sourceY, sourceW, sourceH, 0, 0, sourceW, sourceH);
-  // Fill the visible cape face exactly so crop framing matches final rendered cape area.
   drawImageFill(faceCtx, croppedSourceCanvas, sourceW, sourceH, {
     x: 0,
     y: 0,
@@ -167,10 +166,7 @@ export async function generateCustomCapeAtlas(input: GenerateCustomCapeAtlasInpu
     height: visibleFaceCanvas.height
   });
 
-  // Authoritative cape atlas:
-  // write the exact same user art to both front and back so launcher preview and
-  // in-game rendering stay identical even if one renderer samples the inner face
-  // and the other samples the outer face.
+  // Keep launcher preview and in-game rendering consistent across cape samplers.
   atlasCtx.drawImage(
     visibleFaceCanvas,
     0,
@@ -215,12 +211,7 @@ export async function generateCustomCapeAtlas(input: GenerateCustomCapeAtlasInpu
     template.bottom
   );
 
-  // Populate Elytra UV slots (right side of the cape template atlas).
-  // This is additive and does not alter cape mapping.
-  // Elytra should use only the inner wing paint area from the template.
-  // Leave the surrounding Elytra slots transparent.
-  // Keep only one Elytra paint face to avoid a doubled/staked wing look in preview.
-  // Swap face target so we keep the lower/attached wing side.
+  // Populate only the inner Elytra wing paint area; surrounding UV slots stay transparent.
   drawElytraWingMasked(atlasCtx, visibleFaceCanvas, visibleFaceCanvas.width, visibleFaceCanvas.height, template.elytra.front);
 
   if (input.watermarkText && input.watermarkText.trim()) {

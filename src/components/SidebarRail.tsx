@@ -455,7 +455,6 @@ export function SidebarRail(props: SidebarProps) {
     const influence = Math.max(0, 1 - distance / radius);
     const maxScaleBoost = (sidebarDockGrowSize / 100) * 0.85;
     const scale = 1 + influence * maxScaleBoost;
-    // Reserve the visual growth from center scaling so items never overlap.
     const baseSize = isHorizontal ? element.offsetWidth : element.offsetHeight;
     const extraHeight = (scale - 1) * baseSize;
     const spread = extraHeight / 2;

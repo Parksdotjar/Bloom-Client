@@ -8,7 +8,7 @@ import { PageWidgets, type PageWidget } from '../components/PageWidgets';
 type SourceFilter = 'all' | 'modrinth' | 'curseforge';
 const BLOOM_FEATURED_PACK = {
   id: 'bloom-performance-overdrive',
-  title: 'Bloom Preformance | Overdrive',
+  title: 'Bloom Performance | Overdrive',
   description:
     'Bloom-curated Fabric 1.21.11 performance and utility pack with Sodium/Lithium/C2ME core optimizations plus Flashback, Essential, Simple Voice Chat, JourneyMap, Zoomify, Freecam, and other client QoL mods.',
   minecraftVersion: '1.21.11',
@@ -237,7 +237,7 @@ export function ModpacksMarket() {
               </article>
             );
           })}
-          {results.length === 0 && <p className="text-sm g-muted py-6 text-center">Featured modpacks load here first, then search can refine it.</p>}
+          {results.length === 0 && <p className="text-sm g-muted py-6 text-center">Featured modpacks appear here. Search to narrow the list.</p>}
         </div>
       </section>
   );

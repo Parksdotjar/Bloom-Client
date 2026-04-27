@@ -214,7 +214,7 @@ export function ModsMarket() {
               </article>
             );
           })}
-          {results.length === 0 && <p className="text-sm g-muted py-6 text-center">Featured mods load here first, then search can refine it.</p>}
+          {results.length === 0 && <p className="text-sm g-muted py-6 text-center">Featured mods appear here. Search to narrow the list.</p>}
         </div>
       </section>
   );

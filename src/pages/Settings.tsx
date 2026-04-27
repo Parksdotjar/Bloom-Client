@@ -320,8 +320,8 @@ type KeybindGroup = {
 
 const HIDDEN_FART_KEYBIND: KeybindDefinition = {
   id: 'fart',
-  label: 'Fart',
-  description: 'Play a secret fart sound effect.',
+  label: 'Secret Sound',
+  description: 'Play the hidden sound effect.',
   defaultValue: '',
   wired: true
 };
@@ -3912,9 +3912,9 @@ export function Settings() {
           <AppearanceDropdown title="Typography Pack" description="Switch global UI typeface and feel.">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {([
-                { id: 'manrope', label: 'Manrope', sample: 'Modern clean UI' },
-                { id: 'space-grotesk', label: 'Space Grotesk', sample: 'Geometric tech' },
-                { id: 'sora', label: 'Sora', sample: 'Sharp premium' }
+                { id: 'manrope', label: 'Manrope', sample: 'Clean interface' },
+                { id: 'space-grotesk', label: 'Space Grotesk', sample: 'Structured display' },
+                { id: 'sora', label: 'Sora', sample: 'Crisp controls' }
               ] as { id: FontPackMode; label: string; sample: string }[]).map((font) => (
                 <button key={font.id} onClick={() => applyFontPack(font.id)} className={clsx('rounded-xl border p-3 text-left', fontPackMode === font.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}>
                   <p className="text-sm font-extrabold text-white">{font.label}</p>
@@ -4381,7 +4381,7 @@ export function Settings() {
                 disabled={!availableUpdate || checkingUpdate || installingUpdate}
                 className="g-btn-accent h-10 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
               >
-                {installingUpdate ? 'Installing...' : availableUpdate ? `Install v${availableUpdate.version}` : 'No Update'}
+                {installingUpdate ? 'Installing...' : availableUpdate ? `Install v${availableUpdate.version}` : 'No update available'}
               </button>
             </div>
             <p className="text-[10px] g-muted">Update assets are pulled from Supabase Storage using `updates/latest.json`.</p>

@@ -61,10 +61,8 @@ function useDownloaderController(): DownloaderContextValue {
     const startDownload = async (instance: Instance, authState?: any) => {
         const instanceId = instance.id;
         try {
-            // Preflight to avoid noisy backend errors with stale/deleted instance ids.
             await TauriApi.instancesGet(instanceId);
 
-            // Seed initial state so UI knows it started
             setActiveDownloads(prev => ({
                 ...prev,
                 [instanceId]: {
@@ -130,7 +128,6 @@ function useDownloaderController(): DownloaderContextValue {
             }));
             void setDiscordPresence('Playing Minecraft', `${instance.name} (${instance.mcVersion})`);
 
-            // Keep status visible longer so it does not look like it instantly disappeared.
             setTimeout(() => {
                 setActiveDownloads(prev => {
                     const newD = { ...prev };
@@ -144,7 +141,6 @@ function useDownloaderController(): DownloaderContextValue {
             const safeMessage = toUserSafeError(message);
             const needsEssentialFix = message.toLowerCase().includes('compatibility check failed')
                 && message.toLowerCase().includes('essential');
-            // Update state to show error
             setActiveDownloads(prev => ({
                 ...prev,
                 [instanceId]: {
@@ -181,7 +177,6 @@ function useDownloaderController(): DownloaderContextValue {
         try {
             await TauriApi.instanceInstallCancel(instanceId);
         } catch {
-            // no-op, still update client state below
         }
         setActiveDownloads(prev => ({
             ...prev,

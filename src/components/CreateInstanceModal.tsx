@@ -480,133 +480,147 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
             <div className="mx-auto flex w-full max-w-[760px] flex-col gap-4">
               <div className="rounded-[28px] border border-white/10 bg-[rgba(255,255,255,0.03)] p-4 md:p-5">
                 <div className="space-y-5">
-          {step === 'name' && (
-            <div className="rounded-[26px] border border-white/10 bg-black/28 p-5 md:p-6">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/38">Instance Name</p>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Bloom SMP"
-                className="mt-4 w-full rounded-[22px] border border-white/12 bg-black/45 px-5 py-4 text-2xl font-black text-white placeholder:text-white/22 focus:border-white/30 focus:outline-none"
-              />
-              <p className="mt-3 text-sm text-white/52">This is the label shown in your library, launch cards, and editor.</p>
-            </div>
-          )}
-
-          {step === 'loader' && (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => setLoader('vanilla')}
-                className={`rounded-[26px] border p-5 text-left transition ${loader === 'vanilla' ? 'border-white/45 bg-white/[0.09]' : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06]'}`}
-              >
-                <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-[18px] border border-white/10 bg-black/35">
-                  <LoaderGlyph loader="vanilla" />
-                </div>
-                <p className="text-xl font-black text-white">Vanilla</p>
-                <p className="mt-2 text-sm leading-6 text-white/60">No mod loader, good for standard survival, snapshots, or clean testing.</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => setLoader('fabric')}
-                className={`rounded-[26px] border p-5 text-left transition ${loader === 'fabric' ? 'border-white/45 bg-white/[0.09]' : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06]'}`}
-              >
-                <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-[18px] border border-white/10 bg-black/35">
-                  <LoaderGlyph loader="fabric" />
-                </div>
-                <p className="text-xl font-black text-white">Fabric</p>
-                <p className="mt-2 text-sm leading-6 text-white/60">Lightweight loader for modern performance mods and flexible setups.</p>
-              </button>
-            </div>
-          )}
-
-          {step === 'version' && (
-            <div className="space-y-4">
-              <div className="rounded-[26px] border border-white/10 bg-black/28 p-5">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/38">Minecraft Version</p>
-                  <label className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-white/42">
-                    <input type="checkbox" checked={showSnapshots} onChange={(e) => setShowSnapshots(e.target.checked)} className="accent-white" />
-                    Snapshots
-                  </label>
-                </div>
-                <PickerDropdown
-                  label="Version"
-                  value={mcVersion}
-                  valueLabel={versionsLoading ? 'Loading versions...' : mcVersion}
-                  open={versionOpen}
-                  onToggle={() => setVersionOpen((v) => !v)}
-                  onClose={() => setVersionOpen(false)}
-                  options={versionOptions}
-                  onSelect={setMcVersion}
-                  disabled={versionsLoading || versionOptions.length === 0}
-                />
-              </div>
-
-              {loader === 'fabric' && (
-                <div className="rounded-[26px] border border-white/10 bg-black/28 p-5">
-                  <PickerDropdown
-                    label="Fabric Loader"
-                    value={fabricVersion}
-                    valueLabel={fabricVersion || (fabricLoading ? 'Loading loaders...' : 'Select loader')}
-                    open={fabricOpen}
-                    onToggle={() => setFabricOpen((v) => !v)}
-                    onClose={() => setFabricOpen(false)}
-                    options={fabricOptions}
-                    onSelect={(value) => {
-                      if (value) setFabricVersion(value);
-                    }}
-                    disabled={fabricLoading || fabricOptions.every((option) => option.value === '')}
-                  />
-                </div>
-              )}
-            </div>
-          )}
-
-          {step === 'visuals' && (
-            <div className="rounded-[24px] border border-white/10 bg-black/25 p-4">
-              <p className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-white/38">Visuals</p>
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[180px_1fr]">
-                <div>
-                  <div className="flex h-36 items-center justify-center overflow-hidden rounded-[20px] border border-white/10 bg-black/35">
-                    {iconDataUrl ? <img src={iconDataUrl} className="h-full w-full object-cover" /> : <ImageIcon size={24} className="text-white/36" />}
-                  </div>
-                  <label className="mt-3 inline-flex cursor-pointer rounded-[16px] border border-white/12 bg-white/[0.05] px-4 py-2.5 text-xs font-black uppercase tracking-[0.16em] text-white">
-                    Upload Icon
-                    <input type="file" accept="image/*" onChange={(e) => { void onIconFile(e); }} className="hidden" />
-                  </label>
-                </div>
-
-                <div>
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/38">Banner</p>
-                    <label className="inline-flex cursor-pointer rounded-[14px] border border-white/12 bg-white/[0.05] px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-white">
-                      Upload Banner
-                      <input type="file" accept="image/*" onChange={(e) => { void onBannerFile(e); }} className="hidden" />
-                    </label>
-                  </div>
-                  <div
-                    onPointerDown={onBannerPointerDown}
-                    onPointerMove={onBannerPointerMove}
-                    onPointerUp={onBannerPointerUp}
-                    onPointerLeave={onBannerPointerUp}
-                    className={`relative h-44 overflow-hidden rounded-[20px] border border-white/10 bg-black/35 ${draggingBanner ? 'cursor-grabbing' : 'cursor-grab'}`}
-                  >
-                    {bannerSource && (
-                      <img
-                        src={bannerSource}
-                        className="absolute inset-0 h-full w-full object-cover select-none pointer-events-none"
-                        style={{ transform: `translate(${(0.5 - bannerX) * 36}px, ${(0.5 - bannerY) * 28}px) scale(${bannerZoom})` }}
+                  {step === 'name' && (
+                    <div className="rounded-[26px] border border-white/10 bg-black/28 p-5 md:p-6">
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/38">Instance Name</p>
+                      <input
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder="Instance name"
+                        className="mt-4 w-full rounded-[22px] border border-white/12 bg-black/45 px-5 py-4 text-2xl font-black text-white placeholder:text-white/22 focus:border-white/30 focus:outline-none"
                       />
-                    )}
-                    <div className="pointer-events-none absolute left-1/2 top-1/2 aspect-[3.2/1] w-[72%] -translate-x-1/2 -translate-y-1/2 rounded-xl border-2 border-white/70 shadow-[0_0_0_9999px_rgba(0,0,0,0.38)]" />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+                      <p className="mt-3 text-sm text-white/52">This is the label shown in your library, launch cards, and editor.</p>
+                    </div>
+                  )}
 
-                {error && <p className="text-sm text-red-300">{error}</p>}
+                  {step === 'loader' && (
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => setLoader('vanilla')}
+                        className={`rounded-[26px] border p-5 text-left transition ${loader === 'vanilla' ? 'border-white/45 bg-white/[0.09]' : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06]'}`}
+                      >
+                        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-[18px] border border-white/10 bg-black/35">
+                          <LoaderGlyph loader="vanilla" />
+                        </div>
+                        <p className="text-xl font-black text-white">Vanilla</p>
+                        <p className="mt-2 text-sm leading-6 text-white/60">No mod loader, good for standard survival, snapshots, or clean installs.</p>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLoader('fabric')}
+                        className={`rounded-[26px] border p-5 text-left transition ${loader === 'fabric' ? 'border-white/45 bg-white/[0.09]' : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06]'}`}
+                      >
+                        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-[18px] border border-white/10 bg-black/35">
+                          <LoaderGlyph loader="fabric" />
+                        </div>
+                        <p className="text-xl font-black text-white">Fabric</p>
+                        <p className="mt-2 text-sm leading-6 text-white/60">Lightweight loader for modern performance mods and flexible setups.</p>
+                      </button>
+                    </div>
+                  )}
+
+                  {step === 'version' && (
+                    <div className="space-y-4">
+                      <div className="rounded-[26px] border border-white/10 bg-black/28 p-5">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/38">Minecraft Version</p>
+                          <label className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-white/42">
+                            <input type="checkbox" checked={showSnapshots} onChange={(e) => setShowSnapshots(e.target.checked)} className="accent-white" />
+                            Snapshots
+                          </label>
+                        </div>
+                        <PickerDropdown
+                          label="Version"
+                          value={mcVersion}
+                          valueLabel={versionsLoading ? 'Loading versions...' : mcVersion}
+                          open={versionOpen}
+                          onToggle={() => setVersionOpen((v) => !v)}
+                          onClose={() => setVersionOpen(false)}
+                          options={versionOptions}
+                          onSelect={setMcVersion}
+                          disabled={versionsLoading || versionOptions.length === 0}
+                        />
+                      </div>
+
+                      {loader === 'fabric' && (
+                        <div className="rounded-[26px] border border-white/10 bg-black/28 p-5">
+                          <PickerDropdown
+                            label="Fabric Loader"
+                            value={fabricVersion}
+                            valueLabel={fabricVersion || (fabricLoading ? 'Loading loaders...' : 'Select loader')}
+                            open={fabricOpen}
+                            onToggle={() => setFabricOpen((v) => !v)}
+                            onClose={() => setFabricOpen(false)}
+                            options={fabricOptions}
+                            onSelect={(value) => {
+                              if (value) setFabricVersion(value);
+                            }}
+                            disabled={fabricLoading || fabricOptions.every((option) => option.value === '')}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {step === 'visuals' && (
+                    <div className="rounded-[24px] border border-white/10 bg-black/25 p-4">
+                      <p className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-white/38">Visuals</p>
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[180px_1fr]">
+                        <div>
+                          <div className="flex h-36 items-center justify-center overflow-hidden rounded-[20px] border border-white/10 bg-black/35">
+                            {iconDataUrl ? <img src={iconDataUrl} className="h-full w-full object-cover" /> : <ImageIcon size={24} className="text-white/36" />}
+                          </div>
+                          <label className="mt-3 inline-flex cursor-pointer rounded-[16px] border border-white/12 bg-white/[0.05] px-4 py-2.5 text-xs font-black uppercase tracking-[0.16em] text-white">
+                            Upload Icon
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => {
+                                void onIconFile(e);
+                              }}
+                              className="hidden"
+                            />
+                          </label>
+                        </div>
+
+                        <div>
+                          <div className="mb-3 flex items-center justify-between gap-3">
+                            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/38">Banner</p>
+                            <label className="inline-flex cursor-pointer rounded-[14px] border border-white/12 bg-white/[0.05] px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-white">
+                              Upload Banner
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => {
+                                  void onBannerFile(e);
+                                }}
+                                className="hidden"
+                              />
+                            </label>
+                          </div>
+                          <div
+                            onPointerDown={onBannerPointerDown}
+                            onPointerMove={onBannerPointerMove}
+                            onPointerUp={onBannerPointerUp}
+                            onPointerLeave={onBannerPointerUp}
+                            className={`relative h-44 overflow-hidden rounded-[20px] border border-white/10 bg-black/35 ${draggingBanner ? 'cursor-grabbing' : 'cursor-grab'}`}
+                          >
+                            {bannerSource && (
+                              <img
+                                src={bannerSource}
+                                className="absolute inset-0 h-full w-full object-cover select-none pointer-events-none"
+                                style={{ transform: `translate(${(0.5 - bannerX) * 36}px, ${(0.5 - bannerY) * 28}px) scale(${bannerZoom})` }}
+                              />
+                            )}
+                            <div className="pointer-events-none absolute left-1/2 top-1/2 aspect-[3.2/1] w-[72%] -translate-x-1/2 -translate-y-1/2 rounded-xl border-2 border-white/70 shadow-[0_0_0_9999px_rgba(0,0,0,0.38)]" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {error && <p className="text-sm text-red-300">{error}</p>}
               </div>
               </div>
 

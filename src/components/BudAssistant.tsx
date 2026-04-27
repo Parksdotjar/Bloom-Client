@@ -21,7 +21,7 @@ const WELCOME_MESSAGE: BudMessage = {
   id: 'welcome',
   role: 'assistant',
   title: 'BUD',
-  text: 'Hi, I am BUD. Ask me launcher questions like how to install modpacks, where a setting lives, or why a Fabric install failed.',
+  text: "Hi, I'm BUD. Ask me about installing modpacks, finding settings, or fixing a Fabric install.",
   actions: [
     { label: 'Open Marketplace', route: '/marketplace' },
     { label: 'Open Help', route: '/help' }
@@ -163,7 +163,7 @@ export function BudAssistant({ enabled, onNavigate, context }: BudAssistantProps
                     submit();
                   }
                 }}
-                placeholder="Ask BUD a Bloom question..."
+                placeholder="Ask BUD a Bloom question"
                 className="h-10 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/35"
               />
               <button

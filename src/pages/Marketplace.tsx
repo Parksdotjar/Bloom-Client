@@ -18,7 +18,7 @@ const FEATURED_QUERIES: Record<MarketTab, string[]> = {
 };
 const BLOOM_FEATURED_PACK = {
   id: 'bloom-performance-overdrive',
-  title: 'Bloom Preformance | Overdrive',
+  title: 'Bloom Performance | Overdrive',
   description:
     'Bloom-curated Fabric 1.21.11 performance and utility pack with Sodium/Lithium/C2ME core optimizations plus Flashback, Essential, Simple Voice Chat, JourneyMap, Zoomify, Freecam, and other client QoL mods.',
   minecraftVersion: '1.21.11',
@@ -440,7 +440,7 @@ export function Marketplace() {
                         </article>
                       );
                     })}
-                    {currentResults.length === 0 && <div className="border bg-black/20 px-5 py-10 text-center text-sm text-white/48" style={{ borderRadius: 'calc(22px * var(--g-roundness-mult))', borderColor: 'var(--g-border)' }}>Featured results will load here, then search can narrow them down.</div>}
+                    {currentResults.length === 0 && <div className="border bg-black/20 px-5 py-10 text-center text-sm text-white/48" style={{ borderRadius: 'calc(22px * var(--g-roundness-mult))', borderColor: 'var(--g-border)' }}>Featured results appear here. Search to narrow the list.</div>}
                   </div>
               </div>
             </div>

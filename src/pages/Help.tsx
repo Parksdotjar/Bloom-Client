@@ -178,7 +178,7 @@ const HELP_GROUPS: HelpGroup[] = [
       {
         id: 'custom-java-path',
         title: 'Custom Java path works on one PC but not another',
-        summary: 'Use this when a copied instance points to a Java path that only exists on someone else’s computer.',
+        summary: "Use this when a copied instance points to a Java path that only exists on someone else's computer.",
         icon: FolderOpen,
         sections: [
           {
@@ -203,7 +203,7 @@ const HELP_GROUPS: HelpGroup[] = [
       {
         id: 'what-to-send',
         title: 'What to send when you need help',
-        summary: 'Send the useful part of the error so other people can actually diagnose it fast.',
+        summary: 'Send the details support needs to diagnose the issue quickly.',
         icon: HelpCircle,
         sections: [
           {
@@ -246,7 +246,7 @@ export function Help() {
         <aside className="g-panel-strong overflow-hidden border px-3 py-4">
           <div className="border-b border-white/8 px-2 pb-4">
             <p className="text-[10px] font-black uppercase tracking-[0.28em] g-accent-text">Help</p>
-            <p className="mt-2 text-lg font-black text-white">Self-fix guides</p>
+            <p className="mt-2 text-lg font-black text-white">Support guides</p>
             <p className="mt-2 text-sm text-white/54">Open a topic, follow the steps, and only escalate when the exact fix still fails.</p>
           </div>
 
@@ -321,7 +321,7 @@ export function Help() {
           </div>
 
           <div className="py-6">
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-white/42">Table of contents</p>
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-white/42">Sections</p>
             <div className="mt-3 flex flex-wrap gap-2">
               {article.sections.map((section) => (
                 <a
