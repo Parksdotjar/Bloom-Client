@@ -718,9 +718,10 @@ function fadeCurrentPageOut(): Promise<void> {
       translateY: -24,
       duration: 1200,
       delay: stagger(55),
-      ease: "inOutCubic",
-      complete: resolve
+      ease: "inOutCubic"
     });
+
+    window.setTimeout(resolve, 2000);
   });
 }
 
