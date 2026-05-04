@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { animate as animeAnimate, stagger } from "animejs";
 import "./style.css";
 
 type UpdatePlatform = {
@@ -582,7 +583,7 @@ function initParticles(): void {
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
 
     particles.length = 0;
-    const count = Math.min(96, Math.max(42, Math.round((width * height) / 18000)));
+    const count = Math.min(140, Math.max(58, Math.round((width * height) / 12500)));
     for (let index = 0; index < count; index += 1) {
       const x = Math.random() * width;
       const y = Math.random() * height;
@@ -593,8 +594,8 @@ function initParticles(): void {
         baseY: y,
         vx: (Math.random() - 0.5) * 0.16,
         vy: (Math.random() - 0.5) * 0.16,
-        size: 1.2 + Math.random() * 2.8,
-        alpha: 0.12 + Math.random() * 0.48,
+        size: 0.45 + Math.random() * 0.95,
+        alpha: 0.1 + Math.random() * 0.32,
         drift: Math.random() * Math.PI * 2
       });
     }
@@ -628,10 +629,10 @@ function initParticles(): void {
       const dx = particle.x - mouse.x;
       const dy = particle.y - mouse.y;
       const distance = Math.hypot(dx, dy);
-      if (distance < 150) {
-        const force = (150 - distance) / 150;
-        particle.x += (dx / Math.max(distance, 1)) * force * 4.6;
-        particle.y += (dy / Math.max(distance, 1)) * force * 4.6;
+      if (distance < 130) {
+        const force = (130 - distance) / 130;
+        particle.x += (dx / Math.max(distance, 1)) * force * 2.8;
+        particle.y += (dy / Math.max(distance, 1)) * force * 2.8;
       }
 
       particle.x += (particle.baseX - particle.x) * 0.018;
@@ -643,13 +644,13 @@ function initParticles(): void {
         0,
         particle.x,
         particle.y,
-        particle.size * 7
+        particle.size * 4
       );
       gradient.addColorStop(0, `rgba(255, 255, 255, ${Math.min(particle.alpha, 0.84)})`);
       gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
       context.fillStyle = gradient;
       context.beginPath();
-      context.arc(particle.x, particle.y, particle.size * 7, 0, Math.PI * 2);
+      context.arc(particle.x, particle.y, particle.size * 4, 0, Math.PI * 2);
       context.fill();
     }
 
@@ -661,6 +662,48 @@ function initParticles(): void {
   window.addEventListener("pointerleave", handlePointerLeave);
   resize();
   requestAnimationFrame(animate);
+}
+
+function runPageAnimations(): void {
+  if (motionQuery.matches) return;
+
+  animeAnimate(".page-ambient", {
+    opacity: [0, 1],
+    filter: ["blur(18px)", "blur(0px)"],
+    duration: 1100,
+    ease: "outQuad"
+  });
+
+  animeAnimate(".site-header", {
+    opacity: [0, 1],
+    translateY: [18, 0],
+    duration: 720,
+    delay: 80,
+    ease: "outCubic"
+  });
+
+  animeAnimate(
+    [
+      ".hero-copy > *",
+      ".page-hero > *",
+      ".section-heading > *",
+      ".split-band > *",
+      ".download-panel > *",
+      ".feature-card",
+      ".news-card",
+      ".staff-card",
+      ".about-grid article",
+      ".faq-item",
+      ".site-footer > *"
+    ].join(", "),
+    {
+      opacity: [0, 1],
+      translateY: [18, 0],
+      duration: 760,
+      delay: stagger(72, { start: 150 }),
+      ease: "outCubic"
+    }
+  );
 }
 
 function mount(): void {
@@ -705,6 +748,7 @@ function mount(): void {
   );
 
   initParticles();
+  runPageAnimations();
 }
 
 window.addEventListener("popstate", mount);
