@@ -86,10 +86,12 @@ const productCards = [
 
 const staffMembers = [
   { name: "Parks", role: "Owner", image: "/staff/parks.jpg" },
-  { name: "DragonSam", role: "Co-Owner", image: "/staff/dragonsam.png" },
-  { name: "Sn1cy", role: "Head Manager", image: "/staff/sn1cy.png" },
+  { name: "Looking for...", role: "Co-Owner", image: "" },
+  { name: "Looking for...", role: "Head Manager", image: "" },
   { name: "Wqfflez", role: "Manager", image: "/staff/wqfflez.png" }
 ];
+
+const discordInviteUrl = "https://discord.gg/aSCnu2CTm6";
 
 function routeFromPath(pathname = window.location.pathname): Route {
   if (pathname === "/downloads") return "/downloads";
@@ -368,8 +370,12 @@ function renderStaff(): string {
       ${staffMembers
         .map(
           (member) => `
-            <article class="staff-card">
-              <img src="${member.image}" alt="${member.name} profile picture" onerror="this.onerror=null;this.src='/staff/placeholder.svg';" />
+            <article class="staff-card ${member.image ? "" : "staff-card-open"}">
+              ${
+                member.image
+                  ? `<img src="${member.image}" alt="${member.name} profile picture" onerror="this.onerror=null;this.src='/staff/placeholder.svg';" />`
+                  : `<div class="staff-open-mark" aria-hidden="true"></div>`
+              }
               <h2>${escapeHtml(member.name)}</h2>
               <p>${escapeHtml(member.role)}</p>
             </article>
@@ -412,16 +418,41 @@ function renderRoute(route: Route): string {
   return renderHome();
 }
 
+function renderFooter(): string {
+  const year = new Date().getFullYear();
+  return `
+    <footer class="site-footer">
+      <div class="footer-brand">
+        <img src="/logo.png" alt="Bloom Client logo" />
+        <div>
+          <strong>Bloom Client</strong>
+          <span>Copyright ${year} Bloom Client. All rights reserved.</span>
+        </div>
+      </div>
+      <nav class="footer-links" aria-label="Footer links">
+        <a href="/downloads" data-route="/downloads">Downloads</a>
+        <a href="/news" data-route="/news">News</a>
+        <a href="/staff" data-route="/staff">Staff</a>
+        <a href="/about" data-route="/about">About</a>
+        <a class="discord-link" href="${discordInviteUrl}" target="_blank" rel="noreferrer" aria-label="Join the Bloom Client Discord">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19.54 5.34A17.4 17.4 0 0 0 15.2 4l-.21.42c1.54.38 2.26.93 2.26.93a13.54 13.54 0 0 0-5.02-1.44 13.67 13.67 0 0 0-5.68 1.08c-.28.13-.45.22-.45.22s.75-.58 2.38-.96L8.32 4a17.6 17.6 0 0 0-4.36 1.35C1.2 9.48.46 13.5.84 17.46A17.42 17.42 0 0 0 6.18 20s.64-.76 1.15-1.42a7.38 7.38 0 0 1-1.82-.87l.44-.34c3.5 1.62 7.3 1.62 10.76 0l.45.34c-.58.38-1.2.67-1.84.87.51.66 1.14 1.42 1.14 1.42a17.33 17.33 0 0 0 5.36-2.54c.46-4.58-.78-8.56-2.28-12.12ZM8.42 15.04c-1.04 0-1.9-.96-1.9-2.14s.84-2.14 1.9-2.14c1.06 0 1.92.97 1.9 2.14 0 1.18-.84 2.14-1.9 2.14Zm7.17 0c-1.04 0-1.9-.96-1.9-2.14s.84-2.14 1.9-2.14c1.06 0 1.9.97 1.9 2.14s-.84 2.14-1.9 2.14Z" />
+          </svg>
+          Discord
+        </a>
+      </nav>
+      <p class="footer-note">Not affiliated with Mojang, Microsoft, or Minecraft.</p>
+    </footer>
+  `;
+}
+
 function mount(): void {
   const route = routeFromPath();
   document.title = route === "/" ? "Bloom Client | Official Website" : `Bloom Client | ${navItems.find((item) => item.path === route)?.label}`;
   root.innerHTML = `
     ${renderHeader(route)}
     <main>${renderRoute(route)}</main>
-    <footer class="site-footer">
-      <span>Bloom Client</span>
-      <span>${escapeHtml(siteUrl.replace(/^https?:\/\//, ""))}</span>
-    </footer>
+    ${renderFooter()}
   `;
 
   root.querySelectorAll<HTMLAnchorElement>("[data-route]").forEach((link) => {
