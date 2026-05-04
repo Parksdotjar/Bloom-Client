@@ -142,6 +142,7 @@ a {
 
 .nav a,
 .info-toggle,
+.settings-toggle,
 .top-download {
   min-height: 34px;
   display: inline-flex;
@@ -163,7 +164,9 @@ a {
 .nav a.active,
 .info-toggle:hover,
 .info-toggle.active,
-.info-menu.open .info-toggle {
+.info-menu.open .info-toggle,
+.settings-toggle:hover,
+.settings-menu.open .settings-toggle {
   color: var(--text);
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.12);
@@ -172,6 +175,33 @@ a {
 
 .info-menu {
   position: relative;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-menu {
+  position: relative;
+}
+
+.settings-toggle {
+  width: 36px;
+  padding: 0;
+  color: rgba(247, 247, 242, 0.7);
+}
+
+.settings-toggle svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+  transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.settings-menu.open .settings-toggle svg {
+  transform: rotate(180deg);
 }
 
 .info-arrow {
@@ -207,6 +237,76 @@ a {
   pointer-events: none;
   transform: translate(-50%, -6px);
   transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.settings-dropdown {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 190px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(6, 14, 16, 0.9);
+  backdrop-filter: blur(20px);
+  box-shadow:
+    0 20px 50px rgba(0, 0, 0, 0.44),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.settings-menu.open .settings-dropdown {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.settings-row {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 4px 0 8px;
+  color: rgba(247, 247, 242, 0.78);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.transition-toggle {
+  width: 38px;
+  height: 22px;
+  appearance: none;
+  position: relative;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+
+.transition-toggle::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: rgba(247, 247, 242, 0.78);
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.transition-toggle:checked {
+  background: rgba(120, 238, 255, 0.2);
+  border-color: rgba(120, 238, 255, 0.44);
+}
+
+.transition-toggle:checked::before {
+  transform: translateX(16px);
+  background: #f7f7f2;
 }
 
 .info-menu.open .info-dropdown {

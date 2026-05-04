@@ -60,6 +60,8 @@ const root = app;
 const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 let hasMounted = false;
 let isTransitioning = false;
+const transitionStorageKey = "bloom-site-transitions";
+let transitionsEnabled = localStorage.getItem(transitionStorageKey) !== "off";
 
 const navItems: Array<{ path: Route; label: string }> = [
   { path: "/", label: "Home" },
@@ -319,7 +321,22 @@ function renderHeader(route: Route): string {
           </div>
         </div>
       </nav>
-      <a class="top-download" href="/downloads" data-route="/downloads">Start download</a>
+      <div class="header-actions">
+        <div class="settings-menu">
+          <button class="settings-toggle" type="button" aria-label="Open site settings" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M19.4 13.5c.08-.49.08-1.01 0-1.5l2-1.55-2-3.46-2.36.95a7.6 7.6 0 0 0-1.3-.76L15.38 4h-4l-.36 3.18c-.46.2-.9.46-1.3.76L7.36 7l-2 3.46 2 1.55a7.44 7.44 0 0 0 0 1.5l-2 1.55 2 3.46 2.36-.95c.4.3.84.56 1.3.76l.36 3.18h4l.36-3.18c.46-.2.9-.46 1.3-.76l2.36.95 2-3.46-2-1.55ZM13.38 15.5a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z" />
+            </svg>
+          </button>
+          <div class="settings-dropdown">
+            <label class="settings-row">
+              <span>Transitions</span>
+              <input class="transition-toggle" type="checkbox" ${transitionsEnabled ? "checked" : ""} />
+            </label>
+          </div>
+        </div>
+        <a class="top-download" href="/downloads" data-route="/downloads">Start download</a>
+      </div>
     </header>
   `;
 }
@@ -787,7 +804,7 @@ function runPageAnimations(isRouteChange = false): void {
   });
 }
 
-function mount(isRouteChange = false): void {
+function mount(isRouteChange = false, skipAnimations = false): void {
   const route = routeFromPath();
   const title = [...navItems, ...infoItems].find((item) => item.path === route)?.label;
   document.title = route === "/" ? "Bloom Client | Official Website" : `Bloom Client | ${title || "Info"}`;
@@ -810,6 +827,13 @@ function mount(isRouteChange = false): void {
       if (href === window.location.pathname) return;
       if (isTransitioning) return;
 
+      if (!transitionsEnabled) {
+        window.history.pushState({}, "", href);
+        mount(true, true);
+        window.scrollTo({ top: 0 });
+        return;
+      }
+
       isTransitioning = true;
       void fadeCurrentPageOut().then(() => {
         window.history.pushState({}, "", href);
@@ -828,23 +852,56 @@ function mount(isRouteChange = false): void {
     toggle.setAttribute("aria-expanded", String(isOpen));
   });
 
+  root.querySelector<HTMLButtonElement>(".settings-toggle")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const menu = root.querySelector<HTMLElement>(".settings-menu");
+    const toggle = event.currentTarget as HTMLButtonElement;
+    const isOpen = menu?.classList.toggle("open") || false;
+    toggle.setAttribute("aria-expanded", String(isOpen));
+  });
+
+  root.querySelector<HTMLInputElement>(".transition-toggle")?.addEventListener("change", (event) => {
+    const input = event.currentTarget as HTMLInputElement;
+    transitionsEnabled = input.checked;
+    localStorage.setItem(transitionStorageKey, transitionsEnabled ? "on" : "off");
+  });
+
   document.addEventListener(
     "click",
     () => {
       const menu = root.querySelector<HTMLElement>(".info-menu");
       const toggle = root.querySelector<HTMLButtonElement>(".info-toggle");
+      const settingsMenu = root.querySelector<HTMLElement>(".settings-menu");
+      const settingsToggle = root.querySelector<HTMLButtonElement>(".settings-toggle");
       menu?.classList.remove("open");
       toggle?.setAttribute("aria-expanded", "false");
+      settingsMenu?.classList.remove("open");
+      settingsToggle?.setAttribute("aria-expanded", "false");
     },
     { once: true }
   );
 
   initAmbientLayer();
   initParticles();
-  runPageAnimations(isRouteChange || hasMounted);
+  if (skipAnimations) {
+    document.querySelectorAll<HTMLElement>(".site-backdrop, .page-ambient").forEach((layer) => {
+      layer.style.opacity = "1";
+      layer.style.filter = "blur(0px)";
+    });
+
+    const particles = document.querySelector<HTMLElement>(".particle-canvas");
+    if (particles) particles.style.opacity = "0.84";
+
+    root.querySelectorAll<HTMLElement>(animatedPageSelector()).forEach((element) => {
+      element.style.opacity = "1";
+      element.style.transform = "translateY(0)";
+    });
+  } else {
+    runPageAnimations(isRouteChange || hasMounted);
+  }
   hasMounted = true;
 }
 
-window.addEventListener("popstate", () => mount(true));
+window.addEventListener("popstate", () => mount(true, !transitionsEnabled));
 
 void Promise.all([loadRelease(), loadNews()]).finally(mount);
