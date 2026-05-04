@@ -44,7 +44,7 @@ type AppState = {
   newsError?: string;
 };
 
-type Route = "/" | "/downloads" | "/news" | "/staff" | "/about";
+type Route = "/" | "/downloads" | "/news" | "/staff" | "/about" | "/faq";
 
 const updatesJsonUrl = import.meta.env.VITE_UPDATES_JSON_URL || "/latest.json";
 const siteUrl = import.meta.env.VITE_SITE_URL || "https://bloomclient.org";
@@ -61,8 +61,12 @@ const navItems: Array<{ path: Route; label: string }> = [
   { path: "/", label: "Home" },
   { path: "/downloads", label: "Downloads" },
   { path: "/news", label: "News" },
-  { path: "/staff", label: "Staff" },
-  { path: "/about", label: "About" }
+  { path: "/staff", label: "Staff" }
+];
+
+const infoItems: Array<{ path: Route; label: string }> = [
+  { path: "/about", label: "About" },
+  { path: "/faq", label: "FAQ" }
 ];
 
 const productCards = [
@@ -93,11 +97,65 @@ const staffMembers = [
 
 const discordInviteUrl = "https://discord.gg/aSCnu2CTm6";
 
+const faqItems = [
+  {
+    question: "Why does my antivirus say Bloom Client is a virus?",
+    answer:
+      "Some antivirus tools flag new launchers because they download files, start Minecraft, manage folders, and connect to online services. Those actions can look suspicious to scanners, even when the app is doing normal launcher work."
+  },
+  {
+    question: "Why does Bloom Client not have a code signing certificate yet?",
+    answer:
+      "Code signing costs money and takes setup time. Bloom is still growing, so releases may show extra Windows or antivirus warnings until a certificate is added."
+  },
+  {
+    question: "What is a trojan?",
+    answer:
+      "A trojan is malware that pretends to be something safe while doing something harmful in the background. A warning name from an antivirus does not always mean that exact malware was found."
+  },
+  {
+    question: "Why do antivirus tools show trojan names if it is not confirmed?",
+    answer:
+      "Many scanners use patterns and behavior, not full proof. If a file looks similar to something suspicious, the scanner can attach a generic trojan name as a warning."
+  },
+  {
+    question: "What should I do if I get a warning?",
+    answer:
+      "Download Bloom only from bloomclient.org, keep Windows updated, and scan the file with more than one trusted tool if you want a second opinion."
+  },
+  {
+    question: "Where should I download Bloom Client?",
+    answer:
+      "Use the Downloads page on bloomclient.org. Avoid random reuploads or links from people you do not trust."
+  },
+  {
+    question: "What Minecraft version does Bloom focus on?",
+    answer:
+      "Bloom currently focuses on modern Fabric instances, with the latest client build shown on the Downloads page."
+  },
+  {
+    question: "Do I need a Bloom account?",
+    answer:
+      "You can use the launcher normally, but some online features like cosmetics, balance, and account-linked items need sign-in."
+  },
+  {
+    question: "Does Bloom change my Minecraft account?",
+    answer:
+      "No. Bloom uses your Minecraft sign-in to identify you in the client, but it does not own or replace your Minecraft account."
+  },
+  {
+    question: "Where can I get help?",
+    answer:
+      "Join the Bloom Client Discord from the footer. It is the easiest place to ask questions and check current updates."
+  }
+];
+
 function routeFromPath(pathname = window.location.pathname): Route {
   if (pathname === "/downloads") return "/downloads";
   if (pathname === "/news") return "/news";
   if (pathname === "/staff") return "/staff";
   if (pathname === "/about") return "/about";
+  if (pathname === "/faq") return "/faq";
   return "/";
 }
 
@@ -228,6 +286,7 @@ function releaseButtons(className = "hero-actions"): string {
 }
 
 function renderHeader(route: Route): string {
+  const infoActive = route === "/about" || route === "/faq";
   return `
     <header class="site-header">
       <a class="brand" href="/" data-route="/">
@@ -241,6 +300,20 @@ function renderHeader(route: Route): string {
               `<a class="${item.path === route ? "active" : ""}" href="${item.path}" data-route="${item.path}">${item.label}</a>`
           )
           .join("")}
+        <div class="info-menu">
+          <button class="info-toggle ${infoActive ? "active" : ""}" type="button" aria-expanded="false">
+            Info
+            <span class="info-arrow" aria-hidden="true"></span>
+          </button>
+          <div class="info-dropdown">
+            ${infoItems
+              .map(
+                (item) =>
+                  `<a class="${item.path === route ? "active" : ""}" href="${item.path}" data-route="${item.path}">${item.label}</a>`
+              )
+              .join("")}
+          </div>
+        </div>
       </nav>
       <a class="top-download" href="/downloads" data-route="/downloads">Start download</a>
     </header>
@@ -410,11 +483,37 @@ function renderAbout(): string {
   `;
 }
 
+function renderFaq(): string {
+  return `
+    <section class="page-hero compact">
+      <p class="eyebrow">FAQ</p>
+      <h1>Common questions.</h1>
+      <p>Simple answers for Bloom Client safety, downloads, and setup.</p>
+    </section>
+    <section class="faq-list">
+      ${faqItems
+        .map(
+          (item) => `
+            <details class="faq-item">
+              <summary>
+                <span>${escapeHtml(item.question)}</span>
+                <span class="faq-arrow" aria-hidden="true"></span>
+              </summary>
+              <p>${escapeHtml(item.answer)}</p>
+            </details>
+          `
+        )
+        .join("")}
+    </section>
+  `;
+}
+
 function renderRoute(route: Route): string {
   if (route === "/downloads") return renderDownloads();
   if (route === "/news") return renderNews();
   if (route === "/staff") return renderStaff();
   if (route === "/about") return renderAbout();
+  if (route === "/faq") return renderFaq();
   return renderHome();
 }
 
@@ -434,6 +533,7 @@ function renderFooter(): string {
         <a href="/news" data-route="/news">News</a>
         <a href="/staff" data-route="/staff">Staff</a>
         <a href="/about" data-route="/about">About</a>
+        <a href="/faq" data-route="/faq">FAQ</a>
         <a class="discord-link" href="${discordInviteUrl}" target="_blank" rel="noreferrer" aria-label="Join the Bloom Client Discord">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M19.54 5.34A17.4 17.4 0 0 0 15.2 4l-.21.42c1.54.38 2.26.93 2.26.93a13.54 13.54 0 0 0-5.02-1.44 13.67 13.67 0 0 0-5.68 1.08c-.28.13-.45.22-.45.22s.75-.58 2.38-.96L8.32 4a17.6 17.6 0 0 0-4.36 1.35C1.2 9.48.46 13.5.84 17.46A17.42 17.42 0 0 0 6.18 20s.64-.76 1.15-1.42a7.38 7.38 0 0 1-1.82-.87l.44-.34c3.5 1.62 7.3 1.62 10.76 0l.45.34c-.58.38-1.2.67-1.84.87.51.66 1.14 1.42 1.14 1.42a17.33 17.33 0 0 0 5.36-2.54c.46-4.58-.78-8.56-2.28-12.12ZM8.42 15.04c-1.04 0-1.9-.96-1.9-2.14s.84-2.14 1.9-2.14c1.06 0 1.92.97 1.9 2.14 0 1.18-.84 2.14-1.9 2.14Zm7.17 0c-1.04 0-1.9-.96-1.9-2.14s.84-2.14 1.9-2.14c1.06 0 1.9.97 1.9 2.14s-.84 2.14-1.9 2.14Z" />
@@ -448,7 +548,8 @@ function renderFooter(): string {
 
 function mount(): void {
   const route = routeFromPath();
-  document.title = route === "/" ? "Bloom Client | Official Website" : `Bloom Client | ${navItems.find((item) => item.path === route)?.label}`;
+  const title = [...navItems, ...infoItems].find((item) => item.path === route)?.label;
+  document.title = route === "/" ? "Bloom Client | Official Website" : `Bloom Client | ${title || "Info"}`;
   root.innerHTML = `
     ${renderHeader(route)}
     <main>${renderRoute(route)}</main>
@@ -465,6 +566,25 @@ function mount(): void {
       window.scrollTo({ top: 0, behavior: "smooth" });
     });
   });
+
+  root.querySelector<HTMLButtonElement>(".info-toggle")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const menu = root.querySelector<HTMLElement>(".info-menu");
+    const toggle = event.currentTarget as HTMLButtonElement;
+    const isOpen = menu?.classList.toggle("open") || false;
+    toggle.setAttribute("aria-expanded", String(isOpen));
+  });
+
+  document.addEventListener(
+    "click",
+    () => {
+      const menu = root.querySelector<HTMLElement>(".info-menu");
+      const toggle = root.querySelector<HTMLButtonElement>(".info-toggle");
+      menu?.classList.remove("open");
+      toggle?.setAttribute("aria-expanded", "false");
+    },
+    { once: true }
+  );
 }
 
 window.addEventListener("popstate", mount);
