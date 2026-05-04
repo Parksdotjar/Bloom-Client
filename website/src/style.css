@@ -59,6 +59,27 @@ body::after {
   opacity: 0.7;
 }
 
+.particle-canvas,
+.page-ambient {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.particle-canvas {
+  z-index: 0;
+  opacity: 0.78;
+}
+
+.page-ambient {
+  z-index: 0;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(255, 255, 255, 0.1), transparent 14%),
+    radial-gradient(circle at 52% 38%, rgba(70, 220, 255, 0.13), transparent 32%);
+  opacity: 0;
+  animation: ambientIntro 1100ms ease forwards;
+}
+
 a {
   color: inherit;
 }
@@ -82,6 +103,8 @@ a {
   box-shadow:
     0 22px 70px rgba(0, 0, 0, 0.54),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  opacity: 0;
+  animation: slideFadeIn 720ms ease 80ms forwards;
 }
 
 .brand {
@@ -218,6 +241,72 @@ main {
   max-width: 940px;
   display: grid;
   justify-items: center;
+}
+
+.hero-copy > *,
+.page-hero > *,
+.section-heading > *,
+.split-band > *,
+.download-panel > *,
+.news-card,
+.staff-card,
+.about-grid article,
+.feature-card,
+.faq-item,
+.site-footer > * {
+  opacity: 0;
+  animation: slideFadeIn 700ms ease forwards;
+}
+
+.hero-copy > :nth-child(1),
+.page-hero > :nth-child(1),
+.section-heading > :nth-child(1),
+.split-band > :nth-child(1),
+.download-panel > :nth-child(1),
+.feature-card:nth-child(1),
+.news-card:nth-child(1),
+.staff-card:nth-child(1),
+.about-grid article:nth-child(1),
+.faq-item:nth-child(1),
+.site-footer > :nth-child(1) {
+  animation-delay: 160ms;
+}
+
+.hero-copy > :nth-child(2),
+.page-hero > :nth-child(2),
+.section-heading > :nth-child(2),
+.split-band > :nth-child(2),
+.download-panel > :nth-child(2),
+.feature-card:nth-child(2),
+.news-card:nth-child(2),
+.staff-card:nth-child(2),
+.about-grid article:nth-child(2),
+.faq-item:nth-child(2),
+.site-footer > :nth-child(2) {
+  animation-delay: 250ms;
+}
+
+.hero-copy > :nth-child(3),
+.page-hero > :nth-child(3),
+.feature-card:nth-child(3),
+.news-card:nth-child(3),
+.staff-card:nth-child(3),
+.about-grid article:nth-child(3),
+.faq-item:nth-child(3),
+.site-footer > :nth-child(3) {
+  animation-delay: 340ms;
+}
+
+.hero-copy > :nth-child(4),
+.feature-card:nth-child(4),
+.news-card:nth-child(4),
+.staff-card:nth-child(4),
+.faq-item:nth-child(4) {
+  animation-delay: 430ms;
+}
+
+.faq-item:nth-child(n + 5) {
+  animation-delay: 520ms;
 }
 
 .hero-copy h1,
@@ -651,6 +740,43 @@ code {
   margin: 0;
   font-size: 12px;
   font-weight: 600;
+}
+
+@keyframes slideFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ambientIntro {
+  from {
+    opacity: 0;
+    filter: blur(18px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .particle-canvas {
+    display: none;
+  }
 }
 
 @media (max-width: 980px) {

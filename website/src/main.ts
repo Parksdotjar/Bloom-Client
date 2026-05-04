@@ -56,6 +56,7 @@ const state: AppState = {
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Missing #app root.");
 const root = app;
+const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const navItems: Array<{ path: Route; label: string }> = [
   { path: "/", label: "Home" },
@@ -546,11 +547,128 @@ function renderFooter(): string {
   `;
 }
 
+function initParticles(): void {
+  if (motionQuery.matches || root.querySelector(".particle-canvas")) return;
+
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) return;
+
+  canvas.className = "particle-canvas";
+  canvas.setAttribute("aria-hidden", "true");
+  root.prepend(canvas);
+
+  const mouse = { x: -1000, y: -1000 };
+  const particles: Array<{
+    x: number;
+    y: number;
+    baseX: number;
+    baseY: number;
+    vx: number;
+    vy: number;
+    size: number;
+    alpha: number;
+    drift: number;
+  }> = [];
+
+  const resize = () => {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.floor(width * pixelRatio);
+    canvas.height = Math.floor(height * pixelRatio);
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+
+    particles.length = 0;
+    const count = Math.min(96, Math.max(42, Math.round((width * height) / 18000)));
+    for (let index = 0; index < count; index += 1) {
+      const x = Math.random() * width;
+      const y = Math.random() * height;
+      particles.push({
+        x,
+        y,
+        baseX: x,
+        baseY: y,
+        vx: (Math.random() - 0.5) * 0.16,
+        vy: (Math.random() - 0.5) * 0.16,
+        size: 1.2 + Math.random() * 2.8,
+        alpha: 0.12 + Math.random() * 0.48,
+        drift: Math.random() * Math.PI * 2
+      });
+    }
+  };
+
+  const handlePointerMove = (event: PointerEvent) => {
+    mouse.x = event.clientX;
+    mouse.y = event.clientY;
+  };
+
+  const handlePointerLeave = () => {
+    mouse.x = -1000;
+    mouse.y = -1000;
+  };
+
+  const animate = () => {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    context.clearRect(0, 0, width, height);
+
+    for (const particle of particles) {
+      particle.drift += 0.006;
+      particle.baseX += Math.cos(particle.drift) * 0.025 + particle.vx;
+      particle.baseY += Math.sin(particle.drift * 0.8) * 0.025 + particle.vy;
+
+      if (particle.baseX < -20) particle.baseX = width + 20;
+      if (particle.baseX > width + 20) particle.baseX = -20;
+      if (particle.baseY < -20) particle.baseY = height + 20;
+      if (particle.baseY > height + 20) particle.baseY = -20;
+
+      const dx = particle.x - mouse.x;
+      const dy = particle.y - mouse.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance < 150) {
+        const force = (150 - distance) / 150;
+        particle.x += (dx / Math.max(distance, 1)) * force * 4.6;
+        particle.y += (dy / Math.max(distance, 1)) * force * 4.6;
+      }
+
+      particle.x += (particle.baseX - particle.x) * 0.018;
+      particle.y += (particle.baseY - particle.y) * 0.018;
+
+      const gradient = context.createRadialGradient(
+        particle.x,
+        particle.y,
+        0,
+        particle.x,
+        particle.y,
+        particle.size * 7
+      );
+      gradient.addColorStop(0, `rgba(255, 255, 255, ${Math.min(particle.alpha, 0.84)})`);
+      gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+      context.fillStyle = gradient;
+      context.beginPath();
+      context.arc(particle.x, particle.y, particle.size * 7, 0, Math.PI * 2);
+      context.fill();
+    }
+
+    requestAnimationFrame(animate);
+  };
+
+  window.addEventListener("resize", resize);
+  window.addEventListener("pointermove", handlePointerMove);
+  window.addEventListener("pointerleave", handlePointerLeave);
+  resize();
+  requestAnimationFrame(animate);
+}
+
 function mount(): void {
   const route = routeFromPath();
   const title = [...navItems, ...infoItems].find((item) => item.path === route)?.label;
   document.title = route === "/" ? "Bloom Client | Official Website" : `Bloom Client | ${title || "Info"}`;
   root.innerHTML = `
+    <div class="page-ambient" aria-hidden="true"></div>
     ${renderHeader(route)}
     <main>${renderRoute(route)}</main>
     ${renderFooter()}
@@ -585,6 +703,8 @@ function mount(): void {
     },
     { once: true }
   );
+
+  initParticles();
 }
 
 window.addEventListener("popstate", mount);
