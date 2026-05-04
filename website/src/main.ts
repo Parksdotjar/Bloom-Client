@@ -59,6 +59,7 @@ if (!app) throw new Error("Missing #app root.");
 const root = app;
 const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 let hasMounted = false;
+let isTransitioning = false;
 
 const navItems: Array<{ path: Route; label: string }> = [
   { path: "/", label: "Home" },
@@ -662,6 +663,15 @@ function initParticles(): void {
   requestAnimationFrame(animate);
 }
 
+function initAmbientLayer(): void {
+  if (document.querySelector(".page-ambient")) return;
+
+  const ambient = document.createElement("div");
+  ambient.className = "page-ambient";
+  ambient.setAttribute("aria-hidden", "true");
+  document.body.prepend(ambient);
+}
+
 function fadeParticles(opacity: number, duration = 520): void {
   const canvas = document.querySelector<HTMLElement>(".particle-canvas");
   if (!canvas) return;
@@ -673,31 +683,53 @@ function fadeParticles(opacity: number, duration = 520): void {
   });
 }
 
+function fadeCurrentPageOut(): Promise<void> {
+  fadeParticles(0, 2000);
+
+  return new Promise((resolve) => {
+    const targets = root.querySelectorAll<HTMLElement>(".site-header, main, .site-footer");
+    if (!targets.length) {
+      window.setTimeout(resolve, 2000);
+      return;
+    }
+
+    animeAnimate(targets, {
+      opacity: 0,
+      duration: 2000,
+      ease: "inOutCubic",
+      complete: resolve
+    });
+  });
+}
+
 function runPageAnimations(isRouteChange = false): void {
   if (!isRouteChange) {
-    animeAnimate(".page-ambient", {
-      opacity: [0, 1],
-      filter: ["blur(24px)", "blur(0px)"],
-      duration: 2200,
-      ease: "outCubic"
-    });
+    const ambient = document.querySelector<HTMLElement>(".page-ambient");
+    if (ambient) {
+      animeAnimate(ambient, {
+        opacity: [0, 1],
+        filter: ["blur(24px)", "blur(0px)"],
+        duration: 2000,
+        ease: "outCubic"
+      });
+    }
 
-    fadeParticles(0.84, 1500);
+    fadeParticles(0.84, 2000);
   } else {
-    const ambient = root.querySelector<HTMLElement>(".page-ambient");
+    const ambient = document.querySelector<HTMLElement>(".page-ambient");
     if (ambient) {
       ambient.style.opacity = "1";
       ambient.style.filter = "blur(0px)";
     }
 
-    fadeParticles(0.84, 720);
+    fadeParticles(0.84, 2000);
   }
 
   animeAnimate(".site-header", {
     opacity: [0, 1],
-    translateY: [-28, 0],
-    duration: 2100,
-    delay: isRouteChange ? 120 : 520,
+    ...(isRouteChange ? {} : { translateY: [-28, 0] }),
+    duration: 2000,
+    delay: isRouteChange ? 0 : 520,
     ease: "outCubic"
   });
 
@@ -721,8 +753,8 @@ function runPageAnimations(isRouteChange = false): void {
     {
       opacity: [0, 1],
       translateY: [46, 0],
-      duration: 2300,
-      delay: stagger(150, { start: isRouteChange ? 300 : 820 }),
+      duration: 2000,
+      delay: stagger(135, { start: isRouteChange ? 0 : 820 }),
       ease: "outCubic"
     }
   );
@@ -733,7 +765,6 @@ function mount(isRouteChange = false): void {
   const title = [...navItems, ...infoItems].find((item) => item.path === route)?.label;
   document.title = route === "/" ? "Bloom Client | Official Website" : `Bloom Client | ${title || "Info"}`;
   root.innerHTML = `
-    <div class="page-ambient" aria-hidden="true"></div>
     ${renderHeader(route)}
     <main>${renderRoute(route)}</main>
     ${renderFooter()}
@@ -745,13 +776,15 @@ function mount(isRouteChange = false): void {
       if (!href) return;
       event.preventDefault();
       if (href === window.location.pathname) return;
+      if (isTransitioning) return;
 
-      fadeParticles(0, 260);
-      window.setTimeout(() => {
+      isTransitioning = true;
+      void fadeCurrentPageOut().then(() => {
         window.history.pushState({}, "", href);
         mount(true);
         window.scrollTo({ top: 0, behavior: "smooth" });
-      }, 180);
+        isTransitioning = false;
+      });
     });
   });
 
@@ -774,6 +807,7 @@ function mount(isRouteChange = false): void {
     { once: true }
   );
 
+  initAmbientLayer();
   initParticles();
   runPageAnimations(isRouteChange || hasMounted);
   hasMounted = true;
