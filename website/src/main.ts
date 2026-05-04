@@ -683,9 +683,21 @@ function fadeParticles(opacity: number, duration = 520): void {
   });
 }
 
+function fadeAmbient(opacity: number, duration = 520): void {
+  const ambient = document.querySelector<HTMLElement>(".page-ambient");
+  if (!ambient) return;
+
+  animeAnimate(ambient, {
+    opacity,
+    duration,
+    ease: "inOutCubic"
+  });
+}
+
 function animatedPageSelector(): string {
   return [
     ".site-header",
+    ".eyebrow",
     ".hero-copy > *",
     ".page-hero > *",
     ".section-heading > *",
@@ -705,6 +717,7 @@ function animatedPageSelector(): string {
 
 function fadeCurrentPageOut(): Promise<void> {
   fadeParticles(0, 2000);
+  fadeAmbient(0, 2000);
 
   return new Promise((resolve) => {
     const targets = root.querySelectorAll<HTMLElement>(animatedPageSelector());
@@ -745,12 +758,13 @@ function runPageAnimations(isRouteChange = false): void {
       ambient.style.filter = "blur(0px)";
     }
 
+    fadeAmbient(1, 2000);
     fadeParticles(0.84, 2000);
   }
 
   animeAnimate(".site-header", {
     opacity: [0, 1],
-    ...(isRouteChange ? {} : { translateY: [-28, 0] }),
+    translateY: [-28, 0],
     duration: 2000,
     delay: isRouteChange ? 0 : 520,
     ease: "outCubic"
@@ -777,7 +791,7 @@ function mount(isRouteChange = false): void {
 
   if (isRouteChange || hasMounted) {
     const header = root.querySelector<HTMLElement>(".site-header");
-    if (header) header.style.transform = "translateY(0)";
+    if (header) header.style.transform = "translateY(-28px)";
   }
 
   root.querySelectorAll<HTMLAnchorElement>("[data-route]").forEach((link) => {
