@@ -583,7 +583,7 @@ function initParticles(): void {
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
 
     particles.length = 0;
-    const count = Math.min(140, Math.max(58, Math.round((width * height) / 12500)));
+    const count = Math.min(190, Math.max(86, Math.round((width * height) / 9000)));
     for (let index = 0; index < count; index += 1) {
       const x = Math.random() * width;
       const y = Math.random() * height;
@@ -592,10 +592,10 @@ function initParticles(): void {
         y,
         baseX: x,
         baseY: y,
-        vx: (Math.random() - 0.5) * 0.16,
-        vy: (Math.random() - 0.5) * 0.16,
-        size: 0.45 + Math.random() * 0.95,
-        alpha: 0.1 + Math.random() * 0.32,
+        vx: (Math.random() - 0.5) * 0.055,
+        vy: (Math.random() - 0.5) * 0.055,
+        size: 0.35 + Math.random() * 0.9,
+        alpha: 0.08 + Math.random() * 0.28,
         drift: Math.random() * Math.PI * 2
       });
     }
@@ -617,9 +617,9 @@ function initParticles(): void {
     context.clearRect(0, 0, width, height);
 
     for (const particle of particles) {
-      particle.drift += 0.006;
-      particle.baseX += Math.cos(particle.drift) * 0.025 + particle.vx;
-      particle.baseY += Math.sin(particle.drift * 0.8) * 0.025 + particle.vy;
+      particle.drift += 0.0028;
+      particle.baseX += Math.cos(particle.drift) * 0.012 + particle.vx;
+      particle.baseY += Math.sin(particle.drift * 0.8) * 0.012 + particle.vy;
 
       if (particle.baseX < -20) particle.baseX = width + 20;
       if (particle.baseX > width + 20) particle.baseX = -20;
@@ -629,28 +629,18 @@ function initParticles(): void {
       const dx = particle.x - mouse.x;
       const dy = particle.y - mouse.y;
       const distance = Math.hypot(dx, dy);
-      if (distance < 130) {
-        const force = (130 - distance) / 130;
-        particle.x += (dx / Math.max(distance, 1)) * force * 2.8;
-        particle.y += (dy / Math.max(distance, 1)) * force * 2.8;
+      if (distance < 120) {
+        const force = (120 - distance) / 120;
+        particle.x += (dx / Math.max(distance, 1)) * force * 1.85;
+        particle.y += (dy / Math.max(distance, 1)) * force * 1.85;
       }
 
       particle.x += (particle.baseX - particle.x) * 0.018;
       particle.y += (particle.baseY - particle.y) * 0.018;
 
-      const gradient = context.createRadialGradient(
-        particle.x,
-        particle.y,
-        0,
-        particle.x,
-        particle.y,
-        particle.size * 4
-      );
-      gradient.addColorStop(0, `rgba(255, 255, 255, ${Math.min(particle.alpha, 0.84)})`);
-      gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
-      context.fillStyle = gradient;
+      context.fillStyle = `rgba(255, 255, 255, ${Math.min(particle.alpha, 0.84)})`;
       context.beginPath();
-      context.arc(particle.x, particle.y, particle.size * 4, 0, Math.PI * 2);
+      context.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
       context.fill();
     }
 
@@ -669,16 +659,16 @@ function runPageAnimations(): void {
 
   animeAnimate(".page-ambient", {
     opacity: [0, 1],
-    filter: ["blur(18px)", "blur(0px)"],
-    duration: 1100,
-    ease: "outQuad"
+    filter: ["blur(20px)", "blur(0px)"],
+    duration: 2200,
+    ease: "outCubic"
   });
 
   animeAnimate(".site-header", {
     opacity: [0, 1],
-    translateY: [18, 0],
-    duration: 720,
-    delay: 80,
+    translateY: [26, 0],
+    duration: 1900,
+    delay: 120,
     ease: "outCubic"
   });
 
@@ -698,9 +688,9 @@ function runPageAnimations(): void {
     ].join(", "),
     {
       opacity: [0, 1],
-      translateY: [18, 0],
-      duration: 760,
-      delay: stagger(72, { start: 150 }),
+      translateY: [30, 0],
+      duration: 2050,
+      delay: stagger(145, { start: 260 }),
       ease: "outCubic"
     }
   );
