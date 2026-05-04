@@ -683,11 +683,31 @@ function fadeParticles(opacity: number, duration = 520): void {
   });
 }
 
+function animatedPageSelector(): string {
+  return [
+    ".site-header",
+    ".hero-copy > *",
+    ".page-hero > *",
+    ".section-heading > *",
+    ".split-band",
+    ".split-band > *",
+    ".download-panel",
+    ".download-panel > *",
+    ".download-link",
+    ".feature-card",
+    ".news-card",
+    ".staff-card",
+    ".about-grid article",
+    ".faq-item",
+    ".site-footer > *"
+  ].join(", ");
+}
+
 function fadeCurrentPageOut(): Promise<void> {
   fadeParticles(0, 2000);
 
   return new Promise((resolve) => {
-    const targets = root.querySelectorAll<HTMLElement>(".site-header, main, .site-footer");
+    const targets = root.querySelectorAll<HTMLElement>(animatedPageSelector());
     if (!targets.length) {
       window.setTimeout(resolve, 2000);
       return;
@@ -695,7 +715,9 @@ function fadeCurrentPageOut(): Promise<void> {
 
     animeAnimate(targets, {
       opacity: 0,
-      duration: 2000,
+      translateY: -24,
+      duration: 1200,
+      delay: stagger(55),
       ease: "inOutCubic",
       complete: resolve
     });
@@ -733,31 +755,13 @@ function runPageAnimations(isRouteChange = false): void {
     ease: "outCubic"
   });
 
-  animeAnimate(
-    [
-      ".hero-copy > *",
-      ".page-hero > *",
-      ".section-heading > *",
-      ".split-band",
-      ".split-band > *",
-      ".download-panel",
-      ".download-panel > *",
-      ".download-link",
-      ".feature-card",
-      ".news-card",
-      ".staff-card",
-      ".about-grid article",
-      ".faq-item",
-      ".site-footer > *"
-    ].join(", "),
-    {
-      opacity: [0, 1],
-      translateY: [46, 0],
-      duration: 2000,
-      delay: stagger(135, { start: isRouteChange ? 0 : 820 }),
-      ease: "outCubic"
-    }
-  );
+  animeAnimate(animatedPageSelector().replace(".site-header,", ""), {
+    opacity: [0, 1],
+    translateY: [46, 0],
+    duration: isRouteChange ? 1200 : 2000,
+    delay: stagger(isRouteChange ? 55 : 135, { start: isRouteChange ? 0 : 820 }),
+    ease: "outCubic"
+  });
 }
 
 function mount(isRouteChange = false): void {
@@ -769,6 +773,11 @@ function mount(isRouteChange = false): void {
     <main>${renderRoute(route)}</main>
     ${renderFooter()}
   `;
+
+  if (isRouteChange || hasMounted) {
+    const header = root.querySelector<HTMLElement>(".site-header");
+    if (header) header.style.transform = "translateY(0)";
+  }
 
   root.querySelectorAll<HTMLAnchorElement>("[data-route]").forEach((link) => {
     link.addEventListener("click", (event) => {
