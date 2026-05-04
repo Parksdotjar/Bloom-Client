@@ -666,9 +666,15 @@ function initParticles(): void {
 function initAmbientLayer(): void {
   if (document.querySelector(".page-ambient")) return;
 
+  const backdrop = document.createElement("div");
+  backdrop.className = "site-backdrop";
+  backdrop.setAttribute("aria-hidden", "true");
+
   const ambient = document.createElement("div");
   ambient.className = "page-ambient";
   ambient.setAttribute("aria-hidden", "true");
+
+  document.body.prepend(backdrop);
   document.body.prepend(ambient);
 }
 
@@ -684,10 +690,10 @@ function fadeParticles(opacity: number, duration = 520): void {
 }
 
 function fadeAmbient(opacity: number, duration = 520): void {
-  const ambient = document.querySelector<HTMLElement>(".page-ambient");
-  if (!ambient) return;
+  const layers = document.querySelectorAll<HTMLElement>(".site-backdrop, .page-ambient");
+  if (!layers.length) return;
 
-  animeAnimate(ambient, {
+  animeAnimate(layers, {
     opacity,
     duration,
     ease: "inOutCubic"
@@ -711,6 +717,7 @@ function animatedPageSelector(): string {
     ".staff-card",
     ".about-grid article",
     ".faq-item",
+    ".site-footer",
     ".site-footer > *"
   ].join(", ");
 }
@@ -740,10 +747,11 @@ function fadeCurrentPageOut(): Promise<void> {
 
 function runPageAnimations(isRouteChange = false): void {
   if (!isRouteChange) {
+    fadeAmbient(1, 2000);
+
     const ambient = document.querySelector<HTMLElement>(".page-ambient");
     if (ambient) {
       animeAnimate(ambient, {
-        opacity: [0, 1],
         filter: ["blur(24px)", "blur(0px)"],
         duration: 2000,
         ease: "outCubic"

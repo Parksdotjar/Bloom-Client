@@ -26,16 +26,25 @@ body {
   margin: 0;
   min-width: 320px;
   font-family: "Inter", system-ui, sans-serif;
+  background: #000;
+}
+
+.site-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
   background:
     radial-gradient(circle at 50% 26%, rgba(255, 255, 255, 0.15), transparent 13%),
     radial-gradient(circle at 50% 32%, rgba(72, 226, 255, 0.18), transparent 29%),
     radial-gradient(circle at 18% 18%, rgba(120, 238, 255, 0.09), transparent 22%),
     linear-gradient(180deg, #071214 0%, #030708 56%, #000 100%);
+  opacity: 0;
 }
 
-body::before {
+.site-backdrop::before {
   content: "";
-  position: fixed;
+  position: absolute;
   inset: 0;
   pointer-events: none;
   background:
@@ -46,9 +55,9 @@ body::before {
   opacity: 0.45;
 }
 
-body::after {
+.site-backdrop::after {
   content: "";
-  position: fixed;
+  position: absolute;
   inset: 0;
   pointer-events: none;
   background:
@@ -67,12 +76,12 @@ body::after {
 }
 
 .particle-canvas {
-  z-index: 0;
+  z-index: 2;
   opacity: 0;
 }
 
 .page-ambient {
-  z-index: 0;
+  z-index: 1;
   background:
     radial-gradient(circle at 50% 20%, rgba(255, 255, 255, 0.08), transparent 14%),
     radial-gradient(circle at 52% 38%, rgba(70, 220, 255, 0.11), transparent 32%);
