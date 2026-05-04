@@ -549,7 +549,7 @@ function renderFooter(): string {
 }
 
 function initParticles(): void {
-  if (motionQuery.matches || root.querySelector(".particle-canvas")) return;
+  if (root.querySelector(".particle-canvas")) return;
 
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
@@ -583,7 +583,7 @@ function initParticles(): void {
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
 
     particles.length = 0;
-    const count = Math.min(190, Math.max(86, Math.round((width * height) / 9000)));
+    const count = Math.min(260, Math.max(120, Math.round((width * height) / 6500)));
     for (let index = 0; index < count; index += 1) {
       const x = Math.random() * width;
       const y = Math.random() * height;
@@ -592,10 +592,10 @@ function initParticles(): void {
         y,
         baseX: x,
         baseY: y,
-        vx: (Math.random() - 0.5) * 0.055,
-        vy: (Math.random() - 0.5) * 0.055,
-        size: 0.35 + Math.random() * 0.9,
-        alpha: 0.08 + Math.random() * 0.28,
+        vx: (Math.random() - 0.5) * 0.075,
+        vy: (Math.random() - 0.5) * 0.075,
+        size: 0.55 + Math.random() * 1.15,
+        alpha: 0.18 + Math.random() * 0.46,
         drift: Math.random() * Math.PI * 2
       });
     }
@@ -617,9 +617,9 @@ function initParticles(): void {
     context.clearRect(0, 0, width, height);
 
     for (const particle of particles) {
-      particle.drift += 0.0028;
-      particle.baseX += Math.cos(particle.drift) * 0.012 + particle.vx;
-      particle.baseY += Math.sin(particle.drift * 0.8) * 0.012 + particle.vy;
+      particle.drift += 0.0032;
+      particle.baseX += Math.cos(particle.drift) * 0.016 + particle.vx;
+      particle.baseY += Math.sin(particle.drift * 0.8) * 0.016 + particle.vy;
 
       if (particle.baseX < -20) particle.baseX = width + 20;
       if (particle.baseX > width + 20) particle.baseX = -20;
@@ -631,8 +631,8 @@ function initParticles(): void {
       const distance = Math.hypot(dx, dy);
       if (distance < 120) {
         const force = (120 - distance) / 120;
-        particle.x += (dx / Math.max(distance, 1)) * force * 1.85;
-        particle.y += (dy / Math.max(distance, 1)) * force * 1.85;
+        particle.x += (dx / Math.max(distance, 1)) * force * 2.45;
+        particle.y += (dy / Math.max(distance, 1)) * force * 2.45;
       }
 
       particle.x += (particle.baseX - particle.x) * 0.018;
@@ -642,6 +642,13 @@ function initParticles(): void {
       context.beginPath();
       context.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
       context.fill();
+
+      if (particle.alpha > 0.48) {
+        context.fillStyle = `rgba(120, 238, 255, ${Math.min(particle.alpha * 0.25, 0.22)})`;
+        context.beginPath();
+        context.arc(particle.x, particle.y, particle.size * 1.8, 0, Math.PI * 2);
+        context.fill();
+      }
     }
 
     requestAnimationFrame(animate);
@@ -655,19 +662,17 @@ function initParticles(): void {
 }
 
 function runPageAnimations(): void {
-  if (motionQuery.matches) return;
-
   animeAnimate(".page-ambient", {
     opacity: [0, 1],
-    filter: ["blur(20px)", "blur(0px)"],
-    duration: 2200,
+    filter: ["blur(24px)", "blur(0px)"],
+    duration: 2400,
     ease: "outCubic"
   });
 
   animeAnimate(".site-header", {
     opacity: [0, 1],
-    translateY: [26, 0],
-    duration: 1900,
+    translateY: [-28, 0],
+    duration: 2100,
     delay: 120,
     ease: "outCubic"
   });
@@ -688,9 +693,9 @@ function runPageAnimations(): void {
     ].join(", "),
     {
       opacity: [0, 1],
-      translateY: [30, 0],
-      duration: 2050,
-      delay: stagger(145, { start: 260 }),
+      translateY: [46, 0],
+      duration: 2300,
+      delay: stagger(170, { start: 320 }),
       ease: "outCubic"
     }
   );
