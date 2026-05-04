@@ -34,7 +34,8 @@ class CapeStateService(private val textureCacheManager: TextureCacheManager) {
         .connectTimeout(Duration.ofSeconds(8))
         .build()
     private val edgeBaseUrl: String = run {
-        val raw = (System.getenv("BLOOM_SUPABASE_URL") ?: "https://sb.bloomclient.org").trim()
+        val raw = (System.getenv("BLOOM_SUPABASE_URL") ?: "").trim()
+        if (raw.isBlank()) return@run ""
         val origin = runCatching {
             val parsed = URL(raw)
             val path = (parsed.path ?: "").replace(Regex("/+$"), "")
@@ -269,6 +270,7 @@ class CapeStateService(private val textureCacheManager: TextureCacheManager) {
     }
 
     private fun fetchManifest(capeId: String): AnimatedManifest? {
+        if (edgeBaseUrl.isBlank()) return null
         val request = HttpRequest.newBuilder(URI.create("$edgeBaseUrl/gif-cape/capes/$capeId/manifest"))
             .timeout(Duration.ofSeconds(12))
             .header("Accept", "application/json")

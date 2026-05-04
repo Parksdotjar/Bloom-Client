@@ -4,6 +4,7 @@ import { animate, remove, set } from 'animejs';
 import { Instance } from '../services/tauri';
 import { useMojang } from '../hooks/useMojang';
 import { useFabric } from '../hooks/useFabric';
+import { UniversalLoadingOverlay } from './UniversalLoadingOverlay';
 
 interface Props {
   isOpen: boolean;
@@ -14,9 +15,7 @@ interface Props {
 
 type WizardStep = 'name' | 'loader' | 'version' | 'visuals';
 type LoaderType = 'vanilla' | 'fabric';
-type InstallLoaderStyle = 'orbit' | 'bars' | 'prism' | 'pulse';
 const STEPS: WizardStep[] = ['name', 'loader', 'version', 'visuals'];
-const INSTANCE_INSTALL_LOADING_STYLE_KEY = 'bloom_instance_install_loading_style';
 
 interface DropdownOption<T extends string> {
   value: T;
@@ -34,53 +33,6 @@ interface PickerDropdownProps<T extends string> {
   options: DropdownOption<T>[];
   onSelect: (value: T) => void;
   disabled?: boolean;
-}
-
-function readInstallLoaderStyle(): InstallLoaderStyle {
-  const stored = localStorage.getItem(INSTANCE_INSTALL_LOADING_STYLE_KEY);
-  return stored === 'orbit' || stored === 'bars' || stored === 'prism' || stored === 'pulse' ? stored : 'orbit';
-}
-
-function InstallLoaderArt({ style }: { style: InstallLoaderStyle }) {
-  if (style === 'bars') {
-    return (
-      <div className="flex h-16 items-end justify-center gap-2">
-        {[0, 1, 2, 3].map((index) => (
-          <span
-            key={index}
-            className="w-2.5 rounded-full bg-white/92 animate-pulse"
-            style={{ height: `${22 + index * 8}px`, animationDelay: `${index * 120}ms`, animationDuration: '1100ms' }}
-          />
-        ))}
-      </div>
-    );
-  }
-  if (style === 'prism') {
-    return (
-      <div className="relative h-20 w-20">
-        <div className="absolute inset-0 rounded-[24px] border border-white/18 bg-white/[0.02]" />
-        <div className="absolute inset-3 animate-spin rounded-[16px] border border-white/65" style={{ animationDuration: '1800ms' }} />
-        <div className="absolute inset-[26px] rotate-45 rounded-[8px] bg-white/92 shadow-[0_0_18px_rgba(255,255,255,0.26)]" />
-      </div>
-    );
-  }
-  if (style === 'pulse') {
-    return (
-      <div className="relative h-20 w-20">
-        <span className="absolute inset-2 rounded-full border border-white/25 animate-ping" style={{ animationDuration: '1400ms' }} />
-        <span className="absolute inset-4 rounded-full border border-white/45 animate-ping" style={{ animationDuration: '1400ms', animationDelay: '200ms' }} />
-        <span className="absolute inset-[30px] rounded-full bg-white/92 shadow-[0_0_14px_rgba(255,255,255,0.3)]" />
-      </div>
-    );
-  }
-  return (
-    <div className="relative h-20 w-20">
-      <span className="absolute inset-2 rounded-full border border-white/18" />
-      <span className="absolute inset-4 rounded-full border border-white/55 animate-spin" style={{ animationDuration: '1600ms' }} />
-      <span className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/92 shadow-[0_0_14px_rgba(255,255,255,0.28)]" />
-      <span className="absolute left-1/2 top-2 h-3 w-3 -translate-x-1/2 rounded-full bg-white/78 animate-spin" style={{ transformOrigin: '50% 32px', animationDuration: '1600ms' }} />
-    </div>
-  );
 }
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -213,7 +165,6 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingLabel, setLoadingLabel] = useState('Preparing instance...');
-  const [installLoaderStyle, setInstallLoaderStyle] = useState<InstallLoaderStyle>(() => readInstallLoaderStyle());
 
   const shellRef = useRef<HTMLDivElement | null>(null);
   const bannerDragStart = useRef<{ x: number; y: number; startX: number; startY: number } | null>(null);
@@ -242,7 +193,6 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
 
   useEffect(() => {
     if (!isOpen || !shellRef.current) return;
-    setInstallLoaderStyle(readInstallLoaderStyle());
     const node = shellRef.current;
     remove(node);
     set(node, { opacity: 0, scale: 0.96, translateY: 14 });
@@ -434,16 +384,12 @@ export function CreateInstanceModal({ isOpen, onClose, onSubmit, onRefresh }: Pr
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.08),transparent_28%),radial-gradient(circle_at_bottom,rgba(255,255,255,0.04),transparent_36%)]" />
         <div className="absolute inset-0 opacity-[0.16]" style={{ backgroundImage: 'radial-gradient(rgba(255,255,255,0.18) 0.85px, transparent 0.85px)', backgroundSize: '16px 16px' }} />
         <div className="relative flex max-h-[min(860px,calc(100vh-24px))] flex-col">
-          {loading && (
-            <div className="absolute inset-0 z-[30] flex items-center justify-center bg-black/72 backdrop-blur-xl">
-              <div className="flex w-full max-w-[360px] flex-col items-center px-8 text-center">
-                <InstallLoaderArt style={installLoaderStyle} />
-                <p className="mt-7 text-[11px] font-black uppercase tracking-[0.24em] text-white/42">Installing Instance</p>
-                <p className="mt-3 text-2xl font-black text-white">{loadingLabel}</p>
-                <p className="mt-2 text-sm text-white/55">Bloom is working. This step is locked until the install finishes.</p>
-              </div>
-            </div>
-          )}
+          <UniversalLoadingOverlay
+            open={loading}
+            eyebrow="Installing Instance"
+            title={loadingLabel}
+            description="Bloom is working. This step is locked until the install finishes."
+          />
           <div className="px-5 pt-5 md:px-7 md:pt-6">
             <div className="flex items-center justify-center gap-3">
               {STEPS.map((item, idx) => (

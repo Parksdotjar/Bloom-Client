@@ -125,7 +125,7 @@ Bloom supports CurseForge access through a relay endpoint for distributed deskto
 
 - Local development can use `CURSEFORGE_API_KEY` directly.
 - Desktop builds otherwise use the relay endpoint:
-  - `https://sb.bloomclient.org/functions/v1/main/curseforge`
+  - `${BLOOM_SUPABASE_URL}/functions/v1/main/curseforge`
 - Override the relay URL with `BLOOM_CURSEFORGE_RELAY_URL`.
 
 ### Production Setup

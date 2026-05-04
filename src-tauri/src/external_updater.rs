@@ -6,9 +6,6 @@ use tauri::AppHandle;
 
 const GITHUB_LATEST_RELEASE_API: &str =
     "https://api.github.com/repos/Parksdotjar/Bloom-Client/releases/latest";
-const SUPABASE_LATEST_JSON_URL: &str =
-    "https://sb.bloomclient.org/storage/v1/object/public/updates/latest.json";
-const SUPABASE_LATEST_JSON_FALLBACK_URL: &str = "https://sb.bloomclient.org/updates/latest.json";
 const EMBEDDED_LATEST_JSON: &str = include_str!("../../latest.json");
 
 #[derive(Debug, Deserialize)]
@@ -144,11 +141,35 @@ fn sanitize_url(input: &str) -> String {
     input.trim().replace(' ', "%20")
 }
 
-fn build_supabase_public_url(file_name: &str) -> String {
-    format!(
-        "https://sb.bloomclient.org/storage/v1/object/public/updates/{}",
+fn configured_supabase_origin() -> Option<String> {
+    let raw = std::env::var("BLOOM_SUPABASE_URL")
+        .ok()
+        .or_else(|| option_env!("BLOOM_SUPABASE_URL").map(str::to_string))?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    match reqwest::Url::parse(trimmed) {
+        Ok(parsed) => {
+            let host = parsed.host_str()?;
+            let port = parsed
+                .port()
+                .map(|value| format!(":{value}"))
+                .unwrap_or_default();
+            Some(format!("{}://{}{}", parsed.scheme(), host, port))
+        }
+        Err(_) => Some(trimmed.trim_end_matches('/').to_string()),
+    }
+}
+
+fn build_supabase_public_url(file_name: &str) -> Option<String> {
+    let origin = configured_supabase_origin()?;
+    Some(format!(
+        "{}/storage/v1/object/public/updates/{}",
+        origin.trim_end_matches('/'),
         file_name
-    )
+    ))
 }
 
 fn push_candidate(candidates: &mut Vec<String>, seen: &mut HashSet<String>, candidate: Option<String>) {
@@ -197,14 +218,14 @@ fn build_manifest_candidate_urls(manifest: &SupabaseManifest) -> Vec<String> {
             push_candidate(
                 &mut candidates,
                 &mut seen,
-                Some(build_supabase_public_url(asset_name)),
+                build_supabase_public_url(asset_name),
             );
         }
         if let Some(nsis_asset_name) = &windows.nsis_asset_name {
             push_candidate(
                 &mut candidates,
                 &mut seen,
-                Some(build_supabase_public_url(nsis_asset_name)),
+                build_supabase_public_url(nsis_asset_name),
             );
         }
     }
@@ -219,7 +240,7 @@ fn build_manifest_candidate_urls(manifest: &SupabaseManifest) -> Vec<String> {
         push_candidate(
             &mut candidates,
             &mut seen,
-            Some(build_supabase_public_url(asset_name)),
+            build_supabase_public_url(asset_name),
         );
     }
 
@@ -227,15 +248,15 @@ fn build_manifest_candidate_urls(manifest: &SupabaseManifest) -> Vec<String> {
     push_candidate(
         &mut candidates,
         &mut seen,
-        Some(build_supabase_public_url(&format!(
+        build_supabase_public_url(&format!(
             "BloomClient-v{}-x64-setup.exe",
             version
-        ))),
+        )),
     );
     push_candidate(
         &mut candidates,
         &mut seen,
-        Some(build_supabase_public_url("BloomClient-latest-x64-setup.exe")),
+        build_supabase_public_url("BloomClient-latest-x64-setup.exe"),
     );
 
     candidates
@@ -264,10 +285,16 @@ async fn fetch_manifest_from_url(
 }
 
 async fn fetch_supabase_manifest_with_fallback() -> Result<SupabaseManifest, String> {
+    let Some(origin) = configured_supabase_origin() else {
+        return Err("Supabase updater URL is not configured.".to_string());
+    };
+    let origin = origin.trim_end_matches('/').to_string();
+    let primary = format!("{origin}/storage/v1/object/public/updates/latest.json");
+    let fallback = format!("{origin}/updates/latest.json");
     let client = reqwest::Client::new();
     let sources = [
-        ("Supabase latest.json primary", SUPABASE_LATEST_JSON_URL),
-        ("Supabase latest.json fallback", SUPABASE_LATEST_JSON_FALLBACK_URL),
+        ("Supabase latest.json primary", primary.as_str()),
+        ("Supabase latest.json fallback", fallback.as_str()),
     ];
 
     let mut errors = Vec::new();

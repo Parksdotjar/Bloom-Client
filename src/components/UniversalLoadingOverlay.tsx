@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 export type UniversalLoadingStyle = 'orbit' | 'bars' | 'prism' | 'pulse';
-export type UniversalLoadingMode = 'fullscreen' | 'compact';
+export type UniversalLoadingMode = 'notification' | 'fullscreen';
 
 export const UNIVERSAL_LOADING_STYLE_KEY = 'bloom_instance_install_loading_style';
 export const UNIVERSAL_LOADING_MODE_KEY = 'bloom_instance_install_loading_mode';
+export const UNIVERSAL_LOADING_COMPLETE_EVENT = 'bloom-universal-loading-complete';
 
 export function readUniversalLoadingStyle(): UniversalLoadingStyle {
   const stored = localStorage.getItem(UNIVERSAL_LOADING_STYLE_KEY);
@@ -13,7 +14,7 @@ export function readUniversalLoadingStyle(): UniversalLoadingStyle {
 
 export function readUniversalLoadingMode(): UniversalLoadingMode {
   const stored = localStorage.getItem(UNIVERSAL_LOADING_MODE_KEY);
-  return stored === 'compact' || stored === 'fullscreen' ? stored : 'fullscreen';
+  return stored === 'fullscreen' || stored === 'notification' ? stored : 'notification';
 }
 
 function normalizedProgressValue(progress: number): number {
@@ -34,6 +35,7 @@ function LoadingArt({ style }: { style: UniversalLoadingStyle }) {
       </div>
     );
   }
+
   if (style === 'prism') {
     return (
       <div className="relative h-20 w-20">
@@ -43,6 +45,7 @@ function LoadingArt({ style }: { style: UniversalLoadingStyle }) {
       </div>
     );
   }
+
   if (style === 'pulse') {
     return (
       <div className="relative h-20 w-20">
@@ -52,6 +55,7 @@ function LoadingArt({ style }: { style: UniversalLoadingStyle }) {
       </div>
     );
   }
+
   return (
     <div className="relative h-20 w-20">
       <span className="absolute inset-2 rounded-full border border-white/18" />
@@ -87,66 +91,85 @@ export function UniversalLoadingOverlay({
 }: Props) {
   const [style, setStyle] = useState<UniversalLoadingStyle>(() => readUniversalLoadingStyle());
   const [mode, setMode] = useState<UniversalLoadingMode>(() => readUniversalLoadingMode());
+  const [visible, setVisible] = useState(open);
+  const [complete, setComplete] = useState(false);
   const normalizedProgress = progress === null ? null : normalizedProgressValue(progress);
+  const displayProgress = complete ? 100 : normalizedProgress;
+  const overlayClassName = useMemo(() => `${fixed ? 'fixed' : 'absolute'} inset-0 z-[140] ${className}`, [className, fixed]);
 
   useEffect(() => {
-    if (!open) return;
+    if (open) {
+      setVisible(true);
+      setComplete(false);
+      setStyle(readUniversalLoadingStyle());
+      setMode(readUniversalLoadingMode());
+      return;
+    }
+
+    if (!visible) return;
+    setComplete(true);
+    window.dispatchEvent(new CustomEvent(UNIVERSAL_LOADING_COMPLETE_EVENT));
+    const timer = window.setTimeout(() => {
+      setVisible(false);
+      setComplete(false);
+    }, 640);
+    return () => window.clearTimeout(timer);
+  }, [open, visible]);
+
+  useEffect(() => {
+    if (!visible) return;
     setStyle(readUniversalLoadingStyle());
     setMode(readUniversalLoadingMode());
-  }, [open]);
+  }, [visible]);
 
-  if (!open) return null;
+  if (!visible) return null;
 
-  if (mode === 'compact') {
+  if (mode === 'notification') {
     return (
-      <div className={`${fixed ? 'fixed' : 'absolute'} inset-0 z-[140] pointer-events-none ${className}`}>
-        <div className={`pointer-events-auto absolute ${fixed ? 'bottom-6 right-6' : 'bottom-4 right-4'} w-[min(460px,calc(100vw-2rem))] rounded-[20px] border border-white/12 bg-[linear-gradient(180deg,rgba(12,12,14,0.95),rgba(8,8,10,0.97))] p-4 shadow-[0_24px_60px_rgba(0,0,0,0.48)] backdrop-blur-xl`}>
-          <div className="flex items-start gap-3">
-            <div className="shrink-0 rounded-[14px] border border-white/12 bg-white/[0.03] p-2">
-              <LoadingArt style={style} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/45">{eyebrow} · Bloom</p>
-              <p className="mt-1 truncate text-[24px] leading-none font-black text-white">{title}</p>
-              {description && <p className="mt-2 text-sm text-white/58">{description}</p>}
+      <div className={`fixed inset-0 z-[140] pointer-events-none ${className}`}>
+        <style>{`
+          @keyframes notification-loader-in { from { transform: translateY(-10px) scale(0.98); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
+          @keyframes notification-loader-out { to { transform: translateY(-8px) scale(0.98); opacity: 0; } }
+          @keyframes notification-loader-bar { to { background-position: 34px 0; } }
+        `}</style>
+        <div
+          className={[
+            'pointer-events-auto absolute right-4 top-[58px] w-[min(360px,calc(100vw-2rem))] rounded-xl border border-[#343941]/70 bg-[linear-gradient(180deg,#111111,#0b0b0b)] p-3 shadow-[0_18px_44px_rgba(0,0,0,0.38)]',
+            complete ? 'animate-[notification-loader-out_260ms_360ms_ease-in_forwards]' : 'animate-[notification-loader-in_220ms_ease-out_both]'
+          ].join(' ')}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/42">{eyebrow}</p>
+              <p className="mt-0.5 truncate text-sm font-black text-white">{title}</p>
             </div>
             {onCancel && (
               <button
                 onClick={onCancel}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/12 bg-white/[0.03] text-white/65 transition hover:bg-white/[0.08] hover:text-white"
-                title={cancelLabel}
-              >
-                ×
-              </button>
-            )}
-          </div>
-
-          {normalizedProgress !== null && (
-            <div className="mt-3">
-              <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                <div className="h-full rounded-full bg-[var(--g-accent)] transition-[width] duration-150" style={{ width: `${normalizedProgress}%` }} />
-              </div>
-              <p className="mt-1 text-[11px] font-bold text-white/62">{normalizedProgress.toFixed(0)}%</p>
-            </div>
-          )}
-
-          {onCancel && (
-            <div className="mt-3 flex justify-end">
-              <button
-                onClick={onCancel}
-                className="h-8 rounded-md border border-white/12 bg-white/[0.03] px-3 text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/80 transition hover:bg-white/[0.08] hover:text-white"
+                className="h-7 rounded-md border border-[#343941]/70 bg-white/[0.03] px-2 text-[10px] font-extrabold uppercase tracking-[0.1em] text-white/72 transition hover:border-[#4b535d] hover:bg-white/[0.08] hover:text-white"
               >
                 {cancelLabel}
               </button>
-            </div>
-          )}
+            )}
+          </div>
+          {description && <p className="mt-1 truncate text-xs text-white/52">{complete ? 'Complete' : description}</p>}
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full rounded-full bg-[linear-gradient(90deg,color-mix(in_srgb,var(--g-accent)_62%,black),var(--g-accent),color-mix(in_srgb,var(--g-accent)_74%,white))] transition-[width] duration-150 ease-out"
+              style={{
+                width: displayProgress === null ? '58%' : `${displayProgress}%`,
+                animation: undefined
+              }}
+            />
+          </div>
+          {displayProgress !== null && <p className="mt-1 text-right text-[10px] font-black text-white/58">{displayProgress.toFixed(0)}%</p>}
         </div>
       </div>
     );
   }
 
   return (
-    <div className={`${fixed ? 'fixed' : 'absolute'} inset-0 z-[140] flex items-center justify-center bg-black/72 backdrop-blur-xl ${className}`}>
+    <div className={`${overlayClassName} flex items-center justify-center bg-black/72 backdrop-blur-xl`}>
       <div className="flex w-full max-w-[360px] flex-col items-center px-8 text-center">
         <LoadingArt style={style} />
         <p className="mt-7 text-[11px] font-black uppercase tracking-[0.24em] text-white/42">{eyebrow}</p>
@@ -155,9 +178,9 @@ export function UniversalLoadingOverlay({
         {normalizedProgress !== null && (
           <div className="mt-4 w-full">
             <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-              <div className="h-full rounded-full bg-white/85 transition-[width] duration-150" style={{ width: `${normalizedProgress}%` }} />
+              <div className="h-full rounded-full bg-white/85 transition-[width] duration-150" style={{ width: `${displayProgress ?? 0}%` }} />
             </div>
-            <p className="mt-1 text-[10px] font-bold text-white/60">{normalizedProgress.toFixed(0)}%</p>
+            <p className="mt-1 text-[10px] font-bold text-white/60">{(displayProgress ?? 0).toFixed(0)}%</p>
           </div>
         )}
         {onCancel && (

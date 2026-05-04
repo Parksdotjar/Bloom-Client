@@ -1239,6 +1239,17 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
     println!("Launching with Java candidates: {:?}", launch_candidates);
     // println!("Args: {:?}", args);
 
+    let supabase_url = std::env::var("BLOOM_SUPABASE_URL")
+        .ok()
+        .or_else(|| option_env!("BLOOM_SUPABASE_URL").map(str::to_string))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let supabase_anon = std::env::var("BLOOM_SUPABASE_ANON")
+        .ok()
+        .or_else(|| option_env!("BLOOM_SUPABASE_ANON").map(str::to_string))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
     let mut last_err: Option<String> = None;
     let mut spawned_child: Option<std::process::Child> = None;
     for candidate in launch_candidates {
@@ -1266,6 +1277,12 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
             .stdout(Stdio::from(stdout_handle))
             .stderr(Stdio::from(stderr_handle))
             .current_dir(&working_dir);
+        if let Some(value) = &supabase_url {
+            launch_command.env("BLOOM_SUPABASE_URL", value);
+        }
+        if let Some(value) = &supabase_anon {
+            launch_command.env("BLOOM_SUPABASE_ANON", value);
+        }
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
@@ -1337,6 +1354,12 @@ Use Java 17 for this instance or disable/remove smoothboot, then launch again."
                             .stdout(Stdio::from(stdout_handle))
                             .stderr(Stdio::from(stderr_handle))
                             .current_dir(&working_dir);
+                        if let Some(value) = &supabase_url {
+                            fallback_command.env("BLOOM_SUPABASE_URL", value);
+                        }
+                        if let Some(value) = &supabase_anon {
+                            fallback_command.env("BLOOM_SUPABASE_ANON", value);
+                        }
                         #[cfg(target_os = "windows")]
                         {
                             use std::os::windows::process::CommandExt;

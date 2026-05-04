@@ -55,13 +55,13 @@ function clamp(value: number, min: number, max: number) {
 
 function applyPose(viewer: SkinViewer, pose?: CapeMeshRendererProps['pose']) {
   const x = finiteOr(pose?.x, 0);
-  const y = finiteOr(pose?.y, 0);
+  const y = finiteOr(pose?.y, 16.2);
   const z = finiteOr(pose?.z, 0);
-  const depth = finiteOr(pose?.depth, 0);
+  const depth = finiteOr(pose?.depth, -4);
   const rotX = finiteOr(pose?.rotX, 0) * (Math.PI / 180);
-  const rotY = finiteOr(pose?.rotY, -38) * (Math.PI / 180);
+  const rotY = finiteOr(pose?.rotY, -174) * (Math.PI / 180);
   const rotZ = finiteOr(pose?.rotZ, 0) * (Math.PI / 180);
-  const brightness = clamp(finiteOr(pose?.brightness, 1), 0.1, 2.5);
+  const brightness = clamp(finiteOr(pose?.brightness, 6), 0.1, 6);
   const baseY = -8.2;
 
   viewer.playerObject.rotation.set(0, 0, 0);
@@ -87,13 +87,13 @@ function applyMinecraftCapeUvs(viewer: SkinViewer, textureWidth = 64, textureHei
 
 function poseCacheKey(pose?: CapeMeshRendererProps['pose']) {
   const x = finiteOr(pose?.x, 0).toFixed(2);
-  const y = finiteOr(pose?.y, 0).toFixed(2);
+  const y = finiteOr(pose?.y, 16.2).toFixed(2);
   const z = finiteOr(pose?.z, 0).toFixed(2);
   const rotX = finiteOr(pose?.rotX, 0).toFixed(2);
-  const rotY = finiteOr(pose?.rotY, -38).toFixed(2);
+  const rotY = finiteOr(pose?.rotY, -174).toFixed(2);
   const rotZ = finiteOr(pose?.rotZ, 0).toFixed(2);
-  const depth = finiteOr(pose?.depth, 0).toFixed(2);
-  const brightness = clamp(finiteOr(pose?.brightness, 1), 0.1, 2.5).toFixed(2);
+  const depth = finiteOr(pose?.depth, -4).toFixed(2);
+  const brightness = clamp(finiteOr(pose?.brightness, 6), 0.1, 6).toFixed(2);
   return `${x}|${y}|${z}|${rotX}|${rotY}|${rotZ}|${depth}|${brightness}`;
 }
 
@@ -202,7 +202,7 @@ export function CapeMeshRenderer({ slug, textureUrl, name, className, glowColor,
       viewer.renderer.shadowMap.enabled = false;
 
       viewer.playerObject.traverse((node) => {
-        const mesh = node as Mesh;
+        const mesh = node as unknown as Mesh;
         if (!mesh.isMesh) return;
         mesh.castShadow = false;
         mesh.receiveShadow = false;

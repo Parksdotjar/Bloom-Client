@@ -74,6 +74,24 @@ function getCapeAtlasResolutionLabel(exportWidth: number) {
   return `${exportWidth}x${Math.floor(exportWidth / 2)}`;
 }
 
+function formatCapeStudioError(error: unknown, fallback = 'Cape Studio request failed.') {
+  if (!error) return fallback;
+  if (error instanceof Error) return error.message || fallback;
+  if (typeof error === 'string') return error || fallback;
+  if (typeof error !== 'object') return String(error);
+
+  const record = error as Record<string, unknown>;
+  const message = record.message ?? record.error ?? record.code ?? record.details;
+  if (typeof message === 'string' && message.trim()) return message;
+
+  try {
+    const serialized = JSON.stringify(record);
+    return serialized && serialized !== '{}' ? serialized : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function isReasonableCrop(crop: { x: number; y: number; width: number; height: number } | null | undefined) {
   if (!crop) return false;
   if (!Number.isFinite(crop.x) || !Number.isFinite(crop.y) || !Number.isFinite(crop.width) || !Number.isFinite(crop.height)) {
@@ -393,7 +411,7 @@ export function CustomCape() {
         }
       } catch (error) {
         if (cancelled) return;
-        setErrorMessage(error instanceof Error ? error.message : String(error));
+        setErrorMessage(formatCapeStudioError(error));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -469,7 +487,7 @@ export function CustomCape() {
       setSavingDraft(true);
       void saveDraft(sourceImagePath, sourceImageUrl)
         .catch((error) => {
-          setErrorMessage(error instanceof Error ? error.message : String(error));
+          setErrorMessage(formatCapeStudioError(error));
         })
         .finally(() => {
           setSavingDraft(false);
@@ -515,7 +533,7 @@ export function CustomCape() {
         })
         .catch((error) => {
           if (cancelled) return;
-          setErrorMessage(error instanceof Error ? error.message : String(error));
+          setErrorMessage(formatCapeStudioError(error));
         })
         .finally(() => {
           if (!cancelled) setPreviewBusy(false);
@@ -625,7 +643,7 @@ export function CustomCape() {
       setOwnerListingSlug((current) => current || `custom-${safeBaseName}-${Date.now().toString().slice(-5)}`);
       setOwnerListingName((current) => (current ? clampCapeName(current) : clampCapeName(`${safeBaseName} cape`)));
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(formatCapeStudioError(error));
     } finally {
       setUploading(false);
     }
@@ -720,7 +738,7 @@ export function CustomCape() {
         setStatusMessage(staticUploadMode === 'texture' ? 'Cape texture exported to Locker.' : 'Custom cape exported to Locker.');
       }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(formatCapeStudioError(error));
     } finally {
       setExporting(false);
     }
@@ -754,7 +772,7 @@ export function CustomCape() {
       }
       setStatusMessage(`Code redeemed. You now have ${result.credits_remaining} free custom cape export credit${result.credits_remaining === 1 ? '' : 's'}.`);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(formatCapeStudioError(error));
     } finally {
       setRewardCodeBusy(false);
     }
@@ -795,7 +813,7 @@ export function CustomCape() {
       });
       setStatusMessage(`Uploaded to shop: ${created.name} (${created.slug})`);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(formatCapeStudioError(error));
     } finally {
       setPublishingToShop(false);
     }

@@ -20,8 +20,8 @@ Returns current authenticated Bloom launcher session context for this game proce
   "bloom_user_id": "uuid-or-id",
   "minecraft_uuid": "2790c9887660460491068944f4ea2dcb",
   "session_id": "bridge-session-id",
-  "backend_api_base_url": "https://sb.bloomclient.org/functions/v1/main",
-  "backend_ws_url": "wss://sb.bloomclient.org/realtime/v1/websocket",
+  "backend_api_base_url": "https://YOUR_PROJECT_REF.supabase.co/functions/v1/main",
+  "backend_ws_url": "wss://YOUR_PROJECT_REF.supabase.co/realtime/v1/websocket",
   "backend_access_token": "jwt-for-mod-presence-read"
 }
 ```

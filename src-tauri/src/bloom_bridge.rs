@@ -21,9 +21,6 @@ use crate::minecraft_prefs::read_preferences_from_disk;
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 18340;
-const DEFAULT_SUPABASE_URL: &str = "https://sb.bloomclient.org/project/default";
-const DEFAULT_SUPABASE_ANON_KEY: &str =
-    "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTc3NDE5NTMyMCwiZXhwIjo0OTI5ODY4OTIwLCJyb2xlIjoiYW5vbiJ9.snzMxBtGE48BsfFG2uhh6-Ms_fqQTbmasL-TkIco4K8";
 
 static BRIDGE_HANDLE: OnceLock<LauncherBridgeHandle> = OnceLock::new();
 
@@ -508,19 +505,22 @@ impl BridgeSharedState {
 
 impl SupabaseBridgeClient {
     fn new() -> Self {
-        let rest_base_url = normalize_supabase_url(
-            std::env::var("BLOOM_SUPABASE_URL")
-                .ok()
-                .as_deref()
-                .unwrap_or(DEFAULT_SUPABASE_URL),
-        );
-        let rest_base_url = if rest_base_url.ends_with("/rest/v1") {
+        let raw_url = std::env::var("BLOOM_SUPABASE_URL")
+            .ok()
+            .or_else(|| option_env!("BLOOM_SUPABASE_URL").map(str::to_string))
+            .unwrap_or_default();
+        let rest_base_url = normalize_supabase_url(&raw_url);
+        let rest_base_url = if rest_base_url.trim().is_empty() {
+            String::new()
+        } else if rest_base_url.ends_with("/rest/v1") {
             rest_base_url
         } else {
             format!("{}/rest/v1", rest_base_url.trim_end_matches('/'))
         };
         let anon_key = std::env::var("BLOOM_SUPABASE_ANON")
-            .unwrap_or_else(|_| DEFAULT_SUPABASE_ANON_KEY.to_string());
+            .ok()
+            .or_else(|| option_env!("BLOOM_SUPABASE_ANON").map(str::to_string))
+            .unwrap_or_default();
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -532,7 +532,14 @@ impl SupabaseBridgeClient {
         }
     }
 
+    fn is_configured(&self) -> bool {
+        !self.rest_base_url.trim().is_empty() && !self.anon_key.trim().is_empty()
+    }
+
     fn realtime_ws_url(&self) -> Result<String, String> {
+        if !self.is_configured() {
+            return Err("supabase_not_configured".to_string());
+        }
         let parsed = reqwest::Url::parse(&self.rest_base_url).map_err(|e| format!("invalid_rest_url:{e}"))?;
         let host = parsed.host_str().ok_or_else(|| "missing_supabase_host".to_string())?;
         let scheme = if parsed.scheme().eq_ignore_ascii_case("https") {
@@ -563,7 +570,7 @@ impl SupabaseBridgeClient {
         player_uuid: &str,
     ) -> Result<Option<BridgeEquippedCapePayload>, String> {
         let normalized = normalize_uuid(player_uuid);
-        if normalized.is_empty() {
+        if normalized.is_empty() || !self.is_configured() {
             return Ok(None);
         }
 
@@ -682,7 +689,7 @@ impl SupabaseBridgeClient {
         minecraft_uuid: &str,
     ) -> Result<Option<BridgeEquippedCapePayload>, String> {
         let normalized = normalize_uuid(minecraft_uuid);
-        if normalized.is_empty() {
+        if normalized.is_empty() || !self.is_configured() {
             return Ok(None);
         }
         let identity = self.fetch_badge_identity_by_player_uuid(&normalized).await?;

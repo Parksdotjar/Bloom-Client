@@ -9,7 +9,6 @@ use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use tauri::AppHandle;
 
-const DEFAULT_CURSEFORGE_RELAY_URL: &str = "https://sb.bloomclient.org/functions/v1/main/curseforge";
 const FEATURED_OVERDRIVE_ID: &str = "bloom-performance-overdrive";
 const FEATURED_OVERDRIVE_NAME: &str = "Bloom Preformance | Overdrive";
 const FEATURED_OVERDRIVE_MRPACK_NAME: &str = "bloom-performance-overdrive.mrpack";
@@ -378,9 +377,42 @@ fn read_env_trimmed(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn read_build_env_trimmed(name: &str) -> Option<String> {
+    match name {
+        "BLOOM_CURSEFORGE_RELAY_URL" => option_env!("BLOOM_CURSEFORGE_RELAY_URL"),
+        "BLOOM_SUPABASE_URL" => option_env!("BLOOM_SUPABASE_URL"),
+        _ => None,
+    }
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+}
+
+fn configured_supabase_origin() -> Option<String> {
+    let raw = read_env_trimmed("BLOOM_SUPABASE_URL")
+        .or_else(|| read_build_env_trimmed("BLOOM_SUPABASE_URL"))?;
+
+    match reqwest::Url::parse(&raw) {
+        Ok(parsed) => {
+            let host = parsed.host_str()?;
+            let port = parsed
+                .port()
+                .map(|value| format!(":{value}"))
+                .unwrap_or_default();
+            Some(format!("{}://{}{}", parsed.scheme(), host, port))
+        }
+        Err(_) => Some(raw.trim_end_matches('/').to_string()),
+    }
+}
+
 fn resolve_curseforge_relay_url() -> String {
     read_env_trimmed("BLOOM_CURSEFORGE_RELAY_URL")
-        .unwrap_or_else(|| DEFAULT_CURSEFORGE_RELAY_URL.to_string())
+        .or_else(|| read_build_env_trimmed("BLOOM_CURSEFORGE_RELAY_URL"))
+        .or_else(|| {
+            configured_supabase_origin()
+                .map(|origin| format!("{}/functions/v1/main/curseforge", origin.trim_end_matches('/')))
+        })
+        .unwrap_or_default()
         .trim_end_matches('/')
         .to_string()
 }
@@ -405,8 +437,13 @@ async fn curseforge_get_json(
             .map_err(|e| e.to_string());
     }
 
+    let relay_url = resolve_curseforge_relay_url();
+    if relay_url.is_empty() {
+        return Err("CurseForge relay is not configured.".to_string());
+    }
+
     let mut request = client
-        .get(format!("{}{}", resolve_curseforge_relay_url(), relay_path))
+        .get(format!("{}{}", relay_url, relay_path))
         .header("User-Agent", "BloomClient/0.1.0");
 
     if let Some(shared_key) = read_env_trimmed("BLOOM_RELAY_SHARED_KEY") {

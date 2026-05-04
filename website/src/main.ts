@@ -1,4 +1,4 @@
-﻿import { createClient } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 import "./style.css";
 
 type UpdatePlatform = {
@@ -21,7 +21,7 @@ type UpdateManifest = {
   windows?: UpdatePlatform;
 };
 
-type ResolvedUpdate = {
+type Release = {
   version: string;
   exeUrl?: string;
   exeAssetName?: string;
@@ -38,27 +38,13 @@ type NewsItem = {
 };
 
 type AppState = {
-  release?: ResolvedUpdate;
+  release?: Release;
   releaseError?: string;
   news: NewsItem[];
   newsError?: string;
 };
 
 type Route = "/" | "/downloads" | "/news" | "/staff" | "/about";
-
-type NavItem = {
-  path: Route;
-  label: string;
-  section: "main" | "more";
-};
-
-const navItems: NavItem[] = [
-  { path: "/", label: "Overview", section: "main" },
-  { path: "/downloads", label: "Downloads", section: "main" },
-  { path: "/news", label: "News", section: "main" },
-  { path: "/staff", label: "Staff", section: "main" },
-  { path: "/about", label: "About", section: "more" }
-];
 
 const updatesJsonUrl = import.meta.env.VITE_UPDATES_JSON_URL || "/latest.json";
 const siteUrl = import.meta.env.VITE_SITE_URL || "https://bloomclient.org";
@@ -68,86 +54,49 @@ const state: AppState = {
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
-if (!app) {
-  throw new Error("Missing #app root element.");
-}
+if (!app) throw new Error("Missing #app root.");
 const root = app;
 
-function getRoute(pathname = window.location.pathname): Route {
-  if (pathname === "/downloads") {
-    return "/downloads";
+const navItems: Array<{ path: Route; label: string }> = [
+  { path: "/", label: "Home" },
+  { path: "/downloads", label: "Downloads" },
+  { path: "/news", label: "News" },
+  { path: "/staff", label: "Staff" },
+  { path: "/about", label: "About" }
+];
+
+const productCards = [
+  {
+    title: "Instance launcher",
+    body: "Create Fabric 1.21.11 instances, manage memory, launch profiles, and keep your setup organized."
+  },
+  {
+    title: "Cosmetics locker",
+    body: "Equip capes, preview cosmetics, manage Bloom Bucks, and sync account-owned items."
+  },
+  {
+    title: "Marketplace tools",
+    body: "Browse downloads, packs, resource packs, shaders, and curated client utilities."
+  },
+  {
+    title: "Built-in games",
+    body: "Play client-side games like tower defense, Tetris, and 3D paddle games directly in Bloom."
   }
-  if (pathname === "/news") {
-    return "/news";
-  }
-  if (pathname === "/about") {
-    return "/about";
-  }
-  if (pathname === "/staff") {
-    return "/staff";
-  }
+];
+
+const staffMembers = [
+  { name: "Parks", role: "Owner", image: "/staff/parks.jpg" },
+  { name: "DragonSam", role: "Co-Owner", image: "/staff/dragonsam.png" },
+  { name: "Sn1cy", role: "Head Manager", image: "/staff/sn1cy.png" },
+  { name: "Wqfflez", role: "Manager", image: "/staff/wqfflez.png" }
+];
+
+function routeFromPath(pathname = window.location.pathname): Route {
+  if (pathname === "/downloads") return "/downloads";
+  if (pathname === "/news") return "/news";
+  if (pathname === "/staff") return "/staff";
+  if (pathname === "/about") return "/about";
   return "/";
-}
-
-function inferAssetName(url?: string): string | undefined {
-  if (!url) {
-    return undefined;
-  }
-
-  try {
-    const parsed = new URL(url);
-    const pathname = parsed.pathname.split("/");
-    return decodeURIComponent(pathname[pathname.length - 1] || "");
-  } catch {
-    const pathname = url.split("?")[0].split("/");
-    return decodeURIComponent(pathname[pathname.length - 1] || "");
-  }
-}
-
-function parseUpdateManifest(payload: UpdateManifest): ResolvedUpdate {
-  const windows = payload.windows || {};
-
-  const exeUrl =
-    windows.installerUrl ||
-    windows.nsisUrl ||
-    payload.installerUrl ||
-    payload.fallbackInstallerUrls?.[0] ||
-    windows.fallbackInstallerUrls?.[0];
-
-  const exeAssetName =
-    windows.assetName ||
-    windows.nsisAssetName ||
-    payload.assetName ||
-    inferAssetName(exeUrl);
-
-  const msiUrl = windows.msiUrl || payload.msiUrl;
-  const msiAssetName =
-    windows.msiAssetName || payload.msiAssetName || inferAssetName(msiUrl);
-
-  return {
-    version: payload.version || "unknown",
-    exeUrl,
-    exeAssetName,
-    msiUrl,
-    msiAssetName
-  };
-}
-
-function formatDate(dateValue?: string): string {
-  if (!dateValue) {
-    return "Unscheduled";
-  }
-
-  const date = new Date(dateValue);
-  if (Number.isNaN(date.getTime())) {
-    return dateValue;
-  }
-
-  return date.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric"
-  });
 }
 
 function escapeHtml(input: string): string {
@@ -159,20 +108,57 @@ function escapeHtml(input: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function formatDate(value?: string): string {
+  if (!value) return "Unscheduled";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  });
+}
+
+function inferAssetName(url?: string): string | undefined {
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    return decodeURIComponent(parsed.pathname.split("/").pop() || "");
+  } catch {
+    return decodeURIComponent(url.split("?")[0].split("/").pop() || "");
+  }
+}
+
+function parseRelease(payload: UpdateManifest): Release {
+  const windows = payload.windows || {};
+  const exeUrl =
+    windows.installerUrl ||
+    windows.nsisUrl ||
+    payload.installerUrl ||
+    windows.fallbackInstallerUrls?.[0] ||
+    payload.fallbackInstallerUrls?.[0];
+  const msiUrl = windows.msiUrl || payload.msiUrl;
+
+  return {
+    version: payload.version || "unknown",
+    exeUrl,
+    exeAssetName:
+      windows.assetName ||
+      windows.nsisAssetName ||
+      payload.assetName ||
+      inferAssetName(exeUrl),
+    msiUrl,
+    msiAssetName: windows.msiAssetName || payload.msiAssetName || inferAssetName(msiUrl)
+  };
+}
+
 async function loadRelease(): Promise<void> {
   try {
     const response = await fetch(updatesJsonUrl, { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`Manifest request failed (${response.status}).`);
-    }
-
-    const payload = (await response.json()) as UpdateManifest;
-    state.release = parseUpdateManifest(payload);
+    if (!response.ok) throw new Error(`Manifest request failed (${response.status}).`);
+    state.release = parseRelease((await response.json()) as UpdateManifest);
   } catch (error) {
-    state.releaseError =
-      error instanceof Error
-        ? error.message
-        : "Could not load release manifest.";
+    state.releaseError = error instanceof Error ? error.message : "Could not load the latest release.";
   }
 }
 
@@ -183,8 +169,8 @@ async function loadNews(): Promise<void> {
   if (!supabaseUrl || !supabaseAnonKey) {
     state.news = [
       {
-        title: "News feed offline",
-        summary: "Set Supabase credentials in website/.env to load live posts.",
+        title: "Bloom Client website is live",
+        summary: "Release notes and client updates will appear here.",
         published_at: new Date().toISOString()
       }
     ];
@@ -192,13 +178,9 @@ async function loadNews(): Promise<void> {
   }
 
   const table = import.meta.env.VITE_SUPABASE_NEWS_TABLE || "news_posts";
-  const fields =
-    import.meta.env.VITE_SUPABASE_NEWS_FIELDS ||
-    "id,title,slug,summary,published_at";
-  const orderColumn =
-    import.meta.env.VITE_SUPABASE_NEWS_ORDER_COLUMN || "published_at";
-  const publishedColumn =
-    import.meta.env.VITE_SUPABASE_NEWS_PUBLISHED_COLUMN || "is_published";
+  const fields = import.meta.env.VITE_SUPABASE_NEWS_FIELDS || "id,title,slug,summary,published_at";
+  const orderColumn = import.meta.env.VITE_SUPABASE_NEWS_ORDER_COLUMN || "published_at";
+  const publishedColumn = import.meta.env.VITE_SUPABASE_NEWS_PUBLISHED_COLUMN || "is_published";
   const limit = Number(import.meta.env.VITE_SUPABASE_NEWS_LIMIT || 8);
 
   const supabase: any = createClient(supabaseUrl, supabaseAnonKey, {
@@ -211,155 +193,129 @@ async function loadNews(): Promise<void> {
     .order(orderColumn, { ascending: false })
     .limit(Number.isFinite(limit) ? limit : 8);
 
-  if (publishedColumn) {
-    query = query.eq(publishedColumn, true);
-  }
+  if (publishedColumn) query = query.eq(publishedColumn, true);
 
-  const { data, error }: { data: Record<string, unknown>[] | null; error: any } =
-    await query;
-
+  const { data, error }: { data: Record<string, unknown>[] | null; error: { message?: string } | null } = await query;
   if (error || !data) {
-    state.newsError =
-      error?.message || `Could not load posts from Supabase table "${table}".`;
     state.news = [];
+    state.newsError = error?.message || `Could not load posts from "${table}".`;
     return;
   }
 
   state.news = data.map((row: Record<string, unknown>) => ({
-    id: (row.id as string | number | undefined) || undefined,
-    slug: (row.slug as string | undefined) || undefined,
+    id: row.id as string | number | undefined,
+    slug: row.slug as string | undefined,
     title: (row.title as string | undefined) || "Untitled",
     summary:
       (row.summary as string | undefined) ||
       (row.excerpt as string | undefined) ||
       "No summary provided.",
-    published_at: (row.published_at as string | undefined) || undefined
+    published_at: row.published_at as string | undefined
   }));
 }
 
-function renderSidebar(route: Route): string {
-  const renderGroup = (section: "main" | "more", title: string): string => {
-    const items = navItems.filter((item) => item.section === section);
-    return `
-      <div class="nav-group">
-        <p class="group-label">${title}</p>
-        <nav class="menu">
-          ${items
-            .map((item) => {
-              const active = item.path === route ? "active" : "";
-              return `<a class="menu-item ${active}" href="${item.path}" data-route="${item.path}">${item.label}</a>`;
-            })
-            .join("")}
-        </nav>
-      </div>
-    `;
-  };
-
-  return `
-    <aside class="sidebar">
-      <div class="brand-wrap">
-        <img class="brand-logo" src="/logo.png" alt="Bloom Client logo" />
-        <div>
-          <p class="brand-name">Bloom Client</p>
-          <p class="brand-sub">Official Website</p>
-        </div>
-      </div>
-      ${renderGroup("main", "Main")}
-      ${renderGroup("more", "More")}
-    </aside>
-  `;
+function releaseButtons(className = "hero-actions"): string {
+  const release = state.release;
+  const exe = release?.exeUrl
+    ? `<a class="btn primary" href="${escapeHtml(release.exeUrl)}" target="_blank" rel="noreferrer">Download Windows</a>`
+    : `<span class="btn disabled">Download unavailable</span>`;
+  const msi = release?.msiUrl
+    ? `<a class="btn secondary" href="${escapeHtml(release.msiUrl)}" target="_blank" rel="noreferrer">Download MSI</a>`
+    : `<a class="btn secondary" href="/downloads" data-route="/downloads">View downloads</a>`;
+  return `<div class="${className}">${exe}${msi}</div>`;
 }
 
-function renderTopbar(route: Route): string {
-  const pageTitle = navItems.find((item) => item.path === route)?.label || "Overview";
+function renderHeader(route: Route): string {
   return `
-    <header class="topbar">
-      <h1>${pageTitle}</h1>
-      <a class="ghost-link" href="${updatesJsonUrl}" target="_blank" rel="noreferrer">Manifest</a>
+    <header class="site-header">
+      <a class="brand" href="/" data-route="/">
+        <img src="/logo.png" alt="Bloom Client logo" />
+        <span>Bloom Client</span>
+      </a>
+      <nav class="nav">
+        ${navItems
+          .map(
+            (item) =>
+              `<a class="${item.path === route ? "active" : ""}" href="${item.path}" data-route="${item.path}">${item.label}</a>`
+          )
+          .join("")}
+      </nav>
+      <a class="top-download" href="/downloads" data-route="/downloads">Start download</a>
     </header>
   `;
 }
 
-function renderOverview(): string {
-  const version = state.release?.version ? `v${escapeHtml(state.release.version)}` : "Unknown";
-  const releaseStatus = state.releaseError
-    ? escapeHtml(state.releaseError)
-    : `Latest version detected: ${version}`;
-
-  const recent = state.news.slice(0, 3);
-  const recentCards =
-    recent.length > 0
-      ? recent
-          .map(
-            (item) => `
-        <article class="mini-card">
-          <p class="mini-title">${escapeHtml(item.title)}</p>
-          <p class="mini-meta">${escapeHtml(formatDate(item.published_at))}</p>
-        </article>
-      `
-          )
-          .join("")
-      : `
-      <article class="mini-card">
-        <p class="mini-title">No recent posts</p>
-        <p class="mini-meta">News entries will show here.</p>
-      </article>
-    `;
-
+function renderHome(): string {
   return `
-    <section class="page-grid">
-      <article class="card card-hero">
-        <p class="eyebrow">Bloom</p>
-        <h2>Clean launcher hub with fast access to builds and updates.</h2>
-        <p class="muted">${releaseStatus}</p>
-      </article>
-      <article class="card">
-        <h3>Quick Access</h3>
-        <div class="stack-actions">
-          <a class="solid-btn" href="/downloads" data-route="/downloads">Go to Downloads</a>
-          <a class="ghost-btn" href="/news" data-route="/news">Read News</a>
-        </div>
-      </article>
-      <article class="card span-2">
-        <h3>Recent News</h3>
-        <div class="mini-grid">${recentCards}</div>
-      </article>
+    <section class="hero-section">
+      <div class="hero-copy">
+        <p class="eyebrow">Official Bloom Client</p>
+        <h1>Bloom Client</h1>
+        <p class="lead">A focused Minecraft launcher for clean instances, synced cosmetics, marketplace tools, account utilities, and creator-ready client features.</p>
+        ${releaseButtons()}
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <p class="eyebrow">Client tools</p>
+        <h2>Built around the client, not a landing page.</h2>
+      </div>
+      <div class="feature-grid">
+        ${productCards
+          .map(
+            (card) => `
+              <article class="feature-card">
+                <h3>${escapeHtml(card.title)}</h3>
+                <p>${escapeHtml(card.body)}</p>
+              </article>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+
+    <section class="section split-band">
+      <div>
+        <p class="eyebrow">Updates</p>
+        <h2>Get the latest Bloom Client build.</h2>
+        <p>Download the current Windows release and stay ready for launcher updates, cosmetics, marketplace tools, and client features.</p>
+      </div>
+      <a class="btn secondary" href="/downloads" data-route="/downloads">Check downloads</a>
     </section>
   `;
 }
 
 function renderDownloads(): string {
   const release = state.release;
-  const versionLabel = release?.version ? `v${escapeHtml(release.version)}` : "Unknown";
-  const exeLabel = release?.exeAssetName ? escapeHtml(release.exeAssetName) : "Windows EXE";
-  const msiLabel = release?.msiAssetName ? escapeHtml(release.msiAssetName) : "Windows MSI";
-
-  const exeButton = release?.exeUrl
-    ? `<a class="solid-btn" href="${escapeHtml(release.exeUrl)}" target="_blank" rel="noreferrer">${exeLabel}</a>`
-    : `<span class="disabled-btn">EXE unavailable</span>`;
-
-  const msiButton = release?.msiUrl
-    ? `<a class="ghost-btn" href="${escapeHtml(release.msiUrl)}" target="_blank" rel="noreferrer">${msiLabel}</a>`
-    : `<span class="disabled-btn">MSI unavailable</span>`;
-
+  const version = release?.version ? `v${escapeHtml(release.version)}` : "Unavailable";
   const detail = state.releaseError
-    ? escapeHtml(state.releaseError)
-    : `Source: ${escapeHtml(updatesJsonUrl)}`;
+    ? "Downloads are temporarily unavailable."
+    : "Latest Windows release, ready to install.";
 
   return `
-    <section class="page-grid single">
-      <article class="card card-hero">
-        <p class="eyebrow">Latest Build</p>
-        <h2>${versionLabel}</h2>
-        <p class="muted">${detail}</p>
-      </article>
-      <article class="card">
-        <h3>Windows</h3>
-        <div class="stack-actions">
-          ${exeButton}
-          ${msiButton}
-        </div>
-      </article>
+    <section class="page-hero compact">
+      <p class="eyebrow">Downloads</p>
+      <h1>Download Bloom</h1>
+      <p>${detail}</p>
+    </section>
+    <section class="download-panel">
+      <div>
+        <p class="eyebrow">Current Windows build</p>
+        <h2>${version}</h2>
+      </div>
+      <div class="download-list">
+        ${
+          release?.exeUrl
+            ? `<a class="download-row" href="${escapeHtml(release.exeUrl)}" target="_blank" rel="noreferrer"><span>${escapeHtml(release.exeAssetName || "Windows installer")}</span><strong>EXE</strong></a>`
+            : `<div class="download-row disabled-row"><span>Windows installer unavailable</span><strong>EXE</strong></div>`
+        }
+        ${
+          release?.msiUrl
+            ? `<a class="download-row" href="${escapeHtml(release.msiUrl)}" target="_blank" rel="noreferrer"><span>${escapeHtml(release.msiAssetName || "Windows MSI")}</span><strong>MSI</strong></a>`
+            : `<div class="download-row disabled-row"><span>MSI unavailable</span><strong>MSI</strong></div>`
+        }
+      </div>
     </section>
   `;
 }
@@ -367,158 +323,119 @@ function renderDownloads(): string {
 function renderNews(): string {
   if (state.newsError) {
     return `
-      <section class="page-grid single">
-        <article class="card">
-          <h3>News feed unavailable</h3>
-          <p class="muted">${escapeHtml(state.newsError)}</p>
-        </article>
+      <section class="page-hero compact">
+        <p class="eyebrow">News</p>
+        <h1>Bloom updates</h1>
+        <p>News posts are temporarily unavailable.</p>
       </section>
     `;
   }
 
-  const cards =
-    state.news.length > 0
-      ? state.news
-          .map(
-            (item) => `
-        <article class="card">
-          <h3>${escapeHtml(item.title)}</h3>
-          <p>${escapeHtml(item.summary)}</p>
-          <p class="muted">${escapeHtml(formatDate(item.published_at))}${
-              item.slug ? ` · #${escapeHtml(item.slug)}` : ""
-            }</p>
-        </article>
-      `
-          )
-          .join("")
-      : `
-      <article class="card">
-        <h3>No posts yet</h3>
-        <p class="muted">Publish news in Supabase to populate this page.</p>
-      </article>
-    `;
-
-  return `<section class="page-grid single">${cards}</section>`;
-}
-
-function renderAbout(): string {
   return `
-    <section class="page-grid single">
-      <article class="card card-hero">
-        <p class="eyebrow">About</p>
-        <h2>Official Bloom Client web presence.</h2>
-        <p class="muted">This website is VPS-ready and connected to your update flow manifest format.</p>
-      </article>
-      <article class="card">
-        <h3>Production Target</h3>
-        <p><code>${escapeHtml(siteUrl)}</code></p>
-      </article>
+    <section class="page-hero compact">
+      <p class="eyebrow">News</p>
+      <h1>Bloom updates</h1>
+      <p>Release notes, client changes, and project posts.</p>
+    </section>
+    <section class="news-list">
+      ${
+        state.news.length
+          ? state.news
+              .map(
+                (item) => `
+                  <article class="news-card">
+                    <time>${escapeHtml(formatDate(item.published_at))}</time>
+                    <h2>${escapeHtml(item.title)}</h2>
+                    <p>${escapeHtml(item.summary)}</p>
+                  </article>
+                `
+              )
+              .join("")
+          : `<article class="news-card"><h2>No posts yet</h2><p>Published news will appear here.</p></article>`
+      }
     </section>
   `;
 }
 
 function renderStaff(): string {
-  const members = [
-    {
-      name: "Parks",
-      role: "Owner",
-      image: "/staff/parks.jpg"
-    },
-    {
-      name: "DragonSam",
-      role: "Co-Owner",
-      image: "/staff/dragonsam.png"
-    },
-    {
-      name: "Sn1cy",
-      role: "Head Manager",
-      image: "/staff/sn1cy.png"
-    },
-    {
-      name: "Wqfflez",
-      role: "Manager",
-      image: "/staff/wqfflez.png"
-    }
-  ];
-
-  const cards = members
-    .map(
-      (member) => `
-        <article class="staff-card">
-          <img
-            class="staff-avatar"
-            src="${member.image}"
-            alt="${member.name} profile picture"
-            onerror="this.onerror=null;this.src='/staff/placeholder.svg';"
-          />
-          <h3>${escapeHtml(member.name)}</h3>
-          <p class="staff-role">${escapeHtml(member.role)}</p>
-        </article>
-      `
-    )
-    .join("");
-
   return `
-    <section class="staff-page">
-      <article class="staff-hero">
-        <h2>Meet The Bloom Staff</h2>
-        <p>Core team members building and running Bloom Client.</p>
-      </article>
-      <div class="staff-grid">
-        ${cards}
-      </div>
+    <section class="page-hero compact">
+      <p class="eyebrow">Staff</p>
+      <h1>Bloom team</h1>
+      <p>The people building, shipping, and moderating Bloom Client.</p>
+    </section>
+    <section class="staff-grid">
+      ${staffMembers
+        .map(
+          (member) => `
+            <article class="staff-card">
+              <img src="${member.image}" alt="${member.name} profile picture" onerror="this.onerror=null;this.src='/staff/placeholder.svg';" />
+              <h2>${escapeHtml(member.name)}</h2>
+              <p>${escapeHtml(member.role)}</p>
+            </article>
+          `
+        )
+        .join("")}
     </section>
   `;
 }
 
-function renderPage(route: Route): string {
-  if (route === "/downloads") {
-    return renderDownloads();
-  }
-  if (route === "/news") {
-    return renderNews();
-  }
-  if (route === "/about") {
-    return renderAbout();
-  }
-  if (route === "/staff") {
-    return renderStaff();
-  }
-  return renderOverview();
+function renderAbout(): string {
+  return `
+    <section class="page-hero compact">
+      <p class="eyebrow">About</p>
+      <h1>Built for the Bloom ecosystem.</h1>
+      <p>This site hosts public downloads, project updates, staff information, and official Bloom Client resources.</p>
+    </section>
+    <section class="about-grid">
+      <article>
+        <h2>Launcher first</h2>
+        <p>Bloom focuses on Minecraft client workflows: instances, launch settings, cosmetics, wallets, marketplace content, scripts, and in-client tools.</p>
+      </article>
+      <article>
+        <h2>Fast downloads</h2>
+        <p>Installers are hosted for simple access, so players can grab the latest Windows build without digging through release pages.</p>
+      </article>
+      <article>
+        <h2>Official home</h2>
+        <p>Use bloomclient.org for Bloom Client downloads, project news, staff information, and trusted links.</p>
+      </article>
+    </section>
+  `;
+}
+
+function renderRoute(route: Route): string {
+  if (route === "/downloads") return renderDownloads();
+  if (route === "/news") return renderNews();
+  if (route === "/staff") return renderStaff();
+  if (route === "/about") return renderAbout();
+  return renderHome();
 }
 
 function mount(): void {
-  const route = getRoute();
-
+  const route = routeFromPath();
+  document.title = route === "/" ? "Bloom Client | Official Website" : `Bloom Client | ${navItems.find((item) => item.path === route)?.label}`;
   root.innerHTML = `
-    <div class="ambient" aria-hidden="true"></div>
-    <main class="shell">
-      ${renderSidebar(route)}
-      <section class="content">
-        ${renderTopbar(route)}
-        <div class="view">${renderPage(route)}</div>
-      </section>
-    </main>
+    ${renderHeader(route)}
+    <main>${renderRoute(route)}</main>
+    <footer class="site-footer">
+      <span>Bloom Client</span>
+      <span>${escapeHtml(siteUrl.replace(/^https?:\/\//, ""))}</span>
+    </footer>
   `;
 
-  root.querySelectorAll<HTMLElement>("[data-route]").forEach((el) => {
-    el.addEventListener("click", (event) => {
+  root.querySelectorAll<HTMLAnchorElement>("[data-route]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      const href = link.getAttribute("href");
+      if (!href) return;
       event.preventDefault();
-      const href = el.getAttribute("data-route");
-      if (!href) {
-        return;
-      }
       window.history.pushState({}, "", href);
       mount();
+      window.scrollTo({ top: 0, behavior: "smooth" });
     });
   });
 }
 
-window.addEventListener("popstate", () => {
-  mount();
-});
+window.addEventListener("popstate", mount);
 
-void Promise.all([loadRelease(), loadNews()]).finally(() => {
-  mount();
-});
-
+void Promise.all([loadRelease(), loadNews()]).finally(mount);

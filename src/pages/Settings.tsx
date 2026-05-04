@@ -80,7 +80,7 @@ type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'o
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'custom';
 type BackgroundMode = 'none' | 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula' | 'custom';
 type DensityMode = 'compact' | 'cozy' | 'spacious';
-type FontPackMode = 'manrope' | 'space-grotesk' | 'sora';
+type FontPackMode = 'manrope' | 'space-grotesk' | 'sora' | 'custom';
 type SidebarMode = 'rail' | 'classic' | 'expanded';
 type SidebarPosition = 'left' | 'right' | 'top' | 'bottom';
 type CardStyleMode = 'glass' | 'solid' | 'outline';
@@ -188,6 +188,9 @@ const DENSITY_STORAGE_KEY = 'bloom_density_mode';
 const DENSITY_CHANGE_EVENT = 'bloom-density-change';
 const FONT_STORAGE_KEY = 'bloom_font_pack';
 const FONT_CHANGE_EVENT = 'bloom-font-change';
+const CUSTOM_FONT_DATA_KEY = 'bloom_custom_font_data';
+const CUSTOM_FONT_NAME_KEY = 'bloom_custom_font_name';
+const CUSTOM_FONT_FORMAT_KEY = 'bloom_custom_font_format';
 const SIDEBAR_STORAGE_KEY = 'bloom_sidebar_mode';
 const SIDEBAR_CHANGE_EVENT = 'bloom-sidebar-change';
 const SIDEBAR_POSITION_STORAGE_KEY = 'bloom_sidebar_position';
@@ -418,8 +421,8 @@ const OWNER_BADGE_ASSET_META: Record<BadgeKey, { file: string; char: string }> =
 };
 
 const UNIVERSAL_LOADING_MODES: { id: UniversalLoadingMode; label: string; description: string }[] = [
-  { id: 'fullscreen', label: 'Fullscreen', description: 'Current full-screen loading overlay.' },
-  { id: 'compact', label: 'Compact Card', description: 'Picture-in-picture style loading card.' }
+  { id: 'notification', label: 'Notification', description: 'Small progress dropdown from the notification area.' },
+  { id: 'fullscreen', label: 'Fullscreen', description: 'Full-window loading overlay.' }
 ];
 
 const SHOP_RARITY_LABELS: Record<ShopRarityKey, string> = {
@@ -638,7 +641,7 @@ function parseAppearancePresetPayload(raw: unknown): AppearancePresetPayload | n
   const isBackground = (value: unknown): value is BackgroundMode =>
     value === 'none' || value === 'plus' || value === 'particles' || value === 'aurora' || value === 'scanlines' || value === 'nebula' || value === 'custom';
   const isDensity = (value: unknown): value is DensityMode => value === 'compact' || value === 'cozy' || value === 'spacious';
-  const isFont = (value: unknown): value is FontPackMode => value === 'manrope' || value === 'space-grotesk' || value === 'sora';
+  const isFont = (value: unknown): value is FontPackMode => value === 'manrope' || value === 'space-grotesk' || value === 'sora' || value === 'custom';
   const isSidebarMode = (value: unknown): value is SidebarMode => value === 'rail' || value === 'classic' || value === 'expanded';
   const isSidebarPosition = (value: unknown): value is SidebarPosition => value === 'left' || value === 'right' || value === 'top' || value === 'bottom';
   const isCardStyle = (value: unknown): value is CardStyleMode => value === 'glass' || value === 'solid' || value === 'outline';
@@ -859,6 +862,18 @@ function serializeKeybindMap(map: Record<string, string>) {
   return JSON.stringify(Object.entries(map).sort(([left], [right]) => left.localeCompare(right)));
 }
 
+function readCustomFontName() {
+  return localStorage.getItem(CUSTOM_FONT_NAME_KEY) || '';
+}
+
+function resolveFontFormat(fileName: string) {
+  const ext = fileName.split('.').pop()?.toLowerCase();
+  if (ext === 'otf') return 'opentype';
+  if (ext === 'woff') return 'woff';
+  if (ext === 'woff2') return 'woff2';
+  return 'truetype';
+}
+
 const PARTNER_APPLICATION_QUESTION_TYPES: Array<{ value: PartnerApplicationQuestionType; label: string }> = [
   { value: 'short_text', label: 'Short Text' },
   { value: 'long_text', label: 'Long Text' },
@@ -956,6 +971,7 @@ export function Settings() {
   const [universalLoadingStyle, setUniversalLoadingStyle] = useState<UniversalLoadingStyle>(() => readUniversalLoadingStyle());
   const [universalLoadingMode, setUniversalLoadingMode] = useState<UniversalLoadingMode>(() => readUniversalLoadingMode());
   const [showUniversalLoadingPreview, setShowUniversalLoadingPreview] = useState(false);
+  const [universalLoadingPreviewProgress, setUniversalLoadingPreviewProgress] = useState(0);
   const [showWidgetDocker, setShowWidgetDocker] = useState<boolean>(() => localStorage.getItem(SHOW_WIDGET_DOCKER_KEY) === 'true');
   const [hideEmptyWidgetSlots, setHideEmptyWidgetSlots] = useState<boolean>(() => localStorage.getItem(HIDE_EMPTY_WIDGET_SLOTS_KEY) === 'true');
   const [showGamesSection, setShowGamesSection] = useState<boolean>(() => localStorage.getItem(SHOW_GAMES_SECTION_KEY) === 'true');
@@ -1157,8 +1173,12 @@ export function Settings() {
   });
   const [fontPackMode, setFontPackMode] = useState<FontPackMode>(() => {
     const stored = localStorage.getItem(FONT_STORAGE_KEY);
-    return stored === 'manrope' || stored === 'space-grotesk' || stored === 'sora' ? stored : 'manrope';
+    return stored === 'manrope' || stored === 'space-grotesk' || stored === 'sora' || stored === 'custom' ? stored : 'manrope';
   });
+  const [customFontName, setCustomFontName] = useState(() => readCustomFontName());
+  const [customFontBusy, setCustomFontBusy] = useState(false);
+  const [customFontStatus, setCustomFontStatus] = useState<string | null>(null);
+  const customFontInputRef = useRef<HTMLInputElement | null>(null);
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => {
     const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
     return stored === 'rail' || stored === 'classic' || stored === 'expanded' ? stored : 'rail';
@@ -2041,15 +2061,25 @@ export function Settings() {
       setOwnerUtilityStatus('Balance must be a non-negative number.');
       return;
     }
+    const targetBalance = Math.floor(parsed);
     setOwnerUtilityBusy(true);
-    setOwnerUtilityStatus(null);
+    setOwnerUtilityStatus(`Applying balance ${targetBalance.toLocaleString()} BB...`);
     try {
-      const wallet = await setUserWalletBalanceById(selectedOwnerMember.user_id, Math.floor(parsed));
+      const wallet = await setUserWalletBalanceById(selectedOwnerMember.user_id, targetBalance);
+      if (wallet.balance_bb !== targetBalance) {
+        throw new Error(`Supabase returned ${wallet.balance_bb.toLocaleString()} BB instead of ${targetBalance.toLocaleString()} BB.`);
+      }
       setOwnerMembers((current) =>
-        current.map((member) => (member.user_id === selectedOwnerMember.user_id ? { ...member, balance_bb: wallet.balance_bb } : member))
+        current.map((member) =>
+          member.user_id === selectedOwnerMember.user_id
+            ? { ...member, balance_bb: wallet.balance_bb, wallet_updated_at: wallet.updated_at }
+            : member
+        )
       );
       setOwnerBalanceDraft(String(wallet.balance_bb));
-      setOwnerUtilityStatus(`Updated balance for ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id}.`);
+      setOwnerUtilityStatus(
+        `Balance updated successfully for ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id}. New balance: ${wallet.balance_bb.toLocaleString()} BB.`
+      );
     } catch (error) {
       setOwnerUtilityStatus(`Balance update failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -2469,6 +2499,39 @@ export function Settings() {
     window.dispatchEvent(new CustomEvent(FONT_CHANGE_EVENT, { detail: { font: next } }));
   };
 
+  const importCustomFont = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      setCustomFontBusy(true);
+      setCustomFontStatus(null);
+      const fileName = file.name || 'Custom Font';
+      const dataUrl = await fileToDataUrl(file);
+      const format = resolveFontFormat(fileName);
+      const displayName = fileName.replace(/\.[^.]+$/, '');
+      localStorage.setItem(CUSTOM_FONT_DATA_KEY, dataUrl);
+      localStorage.setItem(CUSTOM_FONT_NAME_KEY, displayName);
+      localStorage.setItem(CUSTOM_FONT_FORMAT_KEY, format);
+      setCustomFontName(displayName);
+      applyFontPack('custom');
+      setCustomFontStatus(`${displayName} applied.`);
+    } catch (error) {
+      setCustomFontStatus(error instanceof Error ? error.message : 'Failed to import font.');
+    } finally {
+      setCustomFontBusy(false);
+    }
+  };
+
+  const clearCustomFont = () => {
+    localStorage.removeItem(CUSTOM_FONT_DATA_KEY);
+    localStorage.removeItem(CUSTOM_FONT_NAME_KEY);
+    localStorage.removeItem(CUSTOM_FONT_FORMAT_KEY);
+    setCustomFontName('');
+    setCustomFontStatus('Custom font removed.');
+    if (fontPackMode === 'custom') applyFontPack('manrope');
+  };
+
   const applySidebar = (next: SidebarMode) => {
     setSidebarMode(next);
     localStorage.setItem(SIDEBAR_STORAGE_KEY, next);
@@ -2682,8 +2745,17 @@ export function Settings() {
 
   useEffect(() => {
     if (!showUniversalLoadingPreview) return;
-    const timer = window.setTimeout(() => setShowUniversalLoadingPreview(false), 1300);
-    return () => window.clearTimeout(timer);
+    setUniversalLoadingPreviewProgress(0);
+    const startedAt = window.performance.now();
+    const interval = window.setInterval(() => {
+      const elapsed = window.performance.now() - startedAt;
+      setUniversalLoadingPreviewProgress(Math.min(100, Math.round((elapsed / 2600) * 100)));
+    }, 80);
+    const timer = window.setTimeout(() => setShowUniversalLoadingPreview(false), 3000);
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(timer);
+    };
   }, [showUniversalLoadingPreview]);
 
   const curvePath = `M 0 100 C ${motionEasingX1 * 100} ${100 - motionEasingY1 * 100}, ${motionEasingX2 * 100} ${100 - motionEasingY2 * 100}, 100 0`;
@@ -2703,8 +2775,9 @@ export function Settings() {
         open={showUniversalLoadingPreview}
         fixed
         eyebrow="Preview"
-        title="Universal Loading Screen"
-        description="This style will be used for launch, install, import, and export actions."
+        title="Testing Loader"
+        description="Delivering the payload to the hive..."
+        progress={universalLoadingPreviewProgress}
       />
       {ownerUtilityOpen && (
         <div className="fixed inset-0 z-[200]">
@@ -2905,9 +2978,21 @@ export function Settings() {
                             disabled={ownerUtilityBusy}
                             className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
                           >
-                            Apply Balance
+                            {ownerUtilityBusy ? 'Applying...' : 'Apply Balance'}
                           </button>
                         </div>
+                        {ownerUtilityStatus?.toLowerCase().includes('balance') && (
+                          <div
+                            className={clsx(
+                              'rounded-lg border px-3 py-2 text-xs font-bold',
+                              ownerUtilityStatus.toLowerCase().includes('failed') || ownerUtilityStatus.toLowerCase().includes('must be')
+                                ? 'border-red-400/35 bg-red-500/12 text-red-100'
+                                : 'border-emerald-400/35 bg-emerald-500/12 text-emerald-100'
+                            )}
+                          >
+                            {ownerUtilityStatus}
+                          </div>
+                        )}
                         <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-2">
                           <p className="text-[10px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Partner Bucks</p>
                           <p className="text-sm font-extrabold text-white mt-1">
@@ -2996,7 +3081,7 @@ export function Settings() {
                       </div>
                     )}
 
-                    {ownerUtilityStatus && (
+                    {ownerUtilityStatus && !ownerUtilityStatus.toLowerCase().includes('balance') && (
                       <p className="text-xs text-white/70">{ownerUtilityStatus}</p>
                     )}
                   </>
@@ -3692,8 +3777,8 @@ export function Settings() {
                     className={clsx(
                       'rounded-lg border p-3 text-left transition',
                       universalLoadingMode === mode.id
-                        ? 'border-[var(--g-accent)] bg-white/[0.06] shadow-[0_0_0_1px_var(--g-accent-soft)]'
-                        : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.04]'
+                        ? 'border-[#3a4049]/80 bg-white/[0.06]'
+                        : 'border-[#2b3038]/70 bg-white/[0.02] hover:border-[#3a4049]/80 hover:bg-white/[0.04]'
                     )}
                   >
                     <p className="text-sm font-extrabold text-white">{mode.label}</p>
@@ -3701,26 +3786,33 @@ export function Settings() {
                   </button>
                 ))}
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-                {UNIVERSAL_LOADING_STYLES.map((style) => (
-                  <button
-                    key={style.id}
-                    onClick={() => {
-                      applyUniversalLoadingStyle(style.id);
-                      setShowUniversalLoadingPreview(true);
-                    }}
-                    className={clsx(
-                      'rounded-lg border p-3 text-left transition',
-                      universalLoadingStyle === style.id
-                        ? 'border-[var(--g-accent)] bg-white/[0.06] shadow-[0_0_0_1px_var(--g-accent-soft)]'
-                        : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.04]'
-                    )}
-                  >
-                    <p className="text-sm font-extrabold text-white">{style.label}</p>
-                    <p className="mt-1 text-xs g-muted">{style.description}</p>
-                  </button>
-                ))}
-              </div>
+              {universalLoadingMode === 'notification' ? (
+                <div className="rounded-lg border border-[#3a4049]/80 bg-white/[0.06] p-3">
+                  <p className="text-sm font-extrabold text-white">Notification Progress</p>
+                  <p className="mt-1 text-xs g-muted">A compact progress card appears from the notification area without blurring the app.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                  {UNIVERSAL_LOADING_STYLES.map((style) => (
+                    <button
+                      key={style.id}
+                      onClick={() => {
+                        applyUniversalLoadingStyle(style.id);
+                        setShowUniversalLoadingPreview(true);
+                      }}
+                      className={clsx(
+                        'rounded-lg border p-3 text-left transition',
+                        universalLoadingStyle === style.id
+                          ? 'border-[#3a4049]/80 bg-white/[0.06]'
+                          : 'border-[#2b3038]/70 bg-white/[0.02] hover:border-[#3a4049]/80 hover:bg-white/[0.04]'
+                      )}
+                    >
+                      <p className="text-sm font-extrabold text-white">{style.label}</p>
+                      <p className="mt-1 text-xs g-muted">{style.description}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
@@ -3910,17 +4002,58 @@ export function Settings() {
           </AppearanceDropdown>
 
           <AppearanceDropdown title="Typography Pack" description="Switch global UI typeface and feel.">
+            <input
+              ref={customFontInputRef}
+              type="file"
+              accept=".ttf,.otf,.woff,.woff2"
+              className="hidden"
+              onChange={importCustomFont}
+            />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {([
                 { id: 'manrope', label: 'Manrope', sample: 'Clean interface' },
                 { id: 'space-grotesk', label: 'Space Grotesk', sample: 'Structured display' },
-                { id: 'sora', label: 'Sora', sample: 'Crisp controls' }
+                { id: 'sora', label: 'Sora', sample: 'Crisp controls' },
+                { id: 'custom', label: customFontName || 'Custom Font', sample: customFontName ? 'Uploaded local font' : 'Upload TTF, OTF, WOFF, or WOFF2' }
               ] as { id: FontPackMode; label: string; sample: string }[]).map((font) => (
-                <button key={font.id} onClick={() => applyFontPack(font.id)} className={clsx('rounded-xl border p-3 text-left', fontPackMode === font.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}>
+                <button
+                  key={font.id}
+                  onClick={() => {
+                    if (font.id === 'custom' && !customFontName) {
+                      customFontInputRef.current?.click();
+                      return;
+                    }
+                    applyFontPack(font.id);
+                  }}
+                  className={clsx('rounded-xl border p-3 text-left', fontPackMode === font.id ? 'g-btn-accent' : 'border-white/10 bg-white/[0.03]')}
+                >
                   <p className="text-sm font-extrabold text-white">{font.label}</p>
                   <p className="text-xs g-muted mt-1">{font.sample}</p>
                 </button>
               ))}
+            </div>
+            <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => customFontInputRef.current?.click()}
+                  disabled={customFontBusy}
+                  className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                >
+                  {customFontBusy ? 'Importing...' : customFontName ? 'Replace Custom Font' : 'Upload Custom Font'}
+                </button>
+                {customFontName && (
+                  <button
+                    onClick={clearCustomFont}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-xs font-extrabold uppercase tracking-[0.12em] text-white/74 transition hover:bg-white/[0.06]"
+                  >
+                    Remove Custom Font
+                  </button>
+                )}
+              </div>
+              <p className="mt-2 text-xs g-muted">
+                {customFontName ? `Current custom font: ${customFontName}` : 'Custom fonts stay local on this device and apply across the launcher.'}
+              </p>
+              {customFontStatus && <p className="mt-2 text-xs text-white/72">{customFontStatus}</p>}
             </div>
           </AppearanceDropdown>
 

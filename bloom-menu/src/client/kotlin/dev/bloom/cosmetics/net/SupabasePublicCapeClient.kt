@@ -22,15 +22,12 @@ data class SupabasePublicAuth(
     val timeoutSeconds: Long
 ) {
     companion object {
-        private const val DEFAULT_SUPABASE_URL = "https://sb.bloomclient.org/project/default"
-        private const val DEFAULT_SUPABASE_ANON = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTc3NDE5NTMyMCwiZXhwIjo0OTI5ODY4OTIwLCJyb2xlIjoiYW5vbiJ9.snzMxBtGE48BsfFG2uhh6-Ms_fqQTbmasL-TkIco4K8"
-
         fun fromEnvironment(): SupabasePublicAuth {
-            val rawBase = (System.getenv("BLOOM_SUPABASE_URL") ?: DEFAULT_SUPABASE_URL).trim()
-            val anon = (System.getenv("BLOOM_SUPABASE_ANON") ?: DEFAULT_SUPABASE_ANON).trim()
+            val rawBase = (System.getenv("BLOOM_SUPABASE_URL") ?: "").trim()
+            val anon = (System.getenv("BLOOM_SUPABASE_ANON") ?: "").trim()
             val timeout = (System.getenv("BLOOM_SUPABASE_TIMEOUT") ?: "10").toLongOrNull() ?: 10L
             val normalized = normalizeSupabaseUrl(rawBase)
-            val restBase = if (normalized.endsWith("/rest/v1")) normalized else "$normalized/rest/v1"
+            val restBase = if (normalized.isBlank() || normalized.endsWith("/rest/v1")) normalized else "$normalized/rest/v1"
             return SupabasePublicAuth(restBase, anon, timeout.coerceIn(4L, 45L))
         }
 
@@ -57,6 +54,7 @@ class SupabasePublicCapeClient(private val auth: SupabasePublicAuth) {
     fun fetchEquippedCapeByMinecraftUuid(minecraftUuid: String): CompletableFuture<BridgeEquippedCapePayload?> {
         val normalized = UuidUtil.normalize(minecraftUuid)
         if (normalized.isBlank()) return CompletableFuture.completedFuture(null)
+        if (auth.restBaseUrl.isBlank() || auth.anonKey.isBlank()) return CompletableFuture.completedFuture(null)
         val dashed = UuidUtil.toDashed(normalized)
         val select = encode("mc_uuid,equipped_cape_id,cape_slug,cape_name,texture_url,updated_at")
         val filter = encode("(mc_uuid.eq.$dashed,mc_uuid.eq.$normalized)")

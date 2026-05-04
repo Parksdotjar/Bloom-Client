@@ -7,6 +7,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { SidebarRail } from './SidebarRail';
 import { BloomConsole } from './BloomConsole';
 import { BudAssistant } from './BudAssistant';
+import { UNIVERSAL_LOADING_COMPLETE_EVENT } from './UniversalLoadingOverlay';
 import { useAuth } from '../hooks/useAuth';
 import { useInstances } from '../hooks/useInstances';
 import { useDownloader } from '../hooks/useDownloader';
@@ -63,7 +64,7 @@ type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'o
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'custom';
 type BackgroundMode = 'none' | 'plus' | 'particles' | 'aurora' | 'scanlines' | 'nebula' | 'custom';
 type DensityMode = 'compact' | 'cozy' | 'spacious';
-type FontPackMode = 'manrope' | 'space-grotesk' | 'sora';
+type FontPackMode = 'manrope' | 'space-grotesk' | 'sora' | 'custom';
 type SidebarMode = 'rail' | 'classic' | 'expanded';
 type SidebarPosition = 'left' | 'right' | 'top' | 'bottom';
 type CardStyleMode = 'glass' | 'solid' | 'outline';
@@ -98,6 +99,9 @@ const DENSITY_STORAGE_KEY = 'bloom_density_mode';
 const DENSITY_CHANGE_EVENT = 'bloom-density-change';
 const FONT_STORAGE_KEY = 'bloom_font_pack';
 const FONT_CHANGE_EVENT = 'bloom-font-change';
+const CUSTOM_FONT_DATA_KEY = 'bloom_custom_font_data';
+const CUSTOM_FONT_NAME_KEY = 'bloom_custom_font_name';
+const CUSTOM_FONT_FORMAT_KEY = 'bloom_custom_font_format';
 const SIDEBAR_STORAGE_KEY = 'bloom_sidebar_mode';
 const SIDEBAR_CHANGE_EVENT = 'bloom-sidebar-change';
 const SIDEBAR_POSITION_STORAGE_KEY = 'bloom_sidebar_position';
@@ -237,8 +241,19 @@ const DENSITY_MAP: Record<DensityMode, { fontScale: string; headerHeight: number
 const FONT_MAP: Record<FontPackMode, { family: string; headingWeight: string }> = {
   manrope: { family: "'Manrope', sans-serif", headingWeight: '800' },
   'space-grotesk': { family: "'Space Grotesk', sans-serif", headingWeight: '700' },
-  sora: { family: "'Sora', sans-serif", headingWeight: '800' }
+  sora: { family: "'Sora', sans-serif", headingWeight: '800' },
+  custom: { family: "'Bloom Custom Font', sans-serif", headingWeight: '800' }
 };
+
+function readCustomFontPayload() {
+  const dataUrl = localStorage.getItem(CUSTOM_FONT_DATA_KEY);
+  if (!dataUrl) return null;
+  return {
+    dataUrl,
+    name: localStorage.getItem(CUSTOM_FONT_NAME_KEY) || 'Custom Font',
+    format: localStorage.getItem(CUSTOM_FONT_FORMAT_KEY) || 'truetype'
+  };
+}
 
 const MOTION_MAP: Record<MotionMode, { fps: number; durationScale: string }> = {
   off: { fps: 1, durationScale: '0' },
@@ -336,7 +351,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   });
   const [fontPackMode, setFontPackMode] = useState<FontPackMode>(() => {
     const stored = localStorage.getItem(FONT_STORAGE_KEY);
-    return stored === 'manrope' || stored === 'space-grotesk' || stored === 'sora' ? stored : 'manrope';
+    return stored === 'manrope' || stored === 'space-grotesk' || stored === 'sora' || stored === 'custom' ? stored : 'manrope';
   });
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => {
     const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
@@ -446,6 +461,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     return stored === 'error' || stored === 'warn' || stored === 'info' || stored === 'debug' ? stored : 'info';
   });
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationPulseActive, setNotificationPulseActive] = useState(false);
   const [updatePreferences, setUpdatePreferences] = useState<UpdatePreferences>(() => readUpdatePreferences());
   const [availableLauncherUpdate, setAvailableLauncherUpdate] = useState<ExternalUpdate | null>(null);
   const [updateNoticeVisible, setUpdateNoticeVisible] = useState(false);
@@ -695,6 +711,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const font = FONT_MAP[fontPackMode] || FONT_MAP.manrope;
+    const customFontStyleId = 'bloom-custom-font-face';
+    const existingFontStyle = document.getElementById(customFontStyleId);
+    if (fontPackMode === 'custom') {
+      const customFont = readCustomFontPayload();
+      if (customFont) {
+        const styleElement = existingFontStyle || document.createElement('style');
+        styleElement.id = customFontStyleId;
+        styleElement.textContent = `@font-face { font-family: 'Bloom Custom Font'; src: url('${customFont.dataUrl}') format('${customFont.format}'); font-display: swap; }`;
+        if (!existingFontStyle) document.head.appendChild(styleElement);
+      }
+    } else if (existingFontStyle) {
+      existingFontStyle.remove();
+    }
     document.documentElement.style.setProperty('--g-font-family', font.family);
     document.documentElement.style.setProperty('--g-heading-weight', font.headingWeight);
     localStorage.setItem(FONT_STORAGE_KEY, fontPackMode);
@@ -991,7 +1020,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     const onFontChange = (event: Event) => {
       const custom = event as CustomEvent<{ font?: FontPackMode }>;
       const requestedFont = custom.detail?.font;
-      if (requestedFont === 'manrope' || requestedFont === 'space-grotesk' || requestedFont === 'sora') {
+      if (requestedFont === 'manrope' || requestedFont === 'space-grotesk' || requestedFont === 'sora' || requestedFont === 'custom') {
         setFontPackMode(requestedFont);
       }
     };
@@ -1716,6 +1745,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
     if (!soundNotificationsEnabled) return;
     playUiSound('notification');
   }, [notificationsOpen, soundNotificationsEnabled, soundPack]);
+
+  useEffect(() => {
+    const onLoadingComplete = () => {
+      setNotificationPulseActive(false);
+      window.requestAnimationFrame(() => setNotificationPulseActive(true));
+      window.setTimeout(() => setNotificationPulseActive(false), 900);
+    };
+    window.addEventListener(UNIVERSAL_LOADING_COMPLETE_EVENT, onLoadingComplete);
+    return () => window.removeEventListener(UNIVERSAL_LOADING_COMPLETE_EVENT, onLoadingComplete);
+  }, []);
 
   useEffect(() => {
     const syncUpdatePreferences = (event: Event) => {
@@ -2459,7 +2498,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="app-region-no-drag flex items-center gap-2 shrink-0">
-            <button onClick={() => setNotificationsOpen((v) => !v)} className="relative h-10 w-10 rounded-xl border border-white/12 bg-white/[0.04] text-white/75 inline-flex items-center justify-center">
+            <button
+              onClick={() => setNotificationsOpen((v) => !v)}
+              className={clsx(
+                'relative h-10 w-10 rounded-xl border border-[#343941]/70 bg-white/[0.04] text-white/75 inline-flex items-center justify-center',
+                notificationPulseActive && 'animate-[notification-bell-pulse_720ms_ease-out_both]'
+              )}
+            >
+              <style>{`@keyframes notification-bell-pulse { 0% { transform: scale(1); } 35% { transform: scale(1.22); box-shadow: 0 0 0 8px color-mix(in srgb, var(--g-accent) 20%, transparent); } 100% { transform: scale(1); box-shadow: 0 0 0 0 transparent; } }`}</style>
               <Bell size={15} strokeWidth={iconStrokeWidth} />
               {availableLauncherUpdate && (
                 <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-[var(--g-accent)] shadow-[0_0_10px_var(--g-accent)]" />

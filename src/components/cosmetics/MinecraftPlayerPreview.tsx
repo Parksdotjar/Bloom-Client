@@ -219,7 +219,7 @@ export function MinecraftPlayerPreview({
     };
 
     const base = (() => {
-      const raw = String(import.meta.env.VITE_SUPABASE_URL || 'https://sb.bloomclient.org').trim();
+      const raw = String(import.meta.env.VITE_SUPABASE_URL || '').trim();
       try {
         return new URL(raw).origin;
       } catch {
@@ -323,7 +323,7 @@ export function MinecraftPlayerPreview({
       viewer.renderer.toneMappingExposure = DEFAULT_APPEARANCE.exposure;
 
       viewer.playerObject.traverse((node) => {
-        const mesh = node as Mesh;
+        const mesh = node as unknown as Mesh;
         if (!mesh.isMesh) return;
         mesh.castShadow = false;
         mesh.receiveShadow = false;
@@ -427,7 +427,7 @@ export function MinecraftPlayerPreview({
     if (animatedFrameIndexes.length > 0 && capeId) {
       const frameIndex = animatedFrameIndexes[animatedFrameCursor % animatedFrameIndexes.length] ?? 0;
       const base = animatedBaseUrl || (() => {
-        const raw = String(import.meta.env.VITE_SUPABASE_URL || 'https://sb.bloomclient.org').trim();
+        const raw = String(import.meta.env.VITE_SUPABASE_URL || '').trim();
         try {
           return new URL(raw).origin;
         } catch {

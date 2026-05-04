@@ -35,7 +35,7 @@ export type SpriteCapePublishResult = {
 };
 
 function resolveEdgeBase() {
-  const raw = String(import.meta.env.VITE_SUPABASE_URL || 'https://sb.bloomclient.org').trim();
+  const raw = String(import.meta.env.VITE_SUPABASE_URL || '').trim();
   try {
     return new URL(raw).origin.replace(/\/+$/, '');
   } catch {

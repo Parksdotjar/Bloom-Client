@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { Gamepad2, Palette, Play, RefreshCcw, Sparkles } from 'lucide-react';
+import { Flower2, Gamepad2, Palette, Play, RefreshCcw, Sparkles } from 'lucide-react';
+import { FlowerDefense } from '../components/FlowerDefense';
+import { PingPong3D } from '../components/PingPong3D';
+import { TetrisGame } from '../components/TetrisGame';
 
-type GameTab = 'bloom' | 'flappy' | 'whiteboard';
+type GameTab = 'bloom' | 'defense' | 'pong' | 'tetris' | 'flappy' | 'whiteboard';
 type FlappyStatus = 'idle' | 'running' | 'paused' | 'over';
 type PurchaseMode = 1 | 10 | 25 | 'max';
 
@@ -693,12 +696,15 @@ export function Games() {
       <section className="g-panel-strong p-6">
         <p className="text-[10px] uppercase tracking-[0.2em] font-extrabold g-accent-text">Games</p>
         <h1 className="mt-1 text-5xl font-extrabold text-white">Arcade + Creative Lab</h1>
-        <p className="mt-2 text-sm g-muted">Flower clicker, Flappy Bird, and a crisp-edged whiteboard.</p>
+        <p className="mt-2 text-sm g-muted">Flower clicker, flower tower defense, 3D ping pong, Tetris, Flappy Bird, and a crisp-edged whiteboard.</p>
       </section>
 
       <section className="g-panel p-3">
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => setTab('bloom')} className={clsx('h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'bloom' ? 'g-btn-accent' : 'g-btn')}><span className="inline-flex items-center gap-2"><Sparkles size={13} /> Bloom Clicker</span></button>
+          <button onClick={() => setTab('defense')} className={clsx('h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'defense' ? 'g-btn-accent' : 'g-btn')}><span className="inline-flex items-center gap-2"><Flower2 size={13} /> Flower Defense</span></button>
+          <button onClick={() => setTab('pong')} className={clsx('h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'pong' ? 'g-btn-accent' : 'g-btn')}><span className="inline-flex items-center gap-2"><Gamepad2 size={13} /> 3D Ping Pong</span></button>
+          <button onClick={() => setTab('tetris')} className={clsx('h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'tetris' ? 'g-btn-accent' : 'g-btn')}><span className="inline-flex items-center gap-2"><Gamepad2 size={13} /> Tetris</span></button>
           <button onClick={() => setTab('flappy')} className={clsx('h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'flappy' ? 'g-btn-accent' : 'g-btn')}><span className="inline-flex items-center gap-2"><Gamepad2 size={13} /> Flappy Bird</span></button>
           <button onClick={() => setTab('whiteboard')} className={clsx('h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]', tab === 'whiteboard' ? 'g-btn-accent' : 'g-btn')}><span className="inline-flex items-center gap-2"><Palette size={13} /> Whiteboard</span></button>
         </div>
@@ -802,6 +808,12 @@ export function Games() {
           </section>
         </div>
       )}
+
+      {tab === 'defense' && <FlowerDefense />}
+
+      {tab === 'pong' && <PingPong3D />}
+
+      {tab === 'tetris' && <TetrisGame />}
 
       {tab === 'flappy' && (
         <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">

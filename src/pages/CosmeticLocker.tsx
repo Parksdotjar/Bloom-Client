@@ -19,8 +19,6 @@ import {
   loadOwnerCapesLite,
   loadCurrentLoadout,
   loadOwnerMembers,
-  ownerGetPartnerWalletBalanceByUserId,
-  ownerGrantPartnerWalletByUserId,
   loadOwnerPartnerCapeMappings,
   loadOwnedCapes,
   loadOwnPartnerWallet,
@@ -39,7 +37,9 @@ import {
   redeemPromoCode,
   submitPartnerApplication,
   setCapeLoadout,
+  setUserWalletBalanceById,
   setOwnerPartnerCapeMapping,
+  saveDefaultCapeRenderPose,
   deactivateCapeListing,
   subscribePartnerGroups,
   subscribePreviewAppearance,
@@ -50,6 +50,7 @@ import {
   updateCapeListing,
   updateCapeRenderPose,
   ownerRevokeCapeFromUserById,
+  DEFAULT_CAPE_RENDER_POSE,
   DEFAULT_PREVIEW_APPEARANCE,
   type CapeRecord,
   type CommerceProfile,
@@ -65,7 +66,6 @@ import {
   type PartnerWalletLedgerRecord,
   type PartnerWalletPurchaseResult,
   type PreviewAppearanceRecord,
-  type PartnerWalletRecord,
   type UpdateCapeInput,
   type WalletLedgerRecord
 } from '../services/cosmetics';
@@ -782,14 +782,14 @@ function toOwnerCapeEditDraft(cape: DisplayCape): OwnerCapeEditDraft {
     rarity_color_start: cape.rarity_color_start,
     rarity_color_end: cape.rarity_color_end,
     rarity_glow: cape.rarity_glow,
-    render_pos_x: cape.render_pos_x ?? 0,
-    render_pos_y: cape.render_pos_y ?? 0,
-    render_pos_z: cape.render_pos_z ?? 0,
-    render_rot_x: cape.render_rot_x ?? 0,
-    render_rot_y: cape.render_rot_y ?? -38,
-    render_rot_z: cape.render_rot_z ?? 0,
-    render_depth_z: cape.render_depth_z ?? 0,
-    render_brightness: cape.render_brightness ?? 1,
+    render_pos_x: cape.render_pos_x ?? DEFAULT_CAPE_RENDER_POSE.render_pos_x,
+    render_pos_y: cape.render_pos_y ?? DEFAULT_CAPE_RENDER_POSE.render_pos_y,
+    render_pos_z: cape.render_pos_z ?? DEFAULT_CAPE_RENDER_POSE.render_pos_z,
+    render_rot_x: cape.render_rot_x ?? DEFAULT_CAPE_RENDER_POSE.render_rot_x,
+    render_rot_y: cape.render_rot_y ?? DEFAULT_CAPE_RENDER_POSE.render_rot_y,
+    render_rot_z: cape.render_rot_z ?? DEFAULT_CAPE_RENDER_POSE.render_rot_z,
+    render_depth_z: cape.render_depth_z ?? DEFAULT_CAPE_RENDER_POSE.render_depth_z,
+    render_brightness: cape.render_brightness ?? DEFAULT_CAPE_RENDER_POSE.render_brightness,
     sort_order: cape.sort_order,
     is_active: cape.is_active ?? true,
     is_featured: Boolean(cape.is_featured)
@@ -798,14 +798,14 @@ function toOwnerCapeEditDraft(cape: DisplayCape): OwnerCapeEditDraft {
 
 function toRenderPoseOverride(editor: OwnerCapeEditDraft) {
   return {
-    render_pos_x: Number.isFinite(Number(editor.render_pos_x)) ? Number(editor.render_pos_x) : 0,
-    render_pos_y: Number.isFinite(Number(editor.render_pos_y)) ? Number(editor.render_pos_y) : 0,
-    render_pos_z: Number.isFinite(Number(editor.render_pos_z)) ? Number(editor.render_pos_z) : 0,
-    render_rot_x: Number.isFinite(Number(editor.render_rot_x)) ? Number(editor.render_rot_x) : 0,
-    render_rot_y: Number.isFinite(Number(editor.render_rot_y)) ? Number(editor.render_rot_y) : -38,
-    render_rot_z: Number.isFinite(Number(editor.render_rot_z)) ? Number(editor.render_rot_z) : 0,
-    render_depth_z: Number.isFinite(Number(editor.render_depth_z)) ? Number(editor.render_depth_z) : 0,
-    render_brightness: Number.isFinite(Number(editor.render_brightness)) ? Number(editor.render_brightness) : 1
+    render_pos_x: Number.isFinite(Number(editor.render_pos_x)) ? Number(editor.render_pos_x) : DEFAULT_CAPE_RENDER_POSE.render_pos_x,
+    render_pos_y: Number.isFinite(Number(editor.render_pos_y)) ? Number(editor.render_pos_y) : DEFAULT_CAPE_RENDER_POSE.render_pos_y,
+    render_pos_z: Number.isFinite(Number(editor.render_pos_z)) ? Number(editor.render_pos_z) : DEFAULT_CAPE_RENDER_POSE.render_pos_z,
+    render_rot_x: Number.isFinite(Number(editor.render_rot_x)) ? Number(editor.render_rot_x) : DEFAULT_CAPE_RENDER_POSE.render_rot_x,
+    render_rot_y: Number.isFinite(Number(editor.render_rot_y)) ? Number(editor.render_rot_y) : DEFAULT_CAPE_RENDER_POSE.render_rot_y,
+    render_rot_z: Number.isFinite(Number(editor.render_rot_z)) ? Number(editor.render_rot_z) : DEFAULT_CAPE_RENDER_POSE.render_rot_z,
+    render_depth_z: Number.isFinite(Number(editor.render_depth_z)) ? Number(editor.render_depth_z) : DEFAULT_CAPE_RENDER_POSE.render_depth_z,
+    render_brightness: Number.isFinite(Number(editor.render_brightness)) ? Number(editor.render_brightness) : DEFAULT_CAPE_RENDER_POSE.render_brightness
   };
 }
 
@@ -824,14 +824,14 @@ function toUpdateCapeInput(cape: DisplayCape, poseOverride?: ReturnType<typeof t
     rarity_color_start: cape.rarity_color_start?.trim() || null,
     rarity_color_end: cape.rarity_color_end?.trim() || null,
     rarity_glow: cape.rarity_glow?.trim() || null,
-    render_pos_x: poseOverride?.render_pos_x ?? (Number.isFinite(Number(cape.render_pos_x)) ? Number(cape.render_pos_x) : 0),
-    render_pos_y: poseOverride?.render_pos_y ?? (Number.isFinite(Number(cape.render_pos_y)) ? Number(cape.render_pos_y) : 0),
-    render_pos_z: poseOverride?.render_pos_z ?? (Number.isFinite(Number(cape.render_pos_z)) ? Number(cape.render_pos_z) : 0),
-    render_rot_x: poseOverride?.render_rot_x ?? (Number.isFinite(Number(cape.render_rot_x)) ? Number(cape.render_rot_x) : 0),
-    render_rot_y: poseOverride?.render_rot_y ?? (Number.isFinite(Number(cape.render_rot_y)) ? Number(cape.render_rot_y) : -38),
-    render_rot_z: poseOverride?.render_rot_z ?? (Number.isFinite(Number(cape.render_rot_z)) ? Number(cape.render_rot_z) : 0),
-    render_depth_z: poseOverride?.render_depth_z ?? (Number.isFinite(Number(cape.render_depth_z)) ? Number(cape.render_depth_z) : 0),
-    render_brightness: poseOverride?.render_brightness ?? (Number.isFinite(Number(cape.render_brightness)) ? Number(cape.render_brightness) : 1),
+    render_pos_x: poseOverride?.render_pos_x ?? (Number.isFinite(Number(cape.render_pos_x)) ? Number(cape.render_pos_x) : DEFAULT_CAPE_RENDER_POSE.render_pos_x),
+    render_pos_y: poseOverride?.render_pos_y ?? (Number.isFinite(Number(cape.render_pos_y)) ? Number(cape.render_pos_y) : DEFAULT_CAPE_RENDER_POSE.render_pos_y),
+    render_pos_z: poseOverride?.render_pos_z ?? (Number.isFinite(Number(cape.render_pos_z)) ? Number(cape.render_pos_z) : DEFAULT_CAPE_RENDER_POSE.render_pos_z),
+    render_rot_x: poseOverride?.render_rot_x ?? (Number.isFinite(Number(cape.render_rot_x)) ? Number(cape.render_rot_x) : DEFAULT_CAPE_RENDER_POSE.render_rot_x),
+    render_rot_y: poseOverride?.render_rot_y ?? (Number.isFinite(Number(cape.render_rot_y)) ? Number(cape.render_rot_y) : DEFAULT_CAPE_RENDER_POSE.render_rot_y),
+    render_rot_z: poseOverride?.render_rot_z ?? (Number.isFinite(Number(cape.render_rot_z)) ? Number(cape.render_rot_z) : DEFAULT_CAPE_RENDER_POSE.render_rot_z),
+    render_depth_z: poseOverride?.render_depth_z ?? (Number.isFinite(Number(cape.render_depth_z)) ? Number(cape.render_depth_z) : DEFAULT_CAPE_RENDER_POSE.render_depth_z),
+    render_brightness: poseOverride?.render_brightness ?? (Number.isFinite(Number(cape.render_brightness)) ? Number(cape.render_brightness) : DEFAULT_CAPE_RENDER_POSE.render_brightness),
     sort_order: Number(cape.sort_order) || 0,
     is_active: cape.is_active ?? true,
     is_featured: Boolean(cape.is_featured)
@@ -948,11 +948,12 @@ export function CosmeticLocker() {
   const [ownerAllCapesLite, setOwnerAllCapesLite] = useState<OwnerCapeLiteRecord[]>([]);
   const [ownerUtilityUserId, setOwnerUtilityUserId] = useState('');
   const [ownerUtilityCapeId, setOwnerUtilityCapeId] = useState('');
-  const [ownerUtilityPartnerBucks, setOwnerUtilityPartnerBucks] = useState<PartnerWalletRecord | null>(null);
+  const [ownerUtilityWalletBalance, setOwnerUtilityWalletBalance] = useState<number | null>(null);
   const [ownerUtilityGrantAmount, setOwnerUtilityGrantAmount] = useState('');
   const [ownerUtilityGrantReason, setOwnerUtilityGrantReason] = useState('');
   const [ownerUtilityRevokeReason, setOwnerUtilityRevokeReason] = useState('');
   const [ownerUtilityBusy, setOwnerUtilityBusy] = useState(false);
+  const [ownerUtilityMessage, setOwnerUtilityMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [ownerPartnerMappingModal, setOwnerPartnerMappingModal] = useState<OwnerPartnerMappingModalState | null>(null);
   const [ownerPartnerMappingDraftUserId, setOwnerPartnerMappingDraftUserId] = useState('');
   const [ownerPartnerMappingBusy, setOwnerPartnerMappingBusy] = useState(false);
@@ -1127,14 +1128,14 @@ export function CosmeticLocker() {
   const resolveCardPose = (cape: DisplayCape): SharedCardPose => {
     if (sharedCardPose) return sharedCardPose;
     return {
-      x: cape.render_pos_x ?? 0,
-      y: cape.render_pos_y ?? 0,
-      z: cape.render_pos_z ?? 0,
-      rotX: cape.render_rot_x ?? 0,
-      rotY: cape.render_rot_y ?? -38,
-      rotZ: cape.render_rot_z ?? 0,
-      depth: cape.render_depth_z ?? 0,
-      brightness: cape.render_brightness ?? 1
+      x: cape.render_pos_x ?? DEFAULT_CAPE_RENDER_POSE.render_pos_x,
+      y: cape.render_pos_y ?? DEFAULT_CAPE_RENDER_POSE.render_pos_y,
+      z: cape.render_pos_z ?? DEFAULT_CAPE_RENDER_POSE.render_pos_z,
+      rotX: cape.render_rot_x ?? DEFAULT_CAPE_RENDER_POSE.render_rot_x,
+      rotY: cape.render_rot_y ?? DEFAULT_CAPE_RENDER_POSE.render_rot_y,
+      rotZ: cape.render_rot_z ?? DEFAULT_CAPE_RENDER_POSE.render_rot_z,
+      depth: cape.render_depth_z ?? DEFAULT_CAPE_RENDER_POSE.render_depth_z,
+      brightness: cape.render_brightness ?? DEFAULT_CAPE_RENDER_POSE.render_brightness
     };
   };
 
@@ -2254,6 +2255,21 @@ const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: Ow
     }
   };
 
+  const handleSaveOwnerCapeRenderDefault = async () => {
+    if (!ownerCapeEditor) return;
+    setOwnerEditSaving(true);
+    setErrorMessage(null);
+    try {
+      const poseOverride = toRenderPoseOverride(ownerCapeEditor);
+      await saveDefaultCapeRenderPose(poseOverride);
+      setStatusMessage('Default render pose saved for future cape uploads.');
+    } catch (error) {
+      setErrorMessage(formatUiError(error));
+    } finally {
+      setOwnerEditSaving(false);
+    }
+  };
+
   const handleDeleteShopCape = async (cape: DisplayCape) => {
     if (!isOwner) return;
     setDialogState({ kind: 'confirm-delete-shop', cape });
@@ -2269,43 +2285,73 @@ const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: Ow
     [ownerAllCapesLite, ownerUtilityCapeId]
   );
 
-  const handleOwnerUtilityLoadPartnerBucks = async () => {
+  const handleOwnerUtilityRefreshBalance = async () => {
     if (!ownerUtilityUserId) {
+      setOwnerUtilityMessage({ type: 'error', text: 'Select a user first.' });
       setErrorMessage('Select a user first.');
       return;
     }
     setOwnerUtilityBusy(true);
+    setOwnerUtilityMessage(null);
     setErrorMessage(null);
     try {
-      const row = await ownerGetPartnerWalletBalanceByUserId(ownerUtilityUserId);
-      setOwnerUtilityPartnerBucks(row);
-      setStatusMessage(`Partner wallet loaded: ${row.balance_bb.toLocaleString()} BB`);
+      const members = await loadOwnerMembers();
+      setOwnerMembers(members);
+      const selected = members.find((member) => member.user_id === ownerUtilityUserId);
+      setOwnerUtilityWalletBalance(selected?.balance_bb ?? 0);
+      setOwnerUtilityMessage({ type: 'success', text: `Balance loaded: ${(selected?.balance_bb ?? 0).toLocaleString()} BB.` });
     } catch (error) {
-      setErrorMessage(formatUiError(error));
+      const message = formatUiError(error);
+      setOwnerUtilityMessage({ type: 'error', text: message });
+      setErrorMessage(message);
     } finally {
       setOwnerUtilityBusy(false);
     }
   };
 
-  const handleOwnerUtilityGrantPartnerBucks = async () => {
+  const handleOwnerUtilitySetBalance = async () => {
     if (!ownerUtilityUserId) {
+      setOwnerUtilityMessage({ type: 'error', text: 'Select a user first.' });
       setErrorMessage('Select a user first.');
       return;
     }
     const amount = Math.max(0, Number(ownerUtilityGrantAmount) || 0);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setErrorMessage('Enter a partner bucks amount greater than 0.');
+    if (!Number.isFinite(amount)) {
+      setOwnerUtilityMessage({ type: 'error', text: 'Enter a valid Bloom Bucks balance.' });
+      setErrorMessage('Enter a valid Bloom Bucks balance.');
       return;
     }
     setOwnerUtilityBusy(true);
+    setOwnerUtilityMessage(null);
     setErrorMessage(null);
+    setStatusMessage(null);
     try {
-      const row = await ownerGrantPartnerWalletByUserId(ownerUtilityUserId, amount, ownerUtilityGrantReason);
-      setOwnerUtilityPartnerBucks(row);
+      const row = await setUserWalletBalanceById(ownerUtilityUserId, amount);
+      const nextBalance = row.balance_bb;
+      setOwnerUtilityWalletBalance(row.balance_bb);
+      setOwnerMembers((members) =>
+        members.map((member) =>
+          member.user_id === ownerUtilityUserId
+            ? { ...member, balance_bb: row.balance_bb, wallet_updated_at: row.updated_at }
+            : member
+        )
+      );
       setOwnerUtilityGrantAmount('');
-      setStatusMessage(`Granted ${Math.floor(amount).toLocaleString()} partner bucks.`);
+      setOwnerUtilityGrantReason('');
+      const successText = `Balance updated successfully. New balance: ${nextBalance.toLocaleString()} BB.`;
+      setOwnerUtilityMessage({ type: 'success', text: successText });
+      setStatusMessage(successText);
+      void loadOwnerMembers()
+        .then((members) => {
+          const selected = members.find((member) => member.user_id === ownerUtilityUserId);
+          setOwnerMembers(members);
+          if (selected) setOwnerUtilityWalletBalance(selected.balance_bb);
+        })
+        .catch(() => {});
     } catch (error) {
-      setErrorMessage(formatUiError(error));
+      const message = formatUiError(error);
+      setOwnerUtilityMessage({ type: 'error', text: message });
+      setErrorMessage(message);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -3563,6 +3609,17 @@ const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: Ow
                   >
                     {ownerEditSaving ? 'Saving...' : 'Save Cape'}
                   </button>
+                  {ownerCapeEditorSection === 'render' && (
+                    <button
+                      onClick={() => {
+                        void handleSaveOwnerCapeRenderDefault();
+                      }}
+                      disabled={ownerEditSaving}
+                      className="h-10 px-4 rounded-lg border border-emerald-300/35 bg-emerald-500/15 text-[11px] font-extrabold uppercase tracking-[0.12em] text-emerald-100 hover:bg-emerald-500/25 disabled:opacity-45"
+                    >
+                      Save as Default
+                    </button>
+                  )}
                   <button
                     onClick={() => setOwnerCapeEditor(null)}
                     disabled={ownerEditSaving}
@@ -3582,14 +3639,14 @@ const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: Ow
                     name={ownerCapeEditor.name || 'Cape'}
                     className="h-full w-full"
                     pose={{
-                      x: ownerCapeEditor.render_pos_x ?? 0,
-                      y: ownerCapeEditor.render_pos_y ?? 0,
-                      z: ownerCapeEditor.render_pos_z ?? 0,
-                      rotX: ownerCapeEditor.render_rot_x ?? 0,
-                      rotY: ownerCapeEditor.render_rot_y ?? -38,
-                      rotZ: ownerCapeEditor.render_rot_z ?? 0,
-                      depth: ownerCapeEditor.render_depth_z ?? 0,
-                      brightness: ownerCapeEditor.render_brightness ?? 1
+                      x: ownerCapeEditor.render_pos_x ?? DEFAULT_CAPE_RENDER_POSE.render_pos_x,
+                      y: ownerCapeEditor.render_pos_y ?? DEFAULT_CAPE_RENDER_POSE.render_pos_y,
+                      z: ownerCapeEditor.render_pos_z ?? DEFAULT_CAPE_RENDER_POSE.render_pos_z,
+                      rotX: ownerCapeEditor.render_rot_x ?? DEFAULT_CAPE_RENDER_POSE.render_rot_x,
+                      rotY: ownerCapeEditor.render_rot_y ?? DEFAULT_CAPE_RENDER_POSE.render_rot_y,
+                      rotZ: ownerCapeEditor.render_rot_z ?? DEFAULT_CAPE_RENDER_POSE.render_rot_z,
+                      depth: ownerCapeEditor.render_depth_z ?? DEFAULT_CAPE_RENDER_POSE.render_depth_z,
+                      brightness: ownerCapeEditor.render_brightness ?? DEFAULT_CAPE_RENDER_POSE.render_brightness
                     }}
                   />
                 </div>
@@ -3798,7 +3855,7 @@ const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: Ow
                     </>
                   ) : (
                     <>
-                      <p className="text-[10px] uppercase tracking-[0.14em] font-black text-white/50">Partner Bucks + Cape Removal</p>
+                      <p className="text-[10px] uppercase tracking-[0.14em] font-black text-white/50">Bloom Bucks + Cape Removal</p>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                         <label className="rounded-lg border border-white/20 bg-black/35 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 flex flex-col md:col-span-2">
                           <span>User</span>
@@ -3806,7 +3863,9 @@ const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: Ow
                             value={ownerUtilityUserId}
                             onChange={(event) => {
                               setOwnerUtilityUserId(event.target.value);
-                              setOwnerUtilityPartnerBucks(null);
+                              const selected = ownerMembers.find((member) => member.user_id === event.target.value);
+                              setOwnerUtilityWalletBalance(selected?.balance_bb ?? null);
+                              setOwnerUtilityMessage(null);
                             }}
                             className="mt-1 bg-transparent text-sm text-white outline-none normal-case tracking-normal"
                           >
@@ -3819,9 +3878,9 @@ const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: Ow
                         </label>
 
                         <div className="rounded-lg border border-white/20 bg-black/35 px-3 py-2 md:col-span-2">
-                          <p className="text-[10px] uppercase tracking-[0.12em] font-extrabold text-white/55">Partner Bucks</p>
+                          <p className="text-[10px] uppercase tracking-[0.12em] font-extrabold text-white/55">Bloom Bucks</p>
                           <p className="mt-1 text-lg font-extrabold text-white">
-                            {ownerUtilityPartnerBucks?.balance_bb?.toLocaleString() ?? '...'} BB
+                            {(ownerUtilityWalletBalance ?? ownerUtilitySelectedMember?.balance_bb ?? 0).toLocaleString()} BB
                           </p>
                           <p className="text-[10px] text-white/45 mt-1">
                             {ownerUtilitySelectedMember
@@ -3835,7 +3894,7 @@ const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: Ow
                           min={1}
                           value={ownerUtilityGrantAmount}
                           onChange={(event) => setOwnerUtilityGrantAmount(event.target.value.replace(/[^\d]/g, ''))}
-                          placeholder="Grant amount (BB)"
+                          placeholder="New balance (BB)"
                           className="h-9 rounded-lg border border-white/20 bg-black/35 px-3 text-sm text-white placeholder:text-white/35 outline-none"
                         />
                         <input
@@ -3846,22 +3905,35 @@ const updateCapeSqlDraft = <K extends keyof OwnerCapeSqlDraft>(key: K, value: Ow
                         />
                         <button
                           onClick={() => {
-                            void handleOwnerUtilityLoadPartnerBucks();
+                            void handleOwnerUtilityRefreshBalance();
                           }}
                           disabled={ownerUtilityBusy || !ownerUtilityUserId}
                           className="h-9 rounded-lg border border-white/20 bg-white/[0.04] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/88 hover:bg-white/[0.1] disabled:opacity-45"
                         >
-                          Refresh Partner Bucks
+                          Refresh Balance
                         </button>
                         <button
                           onClick={() => {
-                            void handleOwnerUtilityGrantPartnerBucks();
+                            void handleOwnerUtilitySetBalance();
                           }}
                           disabled={ownerUtilityBusy || !ownerUtilityUserId || !ownerUtilityGrantAmount}
                           className="h-9 rounded-lg border border-white/25 bg-white/[0.12] text-[11px] font-extrabold uppercase tracking-[0.12em] text-white hover:bg-white/[0.18] disabled:opacity-45"
                         >
-                          Grant Partner Bucks
+                          Set Balance
                         </button>
+
+                        {ownerUtilityMessage && (
+                          <div
+                            className={clsx(
+                              'rounded-lg border px-3 py-2 text-xs font-bold md:col-span-2',
+                              ownerUtilityMessage.type === 'success'
+                                ? 'border-emerald-400/35 bg-emerald-500/12 text-emerald-100'
+                                : 'border-red-400/35 bg-red-500/12 text-red-100'
+                            )}
+                          >
+                            {ownerUtilityMessage.text}
+                          </div>
+                        )}
 
                         <label className="rounded-lg border border-white/20 bg-black/35 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-white/65 flex flex-col md:col-span-2">
                           <span>Cape To Remove</span>

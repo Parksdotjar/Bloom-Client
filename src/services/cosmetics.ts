@@ -42,6 +42,28 @@ export type CapeRecord = {
   updated_at: string;
 };
 
+export type CapeRenderPoseInput = {
+  render_pos_x: number;
+  render_pos_y: number;
+  render_pos_z: number;
+  render_rot_x: number;
+  render_rot_y: number;
+  render_rot_z: number;
+  render_depth_z: number;
+  render_brightness: number;
+};
+
+export const DEFAULT_CAPE_RENDER_POSE: CapeRenderPoseInput = {
+  render_pos_x: 0,
+  render_pos_y: 16.2,
+  render_pos_z: 0,
+  render_rot_x: 0,
+  render_rot_y: -174,
+  render_rot_z: 0,
+  render_depth_z: -4,
+  render_brightness: 6
+};
+
 export type OwnedCapeRecord = {
   entitlement_id: string;
   acquired_at: string;
@@ -468,7 +490,7 @@ function extractSupabaseErrorMessage(error: unknown, fallback = 'supabase_reques
 }
 
 function resolveEdgeBase() {
-  const raw = String(import.meta.env.VITE_SUPABASE_URL || 'https://sb.bloomclient.org').trim();
+  const raw = String(import.meta.env.VITE_SUPABASE_URL || '').trim();
   try {
     return new URL(raw).origin.replace(/\/+$/, '');
   } catch {
@@ -608,7 +630,7 @@ export async function setUserWalletBalanceById(userId: string, balanceBb: number
     p_user_id: cleanUserId,
     p_balance_bb: value
   });
-  if (error) throw error;
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'profile_not_found_or_wallet_update_failed'));
   const row = Array.isArray(data) ? ((data as WalletRecord[])[0] ?? null) : ((data as WalletRecord | null) ?? null);
   if (!row) {
     throw new Error('profile_not_found_or_wallet_update_failed');
@@ -990,7 +1012,11 @@ export async function redeemCustomCapeRewardCode(code: string) {
 
 export async function loadOwnCustomCapeFreeCredits() {
   const { data, error } = await supabase.rpc('commerce_get_own_custom_cape_free_credits');
-  if (error) throw error;
+  if (error) {
+    const message = extractSupabaseErrorMessage(error, '');
+    if (message.includes('commerce_get_own_custom_cape_free_credits')) return 0;
+    throw new Error(message || 'custom_cape_credits_load_failed');
+  }
   const raw = Number(data ?? 0);
   if (!Number.isFinite(raw)) return 0;
   return Math.max(0, Math.floor(raw));
@@ -1089,16 +1115,27 @@ export async function createMcsetsCheckoutSession(packageSlug: string, mode: 'te
   const token = session.data.session?.access_token;
   if (!token) throw new Error('auth_session_missing');
 
-  const response = await fetch(`${resolveEdgeBase()}/functions/v1/main/mcsets/create-checkout`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ package_slug: packageSlug, mode })
-  });
+  const edgeBase = resolveEdgeBase();
+  if (!edgeBase) throw new Error('supabase_url_missing');
+
+  let response: Response;
+  try {
+    response = await fetch(`${edgeBase}/functions/v1/main/mcsets/create-checkout`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ package_slug: packageSlug, mode })
+    });
+  } catch {
+    throw new Error('Supabase edge function is unreachable. Deploy the main edge function before checkout can open.');
+  }
 
   const payload = (await response.json().catch(() => ({}))) as McsetsCheckoutCreateResponse;
+  if (response.status === 404) {
+    throw new Error('Supabase edge function "main" is not deployed. Deploy supabase/functions/main, then try again.');
+  }
   if (!response.ok || !payload.ok) {
     throw new Error(extractEdgeError(payload, `mcsets_checkout_${response.status}`));
   }
@@ -1244,16 +1281,7 @@ export async function loadAllCapeIdsForOwner() {
 
 export async function updateCapeRenderPose(
   capeId: string,
-  pose: {
-    render_pos_x: number;
-    render_pos_y: number;
-    render_pos_z: number;
-    render_rot_x: number;
-    render_rot_y: number;
-    render_rot_z: number;
-    render_depth_z: number;
-    render_brightness: number;
-  }
+  pose: CapeRenderPoseInput
 ) {
   const { error } = await supabase
     .from('commerce_capes')
@@ -1268,6 +1296,20 @@ export async function updateCapeRenderPose(
       render_brightness: pose.render_brightness
     })
     .eq('id', capeId);
+  if (error) throw error;
+}
+
+export async function saveDefaultCapeRenderPose(pose: CapeRenderPoseInput) {
+  const { error } = await supabase.rpc('commerce_owner_set_default_cape_render_pose', {
+    p_render_pos_x: pose.render_pos_x,
+    p_render_pos_y: pose.render_pos_y,
+    p_render_pos_z: pose.render_pos_z,
+    p_render_rot_x: pose.render_rot_x,
+    p_render_rot_y: pose.render_rot_y,
+    p_render_rot_z: pose.render_rot_z,
+    p_render_depth_z: pose.render_depth_z,
+    p_render_brightness: pose.render_brightness
+  });
   if (error) throw error;
 }
 

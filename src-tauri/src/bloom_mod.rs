@@ -226,6 +226,28 @@ fn cleanup_bloom_mods(
     Ok(())
 }
 
+fn ensure_managed_bloom_mod(
+    mods_dir: &Path,
+    target_file_name: &str,
+    target_bytes: &[u8],
+    keep_cosmetics: bool,
+    keep_kernel: bool,
+) -> Result<(), String> {
+    cleanup_bloom_mods(mods_dir, keep_cosmetics, keep_kernel)?;
+
+    let target = mods_dir.join(target_file_name);
+    let needs_write = match fs::read(&target) {
+        Ok(existing) => existing != target_bytes,
+        Err(_) => true,
+    };
+
+    if needs_write {
+        fs::write(&target, target_bytes).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
 pub fn ensure_bloom_cosmetics_mod(
     instance_dir: &Path,
     loader_type: &str,
@@ -233,8 +255,19 @@ pub fn ensure_bloom_cosmetics_mod(
 ) -> Result<(), String> {
     let mods_dir = instance_dir.join("mods");
     fs::create_dir_all(&mods_dir).map_err(|e| e.to_string())?;
-    let _ = (loader_type, mc_version, BLOOM_COSMETICS_BYTES);
-    cleanup_bloom_mods(&mods_dir, false, false)?;
+
+    if !bloom_cosmetics_supported(loader_type, mc_version) {
+        cleanup_bloom_mods(&mods_dir, false, false)?;
+        return Ok(());
+    }
+
+    ensure_managed_bloom_mod(
+        &mods_dir,
+        BLOOM_COSMETICS_TARGET_FILE,
+        BLOOM_COSMETICS_BYTES,
+        true,
+        true,
+    )?;
     Ok(())
 }
 
@@ -245,8 +278,19 @@ pub fn ensure_blooms_kernel_mod(
 ) -> Result<(), String> {
     let mods_dir = instance_dir.join("mods");
     fs::create_dir_all(&mods_dir).map_err(|e| e.to_string())?;
-    let _ = (loader_type, mc_version, BLOOMS_KERNEL_BYTES);
-    cleanup_bloom_mods(&mods_dir, false, false)?;
+
+    if !bloom_cosmetics_supported(loader_type, mc_version) {
+        cleanup_bloom_mods(&mods_dir, false, false)?;
+        return Ok(());
+    }
+
+    ensure_managed_bloom_mod(
+        &mods_dir,
+        BLOOMS_KERNEL_TARGET_FILE,
+        BLOOMS_KERNEL_BYTES,
+        true,
+        true,
+    )?;
     Ok(())
 }
 
