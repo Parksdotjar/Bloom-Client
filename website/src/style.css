@@ -95,7 +95,7 @@ a {
 
 .site-header {
   position: sticky;
-  top: 0;
+  top: 16px;
   z-index: 20;
   width: min(1180px, calc(100vw - 48px));
   height: 58px;
@@ -103,7 +103,7 @@ a {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 18px;
-  margin: 0 auto;
+  margin: 16px auto 0;
   padding: 0 12px 0 16px;
   border: 1px solid var(--line);
   border-radius: 14px;
