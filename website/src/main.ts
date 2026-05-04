@@ -58,6 +58,7 @@ const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Missing #app root.");
 const root = app;
 const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+let hasMounted = false;
 
 const navItems: Array<{ path: Route; label: string }> = [
   { path: "/", label: "Home" },
@@ -549,7 +550,7 @@ function renderFooter(): string {
 }
 
 function initParticles(): void {
-  if (root.querySelector(".particle-canvas")) return;
+  if (document.querySelector(".particle-canvas")) return;
 
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
@@ -557,7 +558,7 @@ function initParticles(): void {
 
   canvas.className = "particle-canvas";
   canvas.setAttribute("aria-hidden", "true");
-  root.prepend(canvas);
+  document.body.prepend(canvas);
 
   const mouse = { x: -1000, y: -1000 };
   const particles: Array<{
@@ -661,19 +662,42 @@ function initParticles(): void {
   requestAnimationFrame(animate);
 }
 
-function runPageAnimations(): void {
-  animeAnimate(".page-ambient", {
-    opacity: [0, 1],
-    filter: ["blur(24px)", "blur(0px)"],
-    duration: 2400,
+function fadeParticles(opacity: number, duration = 520): void {
+  const canvas = document.querySelector<HTMLElement>(".particle-canvas");
+  if (!canvas) return;
+
+  animeAnimate(canvas, {
+    opacity,
+    duration,
     ease: "outCubic"
   });
+}
+
+function runPageAnimations(isRouteChange = false): void {
+  if (!isRouteChange) {
+    animeAnimate(".page-ambient", {
+      opacity: [0, 1],
+      filter: ["blur(24px)", "blur(0px)"],
+      duration: 2200,
+      ease: "outCubic"
+    });
+
+    fadeParticles(0.84, 1500);
+  } else {
+    const ambient = root.querySelector<HTMLElement>(".page-ambient");
+    if (ambient) {
+      ambient.style.opacity = "1";
+      ambient.style.filter = "blur(0px)";
+    }
+
+    fadeParticles(0.84, 720);
+  }
 
   animeAnimate(".site-header", {
     opacity: [0, 1],
     translateY: [-28, 0],
     duration: 2100,
-    delay: 120,
+    delay: isRouteChange ? 120 : 520,
     ease: "outCubic"
   });
 
@@ -682,8 +706,11 @@ function runPageAnimations(): void {
       ".hero-copy > *",
       ".page-hero > *",
       ".section-heading > *",
+      ".split-band",
       ".split-band > *",
+      ".download-panel",
       ".download-panel > *",
+      ".download-link",
       ".feature-card",
       ".news-card",
       ".staff-card",
@@ -695,13 +722,13 @@ function runPageAnimations(): void {
       opacity: [0, 1],
       translateY: [46, 0],
       duration: 2300,
-      delay: stagger(170, { start: 320 }),
+      delay: stagger(150, { start: isRouteChange ? 300 : 820 }),
       ease: "outCubic"
     }
   );
 }
 
-function mount(): void {
+function mount(isRouteChange = false): void {
   const route = routeFromPath();
   const title = [...navItems, ...infoItems].find((item) => item.path === route)?.label;
   document.title = route === "/" ? "Bloom Client | Official Website" : `Bloom Client | ${title || "Info"}`;
@@ -717,9 +744,14 @@ function mount(): void {
       const href = link.getAttribute("href");
       if (!href) return;
       event.preventDefault();
-      window.history.pushState({}, "", href);
-      mount();
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      if (href === window.location.pathname) return;
+
+      fadeParticles(0, 260);
+      window.setTimeout(() => {
+        window.history.pushState({}, "", href);
+        mount(true);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }, 180);
     });
   });
 
@@ -743,9 +775,10 @@ function mount(): void {
   );
 
   initParticles();
-  runPageAnimations();
+  runPageAnimations(isRouteChange || hasMounted);
+  hasMounted = true;
 }
 
-window.addEventListener("popstate", mount);
+window.addEventListener("popstate", () => mount(true));
 
 void Promise.all([loadRelease(), loadNews()]).finally(mount);

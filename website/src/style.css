@@ -68,7 +68,7 @@ body::after {
 
 .particle-canvas {
   z-index: 0;
-  opacity: 0.84;
+  opacity: 0;
 }
 
 .page-ambient {
@@ -246,8 +246,11 @@ main {
 .hero-copy > *,
 .page-hero > *,
 .section-heading > *,
+.split-band,
 .split-band > *,
+.download-panel,
 .download-panel > *,
+.download-link,
 .news-card,
 .staff-card,
 .about-grid article,
