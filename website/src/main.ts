@@ -68,19 +68,19 @@ const navItems: Array<{ path: Route; label: string }> = [
 const productCards = [
   {
     title: "Instance launcher",
-    body: "Create Fabric 1.21.11 instances, manage memory, launch profiles, and keep your setup organized."
+    body: "Keep your Minecraft installs clean, organized, and easy to start."
   },
   {
     title: "Cosmetics locker",
-    body: "Equip capes, preview cosmetics, manage Bloom Bucks, and sync account-owned items."
+    body: "Keep your capes and cosmetics in one simple place."
   },
   {
     title: "Marketplace tools",
-    body: "Browse downloads, packs, resource packs, shaders, and curated client utilities."
+    body: "Find packs, shaders, and tools without the clutter."
   },
   {
     title: "Built-in games",
-    body: "Play client-side games like tower defense, Tetris, and 3D paddle games directly in Bloom."
+    body: "Take a break with small games built into the client."
   }
 ];
 
@@ -170,7 +170,7 @@ async function loadNews(): Promise<void> {
     state.news = [
       {
         title: "Bloom Client website is live",
-        summary: "Release notes and client updates will appear here.",
+        summary: "Updates will show here when there is something new.",
         published_at: new Date().toISOString()
       }
     ];
@@ -251,7 +251,7 @@ function renderHome(): string {
       <div class="hero-copy">
         <p class="eyebrow">Official Bloom Client</p>
         <h1>Bloom Client</h1>
-        <p class="lead">A focused Minecraft launcher for clean instances, synced cosmetics, marketplace tools, account utilities, and creator-ready client features.</p>
+        <p class="lead">Welcome to your calmer Minecraft experience.</p>
         ${releaseButtons()}
       </div>
     </section>
@@ -279,7 +279,7 @@ function renderHome(): string {
       <div>
         <p class="eyebrow">Updates</p>
         <h2>Get the latest Bloom Client build.</h2>
-        <p>Download the current Windows release and stay ready for launcher updates, cosmetics, marketplace tools, and client features.</p>
+        <p>Install the current build and get back into Minecraft with less noise.</p>
       </div>
       <a class="btn secondary" href="/downloads" data-route="/downloads">Check downloads</a>
     </section>
@@ -290,8 +290,8 @@ function renderDownloads(): string {
   const release = state.release;
   const version = release?.version ? `v${escapeHtml(release.version)}` : "Unavailable";
   const detail = state.releaseError
-    ? "Downloads are temporarily unavailable."
-    : "Latest Windows release, ready to install.";
+    ? "The download is not available right now."
+    : "The latest Windows build is ready.";
 
   return `
     <section class="page-hero compact">
@@ -335,7 +335,7 @@ function renderNews(): string {
     <section class="page-hero compact">
       <p class="eyebrow">News</p>
       <h1>Bloom updates</h1>
-      <p>Release notes, client changes, and project posts.</p>
+      <p>Simple updates when something changes.</p>
     </section>
     <section class="news-list">
       ${
@@ -351,7 +351,7 @@ function renderNews(): string {
                 `
               )
               .join("")
-          : `<article class="news-card"><h2>No posts yet</h2><p>Published news will appear here.</p></article>`
+          : `<article class="news-card"><h2>No posts yet</h2><p>Check back later for updates.</p></article>`
       }
     </section>
   `;
@@ -362,7 +362,7 @@ function renderStaff(): string {
     <section class="page-hero compact">
       <p class="eyebrow">Staff</p>
       <h1>Bloom team</h1>
-      <p>The people building, shipping, and moderating Bloom Client.</p>
+      <p>The people keeping Bloom running.</p>
     </section>
     <section class="staff-grid">
       ${staffMembers
@@ -385,20 +385,20 @@ function renderAbout(): string {
     <section class="page-hero compact">
       <p class="eyebrow">About</p>
       <h1>Built for the Bloom ecosystem.</h1>
-      <p>This site hosts public downloads, project updates, staff information, and official Bloom Client resources.</p>
+      <p>A cleaner place for Bloom downloads, updates, and links.</p>
     </section>
     <section class="about-grid">
       <article>
         <h2>Launcher first</h2>
-        <p>Bloom focuses on Minecraft client workflows: instances, launch settings, cosmetics, wallets, marketplace content, scripts, and in-client tools.</p>
+        <p>Bloom keeps your launcher, instances, cosmetics, and tools together.</p>
       </article>
       <article>
         <h2>Fast downloads</h2>
-        <p>Installers are hosted for simple access, so players can grab the latest Windows build without digging through release pages.</p>
+        <p>Grab the latest build without searching around.</p>
       </article>
       <article>
         <h2>Official home</h2>
-        <p>Use bloomclient.org for Bloom Client downloads, project news, staff information, and trusted links.</p>
+        <p>Use bloomclient.org for the real Bloom Client site.</p>
       </article>
     </section>
   `;
