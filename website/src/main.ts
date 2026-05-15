@@ -372,13 +372,14 @@ async function createSupportCheckout(optionSlug?: string, amountUsd?: string): P
 
 function releaseButtons(className = "hero-actions"): string {
   const release = state.release;
-  const exe = release?.exeUrl
-    ? `<a class="btn primary" href="${escapeHtml(release.exeUrl)}" target="_blank" rel="noreferrer">Download Windows</a>`
+  const sksRelease = state.sksRelease;
+  const client = release?.exeUrl
+    ? `<a class="btn primary" href="${escapeHtml(release.exeUrl)}" target="_blank" rel="noreferrer">Download Client</a>`
     : `<span class="btn disabled">Download unavailable</span>`;
-  const msi = release?.msiUrl
-    ? `<a class="btn secondary" href="${escapeHtml(release.msiUrl)}" target="_blank" rel="noreferrer">Download MSI</a>`
+  const skstudio = sksRelease?.exeUrl
+    ? `<a class="btn secondary" href="${escapeHtml(sksRelease.exeUrl)}" target="_blank" rel="noreferrer">Download SkStudio</a>`
     : `<a class="btn secondary" href="/downloads" data-route="/downloads">View downloads</a>`;
-  return `<div class="${className}">${exe}${msi}</div>`;
+  return `<div class="${className}">${client}${skstudio}</div>`;
 }
 
 function downloadCard(appName: string, eyebrow: string, release?: Release, error?: string): string {
