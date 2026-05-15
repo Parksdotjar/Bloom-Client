@@ -77,8 +77,7 @@ const navItems: Array<{ path: Route; label: string }> = [
   { path: "/", label: "Home" },
   { path: "/downloads", label: "Downloads" },
   { path: "/news", label: "News" },
-  { path: "/staff", label: "Staff" },
-  { path: "/support", label: "Support Me" }
+  { path: "/staff", label: "Staff" }
 ];
 
 const infoItems: Array<{ path: Route; label: string }> = [
@@ -688,7 +687,6 @@ function renderFooter(): string {
         <a href="/downloads" data-route="/downloads">Downloads</a>
         <a href="/news" data-route="/news">News</a>
         <a href="/staff" data-route="/staff">Staff</a>
-        <a href="/support" data-route="/support">Support Me</a>
         <a href="/about" data-route="/about">About</a>
         <a href="/faq" data-route="/faq">FAQ</a>
         <a class="discord-link" href="${discordInviteUrl}" target="_blank" rel="noreferrer" aria-label="Join the Bloom Client Discord">
@@ -700,6 +698,25 @@ function renderFooter(): string {
       </nav>
       <p class="footer-note">Not affiliated with Mojang, Microsoft, or Minecraft.</p>
     </footer>
+  `;
+}
+
+function renderSupportCta(): string {
+  return `
+    <a class="support-corner" href="/support" data-route="/support" aria-label="Support Bloom">
+      <span class="support-corner-panel" aria-hidden="true">
+        <span class="support-corner-copy">
+          <span class="support-corner-title">Support Bloom</span>
+          <span class="support-corner-description">A simple way to support Bloom Client development directly.</span>
+          <span class="support-corner-prompt">click for options</span>
+          <span class="support-corner-arrow"></span>
+        </span>
+      </span>
+      <span class="support-corner-button">
+        <span class="support-corner-emoji">🫶</span>
+        <span class="support-corner-label">Support Bloom</span>
+      </span>
+    </a>
   `;
 }
 
@@ -947,11 +964,12 @@ function runPageAnimations(isRouteChange = false): void {
 function mount(isRouteChange = false, skipAnimations = false): void {
   const route = routeFromPath();
   const title = [...navItems, ...infoItems].find((item) => item.path === route)?.label;
-  document.title = route === "/" ? "Bloom Client | Official Website" : `Bloom Client | ${title || "Info"}`;
+  document.title = route === "/" ? "Bloom Client | Official Website" : `Bloom Client | ${title || (route === "/support" ? "Support" : "Info")}`;
   root.innerHTML = `
     ${renderHeader(route)}
     <main>${renderRoute(route)}</main>
     ${renderFooter()}
+    ${renderSupportCta()}
   `;
 
   if (isRouteChange || hasMounted) {
