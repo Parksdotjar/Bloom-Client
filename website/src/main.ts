@@ -333,19 +333,22 @@ async function loadSupportOptions(): Promise<void> {
   }
 }
 
-async function createSupportCheckout(optionSlug: string): Promise<string> {
+async function createSupportCheckout(optionSlug?: string, amountUsd?: string): Promise<string> {
   const edgeBase = resolveEdgeBase();
   if (!edgeBase) throw new Error("Support checkout is not configured yet.");
+
+  const body: Record<string, string> = {
+    return_origin: window.location.origin
+  };
+  if (optionSlug) body.option_slug = optionSlug;
+  if (amountUsd) body.amount_usd = amountUsd;
 
   const response = await fetch(`${edgeBase}/checkout`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      option_slug: optionSlug,
-      return_origin: window.location.origin
-    })
+    body: JSON.stringify(body)
   });
 
   const payload = (await response.json().catch(() => ({}))) as {
@@ -608,6 +611,14 @@ function renderSupport(): string {
       <div class="support-options">
         ${optionsMarkup}
       </div>
+      <form class="support-custom" data-support-custom>
+        <label for="support-custom-amount">you pick your ammount &#8594;</label>
+        <div class="support-custom-entry">
+          <span>$</span>
+          <input id="support-custom-amount" name="amount" type="number" min="1" step="1" inputmode="numeric" pattern="[0-9]*" placeholder="" aria-label="Custom support amount in USD" />
+          <button class="btn primary support-button" type="submit">Support Bloom</button>
+        </div>
+      </form>
       <p class="support-note">Checkout opens through McSets and is processed server-side.</p>
     </section>
   `;
@@ -1048,6 +1059,42 @@ function mount(isRouteChange = false, skipAnimations = false): void {
         }
       }
     });
+  });
+
+  root.querySelector<HTMLFormElement>("[data-support-custom]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const form = event.currentTarget as HTMLFormElement;
+    const input = form.querySelector<HTMLInputElement>("#support-custom-amount");
+    const button = form.querySelector<HTMLButtonElement>("button");
+    const amount = input?.value.trim() ?? "";
+    const messageTarget = root.querySelector<HTMLElement>(".support-options");
+
+    form.querySelector<HTMLElement>(".support-inline-error")?.remove();
+    if (!/^\d+$/.test(amount) || Number.parseInt(amount, 10) < 1) {
+      form.insertAdjacentHTML("beforeend", `<p class="support-inline-error">Enter a whole dollar amount of at least $1.</p>`);
+      input?.focus();
+      return;
+    }
+    if (!button || button.disabled) return;
+
+    const originalText = button.textContent || "Support Bloom";
+    button.disabled = true;
+    button.textContent = "Loading...";
+    try {
+      const checkoutUrl = await createSupportCheckout(undefined, amount);
+      window.location.href = checkoutUrl;
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = originalText;
+      const message = error instanceof Error ? error.message : "Could not start support checkout.";
+      if (messageTarget) {
+        messageTarget.insertAdjacentHTML(
+          "beforebegin",
+          `<article class="support-state"><h2>Checkout could not start.</h2><p>${escapeHtml(message)}</p></article>`
+        );
+      }
+    }
   });
 
   document.addEventListener(

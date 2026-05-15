@@ -29,6 +29,9 @@ const SUPPORT_OPTIONS = [
   { slug: "support-5", label: "$5", amountCents: 500 },
   { slug: "support-10", label: "$10", amountCents: 1000 },
   { slug: "support-25", label: "$25", amountCents: 2500 },
+  { slug: "support-50", label: "$50", amountCents: 5000 },
+  { slug: "support-100", label: "$100", amountCents: 10000 },
+  { slug: "support-200", label: "$200", amountCents: 20000 },
 ];
 
 function jsonResponse(status: number, body: JsonObject) {
@@ -82,6 +85,20 @@ function normalizeUrl(value: unknown): string | null {
 function getSupportOption(slug: unknown) {
   const normalized = asString(slug)?.toLowerCase();
   return SUPPORT_OPTIONS.find((option) => option.slug === normalized) ?? null;
+}
+
+function getCustomSupportOption(amountUsd: unknown) {
+  const raw = asString(amountUsd);
+  if (!raw || !/^\d+$/.test(raw)) return null;
+
+  const dollars = Number.parseInt(raw, 10);
+  if (!Number.isSafeInteger(dollars) || dollars < 1) return null;
+
+  return {
+    slug: `support-custom-${dollars}`,
+    label: `$${dollars}`,
+    amountCents: dollars * 100,
+  };
 }
 
 function resolveMcsetsApiKey(mode: "test" | "live") {
@@ -178,7 +195,7 @@ async function handleOptions() {
 
 async function handleCheckout(request: Request) {
   const payload = await readPayload(request);
-  const option = getSupportOption(payload.option_slug);
+  const option = getSupportOption(payload.option_slug) ?? getCustomSupportOption(payload.amount_usd);
   if (!option) return jsonResponse(400, { ok: false, error: "support_option_invalid" });
 
   const mode = asString(payload.mode)?.toLowerCase() === "test" ? "test" : "live";
