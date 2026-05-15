@@ -1,0 +1,21 @@
+{
+  "version": "0.1.0",
+  "installerUrl": "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/SkStudio_0.1.0_x64-setup.exe",
+  "assetName": "SkStudio_0.1.0_x64-setup.exe",
+  "msiUrl": "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/SkStudio_0.1.0_x64_en-US.msi",
+  "msiAssetName": "SkStudio_0.1.0_x64_en-US.msi",
+  "fallbackInstallerUrls": [
+    "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/SkStudio_latest_x64-setup.exe"
+  ],
+  "windows": {
+    "installerUrl": "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/SkStudio_0.1.0_x64-setup.exe",
+    "assetName": "SkStudio_0.1.0_x64-setup.exe",
+    "nsisUrl": "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/SkStudio_0.1.0_x64-setup.exe",
+    "nsisAssetName": "SkStudio_0.1.0_x64-setup.exe",
+    "msiUrl": "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/SkStudio_0.1.0_x64_en-US.msi",
+    "msiAssetName": "SkStudio_0.1.0_x64_en-US.msi",
+    "fallbackInstallerUrls": [
+      "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/SkStudio_latest_x64-setup.exe"
+    ]
+  }
+}

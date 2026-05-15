@@ -475,6 +475,7 @@ main {
 
 .section,
 .page-hero,
+.download-stack,
 .download-panel,
 .support-panel,
 .news-list,
@@ -575,6 +576,13 @@ main {
   gap: 24px;
   align-items: start;
   padding: 24px;
+  width: 100%;
+  margin: 0;
+}
+
+.download-stack {
+  display: grid;
+  gap: 16px;
   margin-bottom: 74px;
 }
 

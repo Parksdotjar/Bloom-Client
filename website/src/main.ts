@@ -48,6 +48,8 @@ type SupportOption = {
 type AppState = {
   release?: Release;
   releaseError?: string;
+  sksRelease?: Release;
+  sksReleaseError?: string;
   news: NewsItem[];
   newsError?: string;
   supportOptions: SupportOption[];
@@ -57,6 +59,7 @@ type AppState = {
 type Route = "/" | "/downloads" | "/news" | "/staff" | "/support" | "/about" | "/faq";
 
 const updatesJsonUrl = import.meta.env.VITE_UPDATES_JSON_URL || "/latest.json";
+const sksUpdatesJsonUrl = import.meta.env.VITE_SKS_UPDATES_JSON_URL || "/sks-latest.json";
 const siteUrl = import.meta.env.VITE_SITE_URL || "https://bloomclient.org";
 
 const state: AppState = {
@@ -87,20 +90,20 @@ const infoItems: Array<{ path: Route; label: string }> = [
 
 const productCards = [
   {
-    title: "Instance launcher",
-    body: "Keep your Minecraft installs clean, organized, and easy to start."
+    title: "Bloom Client",
+    body: "A calmer launcher and client experience for Minecraft."
   },
   {
-    title: "Cosmetics locker",
-    body: "Keep your capes and cosmetics in one simple place."
+    title: "SkStudio",
+    body: "A focused creative workspace for skin and asset editing."
   },
   {
-    title: "Marketplace tools",
-    body: "Find packs, shaders, and tools without the clutter."
+    title: "Production tools",
+    body: "Small, useful apps made under the Bloom Productions umbrella."
   },
   {
-    title: "Built-in games",
-    body: "Take a break with small games built into the client."
+    title: "Clean releases",
+    body: "Official downloads, updates, and project links in one place."
   }
 ];
 
@@ -115,12 +118,12 @@ const discordInviteUrl = "https://discord.gg/aSCnu2CTm6";
 
 const faqItems = [
   {
-    question: "Why does my antivirus say Bloom Client is a virus?",
+    question: "Why does my antivirus warn about a Bloom Productions app?",
     answer:
       "Some antivirus tools flag new launchers because they download files, start Minecraft, manage folders, and connect to online services. Those actions can look suspicious to scanners, even when the app is doing normal launcher work."
   },
   {
-    question: "Why does Bloom Client not have a code signing certificate yet?",
+    question: "Why do Bloom Productions apps not have a code signing certificate yet?",
     answer:
       "Code signing costs money and takes setup time. Bloom is still growing, so releases may show extra Windows or antivirus warnings until a certificate is added."
   },
@@ -140,14 +143,14 @@ const faqItems = [
       "Download Bloom only from bloomclient.org, keep Windows updated, and scan the file with more than one trusted tool if you want a second opinion."
   },
   {
-    question: "Where should I download Bloom Client?",
+    question: "Where should I download Bloom Productions apps?",
     answer:
       "Use the Downloads page on bloomclient.org. Avoid random reuploads or links from people you do not trust."
   },
   {
     question: "What Minecraft version does Bloom focus on?",
     answer:
-      "Bloom currently focuses on modern Fabric instances, with the latest client build shown on the Downloads page."
+      "Bloom Client currently focuses on modern Fabric instances, with the latest client build shown on the Downloads page."
   },
   {
     question: "Do I need a Bloom account?",
@@ -162,7 +165,7 @@ const faqItems = [
   {
     question: "Where can I get help?",
     answer:
-      "Join the Bloom Client Discord from the footer. It is the easiest place to ask questions and check current updates."
+      "Join the Bloom Productions Discord from the footer. It is the easiest place to ask questions and check current updates."
   }
 ];
 
@@ -246,7 +249,7 @@ async function loadNews(): Promise<void> {
   if (!supabaseUrl || !supabaseAnonKey) {
     state.news = [
       {
-        title: "Bloom Client website is live",
+        title: "Bloom Productions website is live",
         summary: "Updates will show here when there is something new.",
         published_at: new Date().toISOString()
       }
@@ -378,13 +381,40 @@ function releaseButtons(className = "hero-actions"): string {
   return `<div class="${className}">${exe}${msi}</div>`;
 }
 
+function downloadCard(appName: string, eyebrow: string, release?: Release, error?: string): string {
+  const version = release?.version ? `v${escapeHtml(release.version)}` : "Unavailable";
+  const detail = error ? "Download info is not available right now." : "The latest Windows build is ready.";
+
+  return `
+    <section class="download-panel">
+      <div>
+        <p class="eyebrow">${escapeHtml(eyebrow)}</p>
+        <h2>${escapeHtml(appName)} ${version}</h2>
+        <p>${detail}</p>
+      </div>
+      <div class="download-list">
+        ${
+          release?.exeUrl
+            ? `<a class="download-row" href="${escapeHtml(release.exeUrl)}" target="_blank" rel="noreferrer"><span>${escapeHtml(release.exeAssetName || `${appName} Windows installer`)}</span><strong>EXE</strong></a>`
+            : `<div class="download-row disabled-row"><span>${escapeHtml(appName)} installer unavailable</span><strong>EXE</strong></div>`
+        }
+        ${
+          release?.msiUrl
+            ? `<a class="download-row" href="${escapeHtml(release.msiUrl)}" target="_blank" rel="noreferrer"><span>${escapeHtml(release.msiAssetName || `${appName} Windows MSI`)}</span><strong>MSI</strong></a>`
+            : `<div class="download-row disabled-row"><span>${escapeHtml(appName)} MSI unavailable</span><strong>MSI</strong></div>`
+        }
+      </div>
+    </section>
+  `;
+}
+
 function renderHeader(route: Route): string {
   const infoActive = route === "/about" || route === "/faq";
   return `
     <header class="site-header">
       <a class="brand" href="/" data-route="/">
-        <img src="/logo.png" alt="Bloom Client logo" />
-        <span>Bloom Client</span>
+        <img src="/logo.png" alt="Bloom Productions logo" />
+        <span>Bloom Productions</span>
       </a>
       <nav class="nav">
         ${navItems
@@ -422,7 +452,7 @@ function renderHeader(route: Route): string {
             </label>
           </div>
         </div>
-        <a class="top-download" href="/downloads" data-route="/downloads">Start download</a>
+        <a class="top-download" href="/downloads" data-route="/downloads">Downloads</a>
       </div>
     </header>
   `;
@@ -432,17 +462,17 @@ function renderHome(): string {
   return `
     <section class="hero-section">
       <div class="hero-copy">
-        <p class="eyebrow">Official Bloom Client</p>
-        <h1>Bloom Client</h1>
-        <p class="lead">Welcome to your calmer Minecraft experience.</p>
+        <p class="eyebrow">Official Bloom Productions</p>
+        <h1>Bloom Productions</h1>
+        <p class="lead">Clean tools, calm releases, and official downloads.</p>
         ${releaseButtons()}
       </div>
     </section>
 
     <section class="section">
       <div class="section-heading">
-        <p class="eyebrow">Client tools</p>
-        <h2>Built around the client, not a landing page.</h2>
+        <p class="eyebrow">Projects</p>
+        <h2>Built around useful apps, not a landing page.</h2>
       </div>
       <div class="feature-grid">
         ${productCards
@@ -461,8 +491,8 @@ function renderHome(): string {
     <section class="section split-band">
       <div>
         <p class="eyebrow">Updates</p>
-        <h2>Get the latest Bloom Client build.</h2>
-        <p>Install the current build and get back into Minecraft with less noise.</p>
+        <h2>Get the latest Bloom Productions builds.</h2>
+        <p>Install Bloom Client or SkStudio from the official download page.</p>
       </div>
       <a class="btn secondary" href="/downloads" data-route="/downloads">Check downloads</a>
     </section>
@@ -470,36 +500,16 @@ function renderHome(): string {
 }
 
 function renderDownloads(): string {
-  const release = state.release;
-  const version = release?.version ? `v${escapeHtml(release.version)}` : "Unavailable";
-  const detail = state.releaseError
-    ? "The download is not available right now."
-    : "The latest Windows build is ready.";
-
   return `
     <section class="page-hero compact">
       <p class="eyebrow">Downloads</p>
-      <h1>Download Bloom</h1>
-      <p>${detail}</p>
+      <h1>Download Bloom Productions</h1>
+      <p>Official Windows builds for Bloom Productions apps.</p>
     </section>
-    <section class="download-panel">
-      <div>
-        <p class="eyebrow">Current Windows build</p>
-        <h2>${version}</h2>
-      </div>
-      <div class="download-list">
-        ${
-          release?.exeUrl
-            ? `<a class="download-row" href="${escapeHtml(release.exeUrl)}" target="_blank" rel="noreferrer"><span>${escapeHtml(release.exeAssetName || "Windows installer")}</span><strong>EXE</strong></a>`
-            : `<div class="download-row disabled-row"><span>Windows installer unavailable</span><strong>EXE</strong></div>`
-        }
-        ${
-          release?.msiUrl
-            ? `<a class="download-row" href="${escapeHtml(release.msiUrl)}" target="_blank" rel="noreferrer"><span>${escapeHtml(release.msiAssetName || "Windows MSI")}</span><strong>MSI</strong></a>`
-            : `<div class="download-row disabled-row"><span>MSI unavailable</span><strong>MSI</strong></div>`
-        }
-      </div>
-    </section>
+    <div class="download-stack">
+      ${downloadCard("Bloom Client", "Minecraft client", state.release, state.releaseError)}
+      ${downloadCard("SkStudio", "Creative editor", state.sksRelease, state.sksReleaseError)}
+    </div>
   `;
 }
 
@@ -571,7 +581,7 @@ function renderSupport(): string {
   const status = new URLSearchParams(window.location.search).get("status");
   const statusMessage =
     status === "success"
-      ? `<article class="support-state success"><h2>Thank you for supporting Bloom.</h2><p>Your contribution helps keep Bloom Client development moving forward.</p></article>`
+      ? `<article class="support-state success"><h2>Thank you for supporting Bloom.</h2><p>Your contribution helps keep Bloom Productions development moving forward.</p></article>`
       : status === "cancel"
         ? `<article class="support-state"><h2>Checkout canceled.</h2><p>No contribution was made. You can restart checkout whenever you are ready.</p></article>`
         : "";
@@ -600,12 +610,12 @@ function renderSupport(): string {
     <section class="page-hero compact">
       <p class="eyebrow">Support Me</p>
       <h1>Support Bloom</h1>
-      <p>Help support Bloom Client development.</p>
+        <p>Help support Bloom Productions development.</p>
     </section>
     <section class="support-panel">
       <div class="support-copy">
         <h2>Every contribution helps keep Bloom moving forward.</h2>
-        <p>This page is for people who want to support the project directly. It does not unlock rewards, perks, or in-game items.</p>
+        <p>This page is for people who want to support the projects directly. It does not unlock rewards, perks, or in-game items.</p>
       </div>
       ${statusMessage}
       <div class="support-options">
@@ -624,12 +634,22 @@ function renderSupport(): string {
   `;
 }
 
+async function loadSksRelease(): Promise<void> {
+  try {
+    const response = await fetch(sksUpdatesJsonUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Manifest request failed (${response.status}).`);
+    state.sksRelease = parseRelease((await response.json()) as UpdateManifest);
+  } catch (error) {
+    state.sksReleaseError = error instanceof Error ? error.message : "Could not load the latest SkStudio release.";
+  }
+}
+
 function renderAbout(): string {
   return `
     <section class="page-hero compact">
       <p class="eyebrow">About</p>
       <h1>Built for the Bloom ecosystem.</h1>
-      <p>A cleaner place for Bloom downloads, updates, and links.</p>
+      <p>A cleaner place for Bloom Productions downloads, updates, and links.</p>
     </section>
     <section class="about-grid">
       <article>
@@ -642,7 +662,7 @@ function renderAbout(): string {
       </article>
       <article>
         <h2>Official home</h2>
-        <p>Use bloomclient.org for the real Bloom Client site.</p>
+        <p>Use bloomclient.org for the official Bloom Productions site.</p>
       </article>
     </section>
   `;
@@ -653,7 +673,7 @@ function renderFaq(): string {
     <section class="page-hero compact">
       <p class="eyebrow">FAQ</p>
       <h1>Common questions.</h1>
-      <p>Simple answers for Bloom Client safety, downloads, and setup.</p>
+      <p>Simple answers for Bloom Productions safety, downloads, and setup.</p>
     </section>
     <section class="faq-list">
       ${faqItems
@@ -688,10 +708,10 @@ function renderFooter(): string {
   return `
     <footer class="site-footer">
       <div class="footer-brand">
-        <img src="/logo.png" alt="Bloom Client logo" />
+        <img src="/logo.png" alt="Bloom Productions logo" />
         <div>
-          <strong>Bloom Client</strong>
-          <span>Copyright ${year} Bloom Client. All rights reserved.</span>
+          <strong>Bloom Productions</strong>
+          <span>Copyright ${year} Bloom Productions. All rights reserved.</span>
         </div>
       </div>
       <nav class="footer-links" aria-label="Footer links">
@@ -700,7 +720,7 @@ function renderFooter(): string {
         <a href="/staff" data-route="/staff">Staff</a>
         <a href="/about" data-route="/about">About</a>
         <a href="/faq" data-route="/faq">FAQ</a>
-        <a class="discord-link" href="${discordInviteUrl}" target="_blank" rel="noreferrer" aria-label="Join the Bloom Client Discord">
+        <a class="discord-link" href="${discordInviteUrl}" target="_blank" rel="noreferrer" aria-label="Join the Bloom Productions Discord">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M19.54 5.34A17.4 17.4 0 0 0 15.2 4l-.21.42c1.54.38 2.26.93 2.26.93a13.54 13.54 0 0 0-5.02-1.44 13.67 13.67 0 0 0-5.68 1.08c-.28.13-.45.22-.45.22s.75-.58 2.38-.96L8.32 4a17.6 17.6 0 0 0-4.36 1.35C1.2 9.48.46 13.5.84 17.46A17.42 17.42 0 0 0 6.18 20s.64-.76 1.15-1.42a7.38 7.38 0 0 1-1.82-.87l.44-.34c3.5 1.62 7.3 1.62 10.76 0l.45.34c-.58.38-1.2.67-1.84.87.51.66 1.14 1.42 1.14 1.42a17.33 17.33 0 0 0 5.36-2.54c.46-4.58-.78-8.56-2.28-12.12ZM8.42 15.04c-1.04 0-1.9-.96-1.9-2.14s.84-2.14 1.9-2.14c1.06 0 1.92.97 1.9 2.14 0 1.18-.84 2.14-1.9 2.14Zm7.17 0c-1.04 0-1.9-.96-1.9-2.14s.84-2.14 1.9-2.14c1.06 0 1.9.97 1.9 2.14s-.84 2.14-1.9 2.14Z" />
           </svg>
@@ -718,7 +738,7 @@ function renderSupportCta(): string {
       <span class="support-corner-panel" aria-hidden="true">
         <span class="support-corner-copy">
           <span class="support-corner-title">Support Bloom</span>
-          <span class="support-corner-description">A simple way to support Bloom Client development directly.</span>
+          <span class="support-corner-description">A simple way to support Bloom Productions development directly.</span>
           <span class="support-corner-prompt">click for options</span>
           <span class="support-corner-arrow"></span>
         </span>
@@ -975,7 +995,7 @@ function runPageAnimations(isRouteChange = false): void {
 function mount(isRouteChange = false, skipAnimations = false): void {
   const route = routeFromPath();
   const title = [...navItems, ...infoItems].find((item) => item.path === route)?.label;
-  document.title = route === "/" ? "Bloom Client | Official Website" : `Bloom Client | ${title || (route === "/support" ? "Support" : "Info")}`;
+  document.title = route === "/" ? "Bloom Productions | Official Website" : `Bloom Productions | ${title || (route === "/support" ? "Support" : "Info")}`;
   root.innerHTML = `
     ${renderHeader(route)}
     <main>${renderRoute(route)}</main>
@@ -1135,4 +1155,4 @@ function mount(isRouteChange = false, skipAnimations = false): void {
 
 window.addEventListener("popstate", () => mount(true, !transitionsEnabled));
 
-void Promise.all([loadRelease(), loadNews(), loadSupportOptions()]).finally(mount);
+void Promise.all([loadRelease(), loadSksRelease(), loadNews(), loadSupportOptions()]).finally(mount);
