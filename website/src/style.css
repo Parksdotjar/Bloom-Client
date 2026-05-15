@@ -945,26 +945,27 @@ code {
   height: 48px;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 24px;
+  transform-origin: left bottom;
   background: rgba(6, 14, 16, 0.7);
   backdrop-filter: blur(18px);
   box-shadow:
     0 18px 54px rgba(0, 0, 0, 0.42),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
   transition:
-    width 6000ms cubic-bezier(0.16, 1, 0.3, 1),
-    height 6000ms cubic-bezier(0.16, 1, 0.3, 1),
-    border-radius 6000ms cubic-bezier(0.16, 1, 0.3, 1),
-    background 6000ms cubic-bezier(0.16, 1, 0.3, 1),
-    border-color 6000ms cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 6000ms cubic-bezier(0.16, 1, 0.3, 1);
+    width 2500ms cubic-bezier(0.16, 1, 0.3, 1),
+    height 2500ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-radius 2500ms cubic-bezier(0.16, 1, 0.3, 1),
+    background 2500ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 2500ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 2500ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .support-corner:hover .support-corner-panel,
 .support-corner:focus-visible .support-corner-panel {
   width: min(520px, calc(100vw - 48px));
   height: 252px;
-  border-radius: 16px;
+  border-radius: 18px;
   border-color: rgba(255, 255, 255, 0.2);
   background: rgba(6, 14, 16, 0.86);
   box-shadow:
@@ -993,15 +994,13 @@ code {
     0 0 24px rgba(255, 255, 255, 0.24),
     inset 0 -12px 18px rgba(0, 0, 0, 0.12);
   transition:
-    width 6000ms cubic-bezier(0.16, 1, 0.3, 1),
-    border-radius 6000ms cubic-bezier(0.16, 1, 0.3, 1),
-    transform 6000ms cubic-bezier(0.16, 1, 0.3, 1);
+    width 2500ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 2500ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .support-corner:hover .support-corner-button,
 .support-corner:focus-visible .support-corner-button {
   width: min(520px, calc(100vw - 48px));
-  border-radius: 0 0 16px 16px;
 }
 
 .support-corner-emoji {
@@ -1012,12 +1011,12 @@ code {
 .support-corner-label {
   display: inline-block;
   transform: translateX(0);
-  transition: transform 6000ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 2500ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .support-corner:hover .support-corner-label,
 .support-corner:focus-visible .support-corner-label {
-  transform: translateX(7px);
+  transform: translateX(0);
 }
 
 .support-corner-copy {
@@ -1034,8 +1033,8 @@ code {
   opacity: 0;
   transform: translateY(22px);
   transition:
-    opacity 1200ms ease 3900ms,
-    transform 1500ms cubic-bezier(0.16, 1, 0.3, 1) 3900ms;
+    opacity 700ms ease 1350ms,
+    transform 900ms cubic-bezier(0.16, 1, 0.3, 1) 1350ms;
 }
 
 .support-corner:hover .support-corner-copy,
