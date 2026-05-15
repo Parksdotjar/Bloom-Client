@@ -464,7 +464,7 @@ function renderHome(): string {
       <div class="hero-copy">
         <p class="eyebrow">Official Bloom Productions</p>
         <h1>Bloom Productions</h1>
-        <p class="lead">Clean tools, calm releases, and official downloads.</p>
+        <p class="lead">Enjoy Apps and Tools Built By The Future</p>
         ${releaseButtons()}
       </div>
     </section>
@@ -614,8 +614,7 @@ function renderSupport(): string {
     </section>
     <section class="support-panel">
       <div class="support-copy">
-        <h2>Every contribution helps keep Bloom moving forward.</h2>
-        <p>This page is for people who want to support the projects directly. It does not unlock rewards, perks, or in-game items.</p>
+        <h2>Even Just $1 Helps Alot!</h2>
       </div>
       ${statusMessage}
       <div class="support-options">
