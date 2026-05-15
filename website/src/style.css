@@ -1046,15 +1046,16 @@ code {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 999px;
-  background: #f7f7f2;
-  color: #050505;
+  background: #2f3335;
+  color: #fff;
   font-size: 13px;
   font-weight: 900;
   box-shadow:
-    0 0 24px rgba(255, 255, 255, 0.24),
-    inset 0 -12px 18px rgba(0, 0, 0, 0.12);
+    0 0 24px rgba(255, 255, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -12px 18px rgba(0, 0, 0, 0.18);
   transition:
     width 2500ms cubic-bezier(0.19, 1, 0.22, 1),
     transform 2500ms cubic-bezier(0.19, 1, 0.22, 1);
@@ -1092,34 +1093,35 @@ code {
   align-content: end;
   gap: 9px;
   text-align: center;
-  opacity: 0;
-  transform: translateY(22px);
-  transition:
-    opacity 500ms ease 850ms,
-    transform 650ms cubic-bezier(0.19, 1, 0.22, 1) 850ms;
-}
-
-.support-corner:hover .support-corner-copy,
-.support-corner:focus-visible .support-corner-copy {
-  opacity: 1;
-  transform: translateY(0);
 }
 
 .support-corner-title {
+  opacity: 0;
+  transform: translateY(28px);
   font-size: 18px;
   font-weight: 900;
   text-shadow: 0 0 18px rgba(255, 255, 255, 0.24);
+  transition:
+    opacity 950ms ease 760ms,
+    transform 1100ms cubic-bezier(0.19, 1, 0.22, 1) 760ms;
 }
 
 .support-corner-description {
+  opacity: 0;
+  transform: translateY(24px);
   max-width: 330px;
   color: rgba(247, 247, 242, 0.66);
   font-size: 13px;
   font-weight: 700;
   line-height: 1.55;
+  transition:
+    opacity 900ms ease 600ms,
+    transform 1050ms cubic-bezier(0.19, 1, 0.22, 1) 600ms;
 }
 
 .support-corner-prompt {
+  opacity: 0;
+  transform: translateY(20px);
   margin-top: 8px;
   color: rgba(247, 247, 242, 0.8);
   font-family: "JetBrains Mono", monospace;
@@ -1127,15 +1129,35 @@ code {
   font-weight: 800;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+  transition:
+    opacity 850ms ease 450ms,
+    transform 1000ms cubic-bezier(0.19, 1, 0.22, 1) 450ms;
 }
 
 .support-corner-arrow {
+  opacity: 0;
   width: 10px;
   height: 10px;
   border-right: 2px solid rgba(247, 247, 242, 0.82);
   border-bottom: 2px solid rgba(247, 247, 242, 0.82);
   transform: rotate(45deg);
   animation: supportArrowFloat 1600ms ease-in-out infinite;
+  transition: opacity 800ms ease 360ms;
+}
+
+.support-corner:hover .support-corner-title,
+.support-corner:focus-visible .support-corner-title,
+.support-corner:hover .support-corner-description,
+.support-corner:focus-visible .support-corner-description,
+.support-corner:hover .support-corner-prompt,
+.support-corner:focus-visible .support-corner-prompt {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.support-corner:hover .support-corner-arrow,
+.support-corner:focus-visible .support-corner-arrow {
+  opacity: 1;
 }
 
 @keyframes supportArrowFloat {
