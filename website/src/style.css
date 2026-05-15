@@ -364,6 +364,10 @@ main {
 .download-panel,
 .download-panel > *,
 .download-link,
+.support-panel,
+.support-panel > *,
+.support-option,
+.support-state,
 .news-card,
 .staff-card,
 .about-grid article,
@@ -472,6 +476,7 @@ main {
 .section,
 .page-hero,
 .download-panel,
+.support-panel,
 .news-list,
 .staff-grid,
 .about-grid,
@@ -493,6 +498,9 @@ main {
 .section-heading h2,
 .split-band h2,
 .download-panel h2,
+.support-copy h2,
+.support-option h2,
+.support-state h2,
 .about-grid h2 {
   margin: 0;
   font-size: clamp(30px, 4vw, 54px);
@@ -513,6 +521,7 @@ main {
 .staff-card,
 .faq-item,
 .download-panel,
+.support-panel,
 .split-band {
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -598,6 +607,79 @@ main {
 
 .disabled-row {
   color: rgba(247, 247, 242, 0.42);
+}
+
+.support-panel {
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+  margin-bottom: 74px;
+}
+
+.support-copy {
+  max-width: 720px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.support-copy p,
+.support-state p,
+.support-note {
+  color: var(--muted);
+  line-height: 1.62;
+}
+
+.support-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.support-option,
+.support-state {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.support-option {
+  min-height: 178px;
+  display: grid;
+  align-content: space-between;
+  gap: 18px;
+  padding: 20px;
+  text-align: center;
+}
+
+.support-option .eyebrow {
+  margin-bottom: 10px;
+}
+
+.support-option .btn {
+  width: 100%;
+}
+
+.support-button:disabled {
+  opacity: 0.72;
+  cursor: wait;
+}
+
+.support-state {
+  padding: 20px;
+  text-align: center;
+}
+
+.support-state.success {
+  border-color: rgba(120, 238, 255, 0.34);
+  background: rgba(120, 238, 255, 0.075);
+}
+
+.support-note {
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .news-list {
@@ -870,6 +952,7 @@ code {
   }
 
   .feature-grid,
+  .support-options,
   .staff-grid,
   .about-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -886,6 +969,7 @@ code {
   .section,
   .page-hero,
   .download-panel,
+  .support-panel,
   .news-list,
   .staff-grid,
   .about-grid,
@@ -899,6 +983,7 @@ code {
   }
 
   .feature-grid,
+  .support-options,
   .staff-grid,
   .about-grid {
     grid-template-columns: 1fr;

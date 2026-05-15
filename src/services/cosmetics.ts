@@ -27,6 +27,9 @@ export type CapeRecord = {
   rarity_color_start: string | null;
   rarity_color_end: string | null;
   rarity_glow: string | null;
+  cosmetic_type?: 'cape' | 'model';
+  cosmetic_slot?: string | null;
+  model_json?: Record<string, unknown> | null;
   render_pos_x: number | null;
   render_pos_y: number | null;
   render_pos_z: number | null;
@@ -81,6 +84,9 @@ export type OwnedCapeRecord = {
   rarity_color_start: string | null;
   rarity_color_end: string | null;
   rarity_glow: string | null;
+  cosmetic_type?: 'cape' | 'model';
+  cosmetic_slot?: string | null;
+  model_json?: Record<string, unknown> | null;
   render_pos_x: number | null;
   render_pos_y: number | null;
   render_pos_z: number | null;
@@ -97,7 +103,22 @@ export type LoadoutRecord = {
   user_id: string;
   equipped_cape_id: string | null;
   equipped_cape_slug: string | null;
+  equipped_hat_id?: string | null;
+  equipped_hat_slug?: string | null;
   updated_at: string;
+};
+
+export type PublicHatLoadoutStatus = {
+  row: Record<string, unknown> | null;
+  summary: {
+    user_id: string | null;
+    equipped_hat_id: string | null;
+    hat_slug: string | null;
+    hat_model_json_exists: boolean;
+    hat_model_json_length: number;
+    hat_texture_url_exists: boolean;
+    embedded_texture_exists: boolean;
+  };
 };
 
 export type WalletRecord = {
@@ -115,6 +136,22 @@ export type OwnerMemberRecord = {
   balance_bb: number;
   profile_updated_at: string;
   wallet_updated_at: string | null;
+};
+
+export type OwnerAccountBadgeRecord = {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+  icon: string;
+  icon_url: string | null;
+  color: string;
+  obtainable: string;
+  created_at: string;
+};
+
+export type OwnerUserBadgeRecord = OwnerAccountBadgeRecord & {
+  earned_at: string;
 };
 
 export type BadgeKey =
@@ -408,6 +445,9 @@ export type CreateCapeListingInput = {
   sort_order?: number;
   is_active?: boolean;
   is_featured?: boolean;
+  cosmetic_type?: 'cape' | 'model';
+  cosmetic_slot?: string | null;
+  model_json?: Record<string, unknown> | null;
 };
 
 export type PreviewAppearanceRecord = {
@@ -545,7 +585,7 @@ export async function loadShopCapes(search: string, rarity: string | null) {
   let query = supabase
     .from('commerce_capes')
     .select(
-      'id,slug,name,description,partner_group,partner_for_profits,texture_url,preview_url,price_bb,rarity,rarity_label,rarity_color_start,rarity_color_end,rarity_glow,render_pos_x,render_pos_y,render_pos_z,render_rot_x,render_rot_y,render_rot_z,render_depth_z,render_brightness,sort_order,is_active,is_featured,created_at,updated_at'
+      'id,slug,name,description,partner_group,partner_for_profits,texture_url,preview_url,price_bb,rarity,rarity_label,rarity_color_start,rarity_color_end,rarity_glow,cosmetic_type,cosmetic_slot,model_json,render_pos_x,render_pos_y,render_pos_z,render_rot_x,render_rot_y,render_rot_z,render_depth_z,render_brightness,sort_order,is_active,is_featured,created_at,updated_at'
     )
     .eq('is_active', true)
     .order('is_featured', { ascending: false })
@@ -576,11 +616,60 @@ export async function loadCurrentLoadout() {
   if (!userId) return null;
   const { data, error } = await supabase
     .from('commerce_cape_loadout')
-    .select('user_id,equipped_cape_id,updated_at')
+    .select('user_id,equipped_cape_id,equipped_hat_id,updated_at')
     .eq('user_id', userId)
     .maybeSingle();
   if (error) throw error;
-  return data as { user_id: string; equipped_cape_id: string | null; updated_at: string } | null;
+  return data as { user_id: string; equipped_cape_id: string | null; equipped_hat_id?: string | null; updated_at: string } | null;
+}
+
+function hasEmbeddedTexture(model: unknown) {
+  if (!model || typeof model !== 'object') return false;
+  const textures = (model as { textures?: unknown }).textures;
+  if (!Array.isArray(textures)) return false;
+  return textures.some((texture) => {
+    if (!texture || typeof texture !== 'object') return false;
+    const source = (texture as { source?: unknown }).source;
+    return typeof source === 'string' && source.trim().length > 0;
+  });
+}
+
+export async function loadCurrentPublicHatLoadoutStatus() {
+  const userId = await getSupabaseUserId();
+  if (!userId) {
+    const summary = {
+      user_id: null,
+      equipped_hat_id: null,
+      hat_slug: null,
+      hat_model_json_exists: false,
+      hat_model_json_length: 0,
+      hat_texture_url_exists: false,
+      embedded_texture_exists: false
+    };
+    return { row: null, summary } satisfies PublicHatLoadoutStatus;
+  }
+
+  const { data, error } = await supabase
+    .from('commerce_cape_loadout_public')
+    .select('user_id,mc_uuid,equipped_cape_id,equipped_hat_id,hat_slug,hat_name,hat_texture_url,hat_model_json,updated_at')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) throw error;
+
+  const row = (data ?? null) as Record<string, unknown> | null;
+  const modelJson = row?.hat_model_json ?? null;
+  const modelJsonExists = modelJson !== null && modelJson !== undefined;
+  const modelJsonLength = modelJsonExists ? JSON.stringify(modelJson).length : 0;
+  const summary = {
+    user_id: userId,
+    equipped_hat_id: typeof row?.equipped_hat_id === 'string' ? row.equipped_hat_id : null,
+    hat_slug: typeof row?.hat_slug === 'string' ? row.hat_slug : null,
+    hat_model_json_exists: modelJsonExists,
+    hat_model_json_length: modelJsonLength,
+    hat_texture_url_exists: typeof row?.hat_texture_url === 'string' && row.hat_texture_url.trim().length > 0,
+    embedded_texture_exists: hasEmbeddedTexture(modelJson)
+  };
+  return { row, summary } satisfies PublicHatLoadoutStatus;
 }
 
 export async function loadWallet() {
@@ -672,6 +761,73 @@ export async function loadOwnerMembers() {
   const { data, error } = await supabase.rpc('commerce_owner_list_members');
   if (error) throw error;
   return (data ?? []) as OwnerMemberRecord[];
+}
+
+export async function ownerListAccountBadges() {
+  const { data, error } = await supabase.rpc('commerce_owner_list_account_badges');
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'owner_list_account_badges_failed'));
+  return (data ?? []) as OwnerAccountBadgeRecord[];
+}
+
+export async function ownerListUserAccountBadges(userId: string) {
+  const { data, error } = await supabase.rpc('commerce_owner_list_user_account_badges', {
+    p_user_id: userId.trim()
+  });
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'owner_list_user_account_badges_failed'));
+  return (data ?? []) as OwnerUserBadgeRecord[];
+}
+
+export async function ownerGrantAccountBadge(userId: string, badgeId: string) {
+  const { data, error } = await supabase.rpc('commerce_owner_grant_account_badge', {
+    p_user_id: userId.trim(),
+    p_badge_id: badgeId.trim()
+  });
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'owner_grant_account_badge_failed'));
+  const rows = Array.isArray(data) ? (data as OwnerUserBadgeRecord[]) : [];
+  const row = rows[0] ?? null;
+  if (!row) throw new Error('owner_grant_account_badge_failed');
+  return row;
+}
+
+export async function ownerCreateAccountBadge(input: {
+  code: string;
+  name: string;
+  description: string;
+  icon: string;
+  iconUrl?: string | null;
+  color: string;
+  obtainable: string;
+}) {
+  const { data, error } = await supabase.rpc('commerce_owner_create_account_badge', {
+    p_code: input.code.trim(),
+    p_name: input.name.trim(),
+    p_description: input.description.trim(),
+    p_icon: input.icon.trim(),
+    p_icon_url: input.iconUrl ?? null,
+    p_color: input.color.trim(),
+    p_obtainable: input.obtainable.trim()
+  });
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'owner_create_account_badge_failed'));
+  const rows = Array.isArray(data) ? (data as OwnerAccountBadgeRecord[]) : [];
+  const row = rows[0] ?? null;
+  if (!row) throw new Error('owner_create_account_badge_failed');
+  return row;
+}
+
+export async function ownerUploadAccountBadgeIcon(file: File) {
+  if (file.type !== 'image/x-icon' && file.type !== 'image/vnd.microsoft.icon' && !file.name.toLowerCase().endsWith('.ico')) {
+    throw new Error('Badge icon must be an .ico file.');
+  }
+  const userId = await getSupabaseUserId();
+  if (!userId) throw new Error('owner_session_required');
+  const safeName = file.name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'badge.ico';
+  const objectPath = `${userId}/${Date.now()}-${safeName}`;
+  const { error } = await supabase.storage.from('badge-icons').upload(objectPath, file, {
+    cacheControl: '3600',
+    upsert: true
+  });
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'badge_icon_upload_failed'));
+  return supabase.storage.from('badge-icons').getPublicUrl(objectPath).data.publicUrl;
 }
 
 export async function ownerGetMemberBadgeByUserId(userId: string) {
@@ -983,19 +1139,19 @@ export async function redeemPromoCode(code: string) {
 
 export async function ownerGenerateCustomCapeRewardCode(codeLength: number, charset: 'letters' | 'numbers' | 'both') {
   const { data, error } = await supabase.rpc('commerce_owner_generate_custom_cape_reward_code', {
-    p_code_length: Math.max(4, Math.min(64, Math.floor(codeLength))),
-    p_charset: charset
+    p_charset: charset,
+    p_code_length: Math.max(4, Math.min(64, Math.floor(codeLength)))
   });
-  if (error) throw error;
-  const rows = Array.isArray(data) ? (data as CustomCapeRewardCodeRecord[]) : [];
-  return rows[0] ?? null;
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'custom_cape_code_generation_failed'));
+  if (Array.isArray(data)) return (data as CustomCapeRewardCodeRecord[])[0] ?? null;
+  return (data as CustomCapeRewardCodeRecord | null) ?? null;
 }
 
 export async function ownerLoadCustomCapeRewardCodes(limit = 100) {
   const { data, error } = await supabase.rpc('commerce_owner_list_custom_cape_reward_codes', {
     p_limit: Math.max(1, Math.min(500, Math.floor(limit)))
   });
-  if (error) throw error;
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'custom_cape_code_list_failed'));
   return (data ?? []) as CustomCapeRewardCodeRecord[];
 }
 
@@ -1003,9 +1159,10 @@ export async function redeemCustomCapeRewardCode(code: string) {
   const { data, error } = await supabase.rpc('commerce_redeem_custom_cape_reward_code', {
     p_code: code.trim()
   });
-  if (error) throw error;
-  const rows = Array.isArray(data) ? (data as CustomCapeRewardRedeemResult[]) : [];
-  const row = rows[0] ?? null;
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'reward_code_redeem_failed'));
+  const row = Array.isArray(data)
+    ? ((data as CustomCapeRewardRedeemResult[])[0] ?? null)
+    : ((data as CustomCapeRewardRedeemResult | null) ?? null);
   if (!row) throw new Error('reward_code_redeem_failed');
   return row;
 }
@@ -1120,7 +1277,7 @@ export async function createMcsetsCheckoutSession(packageSlug: string, mode: 'te
 
   let response: Response;
   try {
-    response = await fetch(`${edgeBase}/functions/v1/main/mcsets/create-checkout`, {
+    response = await fetch(`${edgeBase}/functions/v1/mcsets-checkout`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -1134,7 +1291,7 @@ export async function createMcsetsCheckoutSession(packageSlug: string, mode: 'te
 
   const payload = (await response.json().catch(() => ({}))) as McsetsCheckoutCreateResponse;
   if (response.status === 404) {
-    throw new Error('Supabase edge function "main" is not deployed. Deploy supabase/functions/main, then try again.');
+    throw new Error('Supabase edge function "mcsets-checkout" is not deployed. Deploy supabase/functions/mcsets-checkout, then try again.');
   }
   if (!response.ok || !payload.ok) {
     throw new Error(extractEdgeError(payload, `mcsets_checkout_${response.status}`));
@@ -1159,6 +1316,18 @@ export async function purchaseCape(slug: string, autoEquip = false) {
 export async function setCapeLoadout(slug: string | null) {
   const { data, error } = await supabase.rpc('set_cape_loadout', {
     p_cape_slug: slug
+  });
+  if (error) throw error;
+  if (Array.isArray(data)) {
+    const rows = data as LoadoutRecord[];
+    return rows[0] ?? null;
+  }
+  return (data as LoadoutRecord | null) ?? null;
+}
+
+export async function setHatLoadout(slug: string | null) {
+  const { data, error } = await supabase.rpc('set_hat_loadout', {
+    p_hat_slug: slug
   });
   if (error) throw error;
   if (Array.isArray(data)) {
@@ -1199,7 +1368,7 @@ export async function updateCapeListing(capeId: string, patch: UpdateCapeInput) 
     })
     .eq('id', capeId)
     .select(
-      'id,slug,name,description,partner_group,partner_for_profits,texture_url,preview_url,price_bb,rarity,rarity_label,rarity_color_start,rarity_color_end,rarity_glow,render_pos_x,render_pos_y,render_pos_z,render_rot_x,render_rot_y,render_rot_z,render_depth_z,render_brightness,sort_order,is_active,is_featured,created_at,updated_at'
+      'id,slug,name,description,partner_group,partner_for_profits,texture_url,preview_url,price_bb,rarity,rarity_label,rarity_color_start,rarity_color_end,rarity_glow,cosmetic_type,cosmetic_slot,model_json,render_pos_x,render_pos_y,render_pos_z,render_rot_x,render_rot_y,render_rot_z,render_depth_z,render_brightness,sort_order,is_active,is_featured,created_at,updated_at'
     )
     .single();
   if (error) throw error;
@@ -1355,6 +1524,50 @@ export async function createCapeListing(input: CreateCapeListingInput) {
   if (error) throw error;
   const row = Array.isArray(data) ? ((data as CapeRecord[])[0] ?? null) : ((data as CapeRecord | null) ?? null);
   if (!row) throw new Error('create_cape_listing_failed');
+  return row;
+}
+
+export async function uploadOwnerCosmeticModelAsset(file: File, folder: 'models' | 'textures' = 'models') {
+  const userId = await getSupabaseUserId();
+  if (!userId) throw new Error('auth_required');
+  const extension = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() ?? 'bin' : 'bin';
+  const objectPath = `${userId}/${folder}/${crypto.randomUUID()}.${extension}`;
+  const contentType = file.type || (extension === 'json' || extension === 'bbmodel' ? 'application/json' : 'application/octet-stream');
+  const { error } = await supabase.storage.from('cosmetic-models').upload(objectPath, file, {
+    contentType,
+    cacheControl: '31536000',
+    upsert: false
+  });
+  if (error) throw error;
+  const { data } = supabase.storage.from('cosmetic-models').getPublicUrl(objectPath);
+  return {
+    path: objectPath,
+    publicUrl: data.publicUrl
+  };
+}
+
+export async function ownerCreateModelCosmeticListing(input: CreateCapeListingInput & { model_json: Record<string, unknown> }) {
+  const { data, error } = await supabase.rpc('commerce_owner_create_model_cosmetic', {
+    p_slug: input.slug.trim().toLowerCase(),
+    p_name: input.name.trim(),
+    p_description: input.description?.trim() || null,
+    p_texture_url: input.texture_url.trim(),
+    p_preview_url: input.preview_url?.trim() || null,
+    p_price_bb: Math.max(0, Math.round(input.price_bb)),
+    p_rarity: input.rarity?.trim().toLowerCase() || 'custom',
+    p_rarity_label: input.rarity_label?.trim() || 'CUSTOM',
+    p_rarity_color_start: input.rarity_color_start?.trim() || '#67e8f9',
+    p_rarity_color_end: input.rarity_color_end?.trim() || '#0f766e',
+    p_rarity_glow: input.rarity_glow?.trim() || 'rgba(103,232,249,0.42)',
+    p_sort_order: Number.isFinite(input.sort_order) ? Math.round(input.sort_order as number) : 9999,
+    p_is_active: input.is_active ?? true,
+    p_is_featured: input.is_featured ?? false,
+    p_cosmetic_slot: input.cosmetic_slot?.trim() || 'head',
+    p_model_json: input.model_json
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? ((data as CapeRecord[])[0] ?? null) : ((data as CapeRecord | null) ?? null);
+  if (!row) throw new Error('create_model_cosmetic_failed');
   return row;
 }
 

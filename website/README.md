@@ -29,6 +29,7 @@ Use `website/.env.example` as the source of truth.
 - `VITE_UPDATES_JSON_URL`: public URL/path to the update manifest (`latest.json` format)
 - `VITE_SUPABASE_URL`: Supabase project URL
 - `VITE_SUPABASE_ANON_KEY`: Supabase anon key
+- `VITE_SUPABASE_SUPPORT_FUNCTION_URL`: optional override for support checkout calls; defaults to `VITE_SUPABASE_URL/functions/v1/support`
 - `VITE_SUPABASE_NEWS_*`: table and column settings for the news feed
 
 ## Supabase Storage Downloads

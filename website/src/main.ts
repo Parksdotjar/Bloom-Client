@@ -38,20 +38,30 @@ type NewsItem = {
   published_at?: string;
 };
 
+type SupportOption = {
+  slug: string;
+  label: string;
+  amount_cents: number;
+  currency: string;
+};
+
 type AppState = {
   release?: Release;
   releaseError?: string;
   news: NewsItem[];
   newsError?: string;
+  supportOptions: SupportOption[];
+  supportError?: string;
 };
 
-type Route = "/" | "/downloads" | "/news" | "/staff" | "/about" | "/faq";
+type Route = "/" | "/downloads" | "/news" | "/staff" | "/support" | "/about" | "/faq";
 
 const updatesJsonUrl = import.meta.env.VITE_UPDATES_JSON_URL || "/latest.json";
 const siteUrl = import.meta.env.VITE_SITE_URL || "https://bloomclient.org";
 
 const state: AppState = {
-  news: []
+  news: [],
+  supportOptions: []
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -67,7 +77,8 @@ const navItems: Array<{ path: Route; label: string }> = [
   { path: "/", label: "Home" },
   { path: "/downloads", label: "Downloads" },
   { path: "/news", label: "News" },
-  { path: "/staff", label: "Staff" }
+  { path: "/staff", label: "Staff" },
+  { path: "/support", label: "Support Me" }
 ];
 
 const infoItems: Array<{ path: Route; label: string }> = [
@@ -160,6 +171,7 @@ function routeFromPath(pathname = window.location.pathname): Route {
   if (pathname === "/downloads") return "/downloads";
   if (pathname === "/news") return "/news";
   if (pathname === "/staff") return "/staff";
+  if (pathname === "/support") return "/support";
   if (pathname === "/about") return "/about";
   if (pathname === "/faq") return "/faq";
   return "/";
@@ -278,6 +290,79 @@ async function loadNews(): Promise<void> {
       "No summary provided.",
     published_at: row.published_at as string | undefined
   }));
+}
+
+function resolveEdgeBase(): string {
+  const explicit = import.meta.env.VITE_SUPABASE_SUPPORT_FUNCTION_URL || import.meta.env.VITE_SUPABASE_FUNCTIONS_URL;
+  if (explicit) return String(explicit).replace(/\/+$/, "");
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  if (!supabaseUrl) return "";
+
+  try {
+    return `${new URL(supabaseUrl).origin.replace(/\/+$/, "")}/functions/v1/support`;
+  } catch {
+    return `${String(supabaseUrl).replace(/\/+$/, "")}/functions/v1/support`;
+  }
+}
+
+async function loadSupportOptions(): Promise<void> {
+  const edgeBase = resolveEdgeBase();
+  if (!edgeBase) {
+    state.supportOptions = [];
+    state.supportError = "Support checkout is not configured yet.";
+    return;
+  }
+
+  try {
+    const response = await fetch(`${edgeBase}/options`, { cache: "no-store" });
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      options?: SupportOption[];
+      message?: string;
+      error?: string;
+    };
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.message || payload.error || `Support options failed (${response.status}).`);
+    }
+
+    state.supportOptions = Array.isArray(payload.options) ? payload.options : [];
+    state.supportError = undefined;
+  } catch (error) {
+    state.supportOptions = [];
+    state.supportError = error instanceof Error ? error.message : "Could not load support options.";
+  }
+}
+
+async function createSupportCheckout(optionSlug: string): Promise<string> {
+  const edgeBase = resolveEdgeBase();
+  if (!edgeBase) throw new Error("Support checkout is not configured yet.");
+
+  const response = await fetch(`${edgeBase}/checkout`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      option_slug: optionSlug,
+      return_origin: window.location.origin
+    })
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as {
+    ok?: boolean;
+    checkout_url?: string | null;
+    message?: string;
+    error?: string;
+  };
+
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.message || payload.error || `Support checkout failed (${response.status}).`);
+  }
+
+  const checkoutUrl = payload.checkout_url?.trim();
+  if (!checkoutUrl) throw new Error("Support checkout did not return a checkout URL.");
+  return checkoutUrl;
 }
 
 function releaseButtons(className = "hero-actions"): string {
@@ -480,6 +565,55 @@ function renderStaff(): string {
   `;
 }
 
+function renderSupport(): string {
+  const status = new URLSearchParams(window.location.search).get("status");
+  const statusMessage =
+    status === "success"
+      ? `<article class="support-state success"><h2>Thank you for supporting Bloom.</h2><p>Your contribution helps keep Bloom Client development moving forward.</p></article>`
+      : status === "cancel"
+        ? `<article class="support-state"><h2>Checkout canceled.</h2><p>No contribution was made. You can restart checkout whenever you are ready.</p></article>`
+        : "";
+
+  const optionsMarkup = state.supportError
+    ? `<article class="support-state"><h2>Support checkout is unavailable.</h2><p>${escapeHtml(state.supportError)}</p></article>`
+    : state.supportOptions.length
+      ? state.supportOptions
+          .map(
+            (option) => `
+              <article class="support-option">
+                <div>
+                  <p class="eyebrow">Contribution</p>
+                  <h2>${escapeHtml(option.label)}</h2>
+                </div>
+                <button class="btn primary support-button" type="button" data-support-option="${escapeHtml(option.slug)}">
+                  Support Bloom
+                </button>
+              </article>
+            `
+          )
+          .join("")
+      : `<article class="support-state"><h2>No support options are available.</h2><p>Please check back later.</p></article>`;
+
+  return `
+    <section class="page-hero compact">
+      <p class="eyebrow">Support Me</p>
+      <h1>Support Bloom</h1>
+      <p>Help support Bloom Client development.</p>
+    </section>
+    <section class="support-panel">
+      <div class="support-copy">
+        <h2>Every contribution helps keep Bloom moving forward.</h2>
+        <p>This page is for people who want to support the project directly. It does not unlock rewards, perks, or in-game items.</p>
+      </div>
+      ${statusMessage}
+      <div class="support-options">
+        ${optionsMarkup}
+      </div>
+      <p class="support-note">Checkout opens through McSets and is processed server-side.</p>
+    </section>
+  `;
+}
+
 function renderAbout(): string {
   return `
     <section class="page-hero compact">
@@ -533,6 +667,7 @@ function renderRoute(route: Route): string {
   if (route === "/downloads") return renderDownloads();
   if (route === "/news") return renderNews();
   if (route === "/staff") return renderStaff();
+  if (route === "/support") return renderSupport();
   if (route === "/about") return renderAbout();
   if (route === "/faq") return renderFaq();
   return renderHome();
@@ -553,6 +688,7 @@ function renderFooter(): string {
         <a href="/downloads" data-route="/downloads">Downloads</a>
         <a href="/news" data-route="/news">News</a>
         <a href="/staff" data-route="/staff">Staff</a>
+        <a href="/support" data-route="/support">Support Me</a>
         <a href="/about" data-route="/about">About</a>
         <a href="/faq" data-route="/faq">FAQ</a>
         <a class="discord-link" href="${discordInviteUrl}" target="_blank" rel="noreferrer" aria-label="Join the Bloom Client Discord">
@@ -731,6 +867,10 @@ function animatedPageSelector(): string {
     ".download-link",
     ".feature-card",
     ".news-card",
+    ".support-panel",
+    ".support-panel > *",
+    ".support-option",
+    ".support-state",
     ".staff-card",
     ".about-grid article",
     ".faq-item",
@@ -866,6 +1006,32 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     localStorage.setItem(transitionStorageKey, transitionsEnabled ? "on" : "off");
   });
 
+  root.querySelectorAll<HTMLButtonElement>("[data-support-option]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const optionSlug = button.dataset.supportOption;
+      if (!optionSlug || button.disabled) return;
+
+      const originalText = button.textContent || "Support Bloom";
+      button.disabled = true;
+      button.textContent = "Loading...";
+      try {
+        const checkoutUrl = await createSupportCheckout(optionSlug);
+        window.location.href = checkoutUrl;
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = originalText;
+        const message = error instanceof Error ? error.message : "Could not start support checkout.";
+        const panel = root.querySelector<HTMLElement>(".support-options");
+        if (panel) {
+          panel.insertAdjacentHTML(
+            "beforebegin",
+            `<article class="support-state"><h2>Checkout could not start.</h2><p>${escapeHtml(message)}</p></article>`
+          );
+        }
+      }
+    });
+  });
+
   document.addEventListener(
     "click",
     () => {
@@ -904,4 +1070,4 @@ function mount(isRouteChange = false, skipAnimations = false): void {
 
 window.addEventListener("popstate", () => mount(true, !transitionsEnabled));
 
-void Promise.all([loadRelease(), loadNews()]).finally(mount);
+void Promise.all([loadRelease(), loadNews(), loadSupportOptions()]).finally(mount);

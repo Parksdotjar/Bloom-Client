@@ -45,6 +45,8 @@ const MCSETS_ENTERPRISE_TEST_KEY = Deno.env.get("MCSETS_ENTERPRISE_TEST_KEY") ??
 const MCSETS_SUCCESS_URL = Deno.env.get("MCSETS_SUCCESS_URL") ?? "";
 const MCSETS_CANCEL_URL = Deno.env.get("MCSETS_CANCEL_URL") ?? "";
 const MCSETS_WEBHOOK_SECRET = Deno.env.get("MCSETS_WEBHOOK_SECRET") ?? "";
+const MCSETS_SUPPORT_SUCCESS_URL = Deno.env.get("MCSETS_SUPPORT_SUCCESS_URL") ?? "";
+const MCSETS_SUPPORT_CANCEL_URL = Deno.env.get("MCSETS_SUPPORT_CANCEL_URL") ?? "";
 
 const DRAFT_BUCKET = Deno.env.get("BLOOM_CAPE_DRAFT_BUCKET") ?? "cape-drafts";
 const PUBLISHED_BUCKET = Deno.env.get("BLOOM_CAPE_PUBLISHED_BUCKET") ?? "cape-published";
@@ -1034,6 +1036,37 @@ async function handleGifCapeGetManifest(_: Request, capeId: string) {
   return jsonResponse(200, { ok: true, manifest });
 }
 
+const SUPPORT_OPTIONS = [
+  { slug: "support-5", label: "$5", amountCents: 500 },
+  { slug: "support-10", label: "$10", amountCents: 1000 },
+  { slug: "support-25", label: "$25", amountCents: 2500 },
+];
+
+function getSupportOption(slug: unknown) {
+  const normalized = asString(slug)?.toLowerCase();
+  return SUPPORT_OPTIONS.find((option) => option.slug === normalized) ?? null;
+}
+
+function createReturnUrls(payload: JsonObject) {
+  const providedOrigin = asString(payload.return_origin);
+  let origin = "https://bloomclient.org";
+  if (providedOrigin) {
+    try {
+      const parsed = new URL(providedOrigin);
+      if (parsed.protocol === "https:") {
+        origin = parsed.origin;
+      }
+    } catch {
+      // Keep the production default.
+    }
+  }
+
+  return {
+    successUrl: normalizeUrl(MCSETS_SUPPORT_SUCCESS_URL) ?? `${origin}/support?status=success`,
+    cancelUrl: normalizeUrl(MCSETS_SUPPORT_CANCEL_URL) ?? `${origin}/support?status=cancel`,
+  };
+}
+
 async function handleGifCapeGetFrame(_: Request, capeId: string, frameIndex: number) {
   const { data: revision, error } = await admin
     .from("commerce_custom_cape_revisions")
@@ -1149,6 +1182,26 @@ function resolveMcsetsApiKey(mode: "test" | "live") {
   return fallback || null;
 }
 
+function mcsetsDataObject(payload: unknown) {
+  return asObject((payload as Record<string, unknown> | null)?.data) ?? {};
+}
+
+function readMcsetsCheckoutSession(dataObj: JsonObject) {
+  const sessionId = asString(dataObj.id) ?? asString(dataObj.session_id);
+  const checkoutUrl = asString(dataObj.url) ?? asString(dataObj.checkout_url);
+  const expiresAt = asString(dataObj.expires_at);
+  return { sessionId, checkoutUrl, expiresAt };
+}
+
+function isCompletedMcsetsEvent(eventType: string) {
+  return eventType === "checkout.session.completed" || eventType === "payment.completed" || eventType === "checkout.completed";
+}
+
+function extractMcsetsSessionObject(payload: JsonObject) {
+  const dataObj = asObject(payload.data) ?? {};
+  return asObject(dataObj.object) ?? dataObj;
+}
+
 function parseMcsetsSignatureHeader(value: string | null) {
   const raw = (value ?? "").trim();
   if (!raw) return null;
@@ -1257,8 +1310,9 @@ async function handleMcsetsCreateCheckout(request: Request) {
     },
   };
 
-  // Keep amount/currency/name for compatibility with MCsets checkout session validation.
-  // We still pass mcsets_price_id in metadata so the webhook can map packages reliably.
+  if (mcsetsPriceId && !mcsetsPriceId.startsWith("MCSETS_")) {
+    requestBody.price_id = mcsetsPriceId;
+  }
 
   const response = await fetch(endpoint, {
     method: "POST",
@@ -1286,10 +1340,16 @@ async function handleMcsetsCreateCheckout(request: Request) {
     });
   }
 
-  const dataObj = asObject((mcsetsPayload as Record<string, unknown>).data) ?? {};
-  const sessionId = asString(dataObj.session_id);
-  const checkoutUrl = asString(dataObj.checkout_url);
-  const expiresAt = asString(dataObj.expires_at);
+  const { sessionId, checkoutUrl, expiresAt } = readMcsetsCheckoutSession(mcsetsDataObject(mcsetsPayload));
+  if (!sessionId || !checkoutUrl) {
+    return jsonResponse(502, {
+      ok: false,
+      error: "mcsets_checkout_response_invalid",
+      message: "McSets did not return a checkout session id and URL.",
+      mode,
+      mcsets: mcsetsPayload,
+    });
+  }
 
   return jsonResponse(200, {
     ok: true,
@@ -1299,6 +1359,178 @@ async function handleMcsetsCreateCheckout(request: Request) {
     checkout_url: checkoutUrl,
     expires_at: expiresAt,
   });
+}
+
+async function handleMcsetsSupportOptions() {
+  return jsonResponse(200, {
+    ok: true,
+    options: SUPPORT_OPTIONS.map((option) => ({
+      slug: option.slug,
+      label: option.label,
+      amount_cents: option.amountCents,
+      currency: "USD",
+    })),
+  });
+}
+
+async function handleMcsetsCreateSupportCheckout(request: Request) {
+  const payload = await readPayload(request);
+  const option = getSupportOption(payload.option_slug);
+  if (!option) return jsonResponse(400, { ok: false, error: "support_option_invalid" });
+
+  const mode = asString(payload.mode)?.toLowerCase() === "test" ? "test" : "live";
+  const mcsetsApiKey = resolveMcsetsApiKey(mode);
+  if (!mcsetsApiKey) {
+    return jsonResponse(503, { ok: false, error: "mcsets_api_key_not_configured", mode });
+  }
+
+  const { successUrl, cancelUrl } = createReturnUrls(payload);
+  const supportPaymentId = crypto.randomUUID();
+  const apiBase = MCSETS_ENTERPRISE_BASE_URL.replace(/\/+$/, "");
+  const response = await fetch(`${apiBase}/checkout/sessions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${mcsetsApiKey}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      amount: option.amountCents,
+      currency: "USD",
+      name: "Support Bloom",
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      metadata: {
+        source: "bloom_support",
+        support_payment_id: supportPaymentId,
+        support_option_slug: option.slug,
+        mode,
+      },
+    }),
+  });
+
+  const mcsetsPayload = await response.json().catch(() => ({}));
+  if (!response.ok || !(mcsetsPayload as { success?: boolean }).success) {
+    const payloadObj = (mcsetsPayload ?? {}) as Record<string, unknown>;
+    return jsonResponse(response.status >= 400 ? response.status : 500, {
+      ok: false,
+      error: "mcsets_support_checkout_create_failed",
+      message: asString(payloadObj.message) ?? "mcsets_support_checkout_create_failed",
+      mode,
+    });
+  }
+
+  const { sessionId, checkoutUrl, expiresAt } = readMcsetsCheckoutSession(mcsetsDataObject(mcsetsPayload));
+  if (!sessionId || !checkoutUrl) {
+    return jsonResponse(502, {
+      ok: false,
+      error: "mcsets_checkout_response_invalid",
+      message: "McSets did not return a checkout session id and URL.",
+      mode,
+    });
+  }
+
+  const { error: insertError } = await admin.from("commerce_support_payments").insert({
+    id: supportPaymentId,
+    mcsets_session_id: sessionId,
+    option_slug: option.slug,
+    amount_cents: option.amountCents,
+    currency: "USD",
+    status: "pending",
+    mode,
+  });
+  if (insertError) {
+    console.error("MCSETS_SUPPORT_RECORD_CREATE_FAIL", insertError.message, JSON.stringify({ supportPaymentId, sessionId }));
+    return jsonResponse(500, { ok: false, error: "support_payment_record_create_failed" });
+  }
+
+  return jsonResponse(200, {
+    ok: true,
+    mode,
+    option_slug: option.slug,
+    session_id: sessionId,
+    checkout_url: checkoutUrl,
+    expires_at: expiresAt,
+  });
+}
+
+async function processMcsetsSupportPayment(eventId: string, sessionObj: JsonObject, payload: JsonObject) {
+  const metadataObj = asObject(sessionObj.metadata) ?? {};
+  const supportPaymentId = asUuid(metadataObj.support_payment_id);
+  const sessionId = asString(sessionObj.session_id) ?? asString(sessionObj.id);
+  if (!sessionId) return jsonResponse(400, { ok: false, error: "mcsets_session_id_missing" });
+
+  const amountCents =
+    asInt(sessionObj.amount_total) ??
+    asInt(sessionObj.amount) ??
+    asInt(sessionObj.total) ??
+    0;
+  const currency = (asString(sessionObj.currency) ?? "USD").toUpperCase();
+  const customerEmail = normalizeEmail(sessionObj.customer_email);
+
+  let query = admin
+    .from("commerce_support_payments")
+    .update({
+      mcsets_event_id: eventId,
+      amount_cents: amountCents > 0 ? amountCents : undefined,
+      currency,
+      customer_email: customerEmail,
+      status: "completed",
+      raw_payload: payload,
+      completed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("mcsets_session_id", sessionId)
+    .select("id,status")
+    .maybeSingle();
+
+  if (supportPaymentId) {
+    query = admin
+      .from("commerce_support_payments")
+      .update({
+        mcsets_event_id: eventId,
+        amount_cents: amountCents > 0 ? amountCents : undefined,
+        currency,
+        customer_email: customerEmail,
+        status: "completed",
+        raw_payload: payload,
+        completed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", supportPaymentId)
+      .select("id,status")
+      .maybeSingle();
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    if (String(error.message).includes("duplicate key")) {
+      return jsonResponse(200, { ok: true, received: true, duplicate: true, type: "bloom_support", event_id: eventId });
+    }
+    console.error("MCSETS_SUPPORT_RECORD_COMPLETE_FAIL", error.message, JSON.stringify({ eventId, sessionId }));
+    return jsonResponse(500, { ok: false, error: "support_payment_record_update_failed", message: error.message });
+  }
+
+  if (!data) {
+    const { error: insertError } = await admin.from("commerce_support_payments").insert({
+      id: supportPaymentId ?? crypto.randomUUID(),
+      mcsets_session_id: sessionId,
+      mcsets_event_id: eventId,
+      option_slug: asString(metadataObj.support_option_slug),
+      amount_cents: amountCents,
+      currency,
+      customer_email: customerEmail,
+      status: "completed",
+      mode: asString(metadataObj.mode) ?? "live",
+      raw_payload: payload,
+      completed_at: new Date().toISOString(),
+    });
+    if (insertError && !String(insertError.message).includes("duplicate key")) {
+      return jsonResponse(500, { ok: false, error: "support_payment_record_insert_failed", message: insertError.message });
+    }
+  }
+
+  return jsonResponse(200, { ok: true, received: true, type: "bloom_support", event_id: eventId, session_id: sessionId });
 }
 
 async function handleMcsetsWebhook(request: Request) {
@@ -1330,15 +1562,19 @@ async function handleMcsetsWebhook(request: Request) {
     }
   }
 
-  if (eventType !== "checkout.session.completed") {
+  if (!isCompletedMcsetsEvent(eventType)) {
     return jsonResponse(200, { ok: true, received: true, ignored: true, type: eventType || null });
   }
 
-  const dataObj = asObject(payload.data) ?? {};
-  const sessionObj = asObject(dataObj.object) ?? {};
+  const sessionObj = extractMcsetsSessionObject(payload);
   const sessionId = asString(sessionObj.session_id) ?? asString(sessionObj.id);
   if (!sessionId) return jsonResponse(400, { ok: false, error: "mcsets_session_id_missing" });
   const metadataObj = asObject(sessionObj.metadata) ?? {};
+  const source = asString(metadataObj.source) ?? asString(sessionObj.source);
+  if (source === "bloom_support" || asString(metadataObj.support_option_slug)) {
+    return processMcsetsSupportPayment(eventId, sessionObj, payload);
+  }
+
   const packageSlug = asString(metadataObj.package_slug) ?? asString(sessionObj.package_slug);
   const mcsetsPriceId = asString(metadataObj.mcsets_price_id) ?? asString(sessionObj.price_id);
   const customerEmail = normalizeEmail(sessionObj.customer_email);
@@ -1416,11 +1652,11 @@ Deno.serve(async (request) => {
   try {
     if (request.method === "OPTIONS") return new Response("ok", { status: 200, headers: CORS_HEADERS });
     const url = new URL(request.url);
-    let route = url.pathname.replace(/^.*\/functions\/v1\/main/, "") || "/";
+    let route = url.pathname.replace(/^.*\/functions\/v1\/[^/]+/, "") || "/";
     if (route.length > 1 && route.endsWith("/")) route = route.slice(0, -1);
     if (route.startsWith("/main/")) {
       route = route.slice("/main".length);
-    } else if (route === "/main") {
+    } else if (route === "/main" || route === "") {
       route = "/";
     }
     if (route.startsWith("/animated-cape/")) {
@@ -1437,6 +1673,8 @@ Deno.serve(async (request) => {
     if (request.method === "POST" && route === "/custom-cape/draft") return handleCustomCapeDraft(request);
     if (request.method === "POST" && route === "/custom-cape/finalize") return handleCustomCapeFinalize(request);
     if (request.method === "POST" && route === "/mcsets/create-checkout") return handleMcsetsCreateCheckout(request);
+    if (request.method === "GET" && route === "/mcsets/support-options") return handleMcsetsSupportOptions();
+    if (request.method === "POST" && route === "/mcsets/create-support-checkout") return handleMcsetsCreateSupportCheckout(request);
     if (request.method === "POST" && route === "/mcsets/webhook") return handleMcsetsWebhook(request);
 
 
