@@ -112,8 +112,36 @@ type Route = "/" | "/downloads" | "/news" | "/staff" | "/support" | "/about" | "
 
 const updatesJsonUrl = import.meta.env.VITE_UPDATES_JSON_URL || "/latest.json";
 const sksUpdatesJsonUrl = import.meta.env.VITE_SKS_UPDATES_JSON_URL || "/sks-latest.json";
-const siteUrl = import.meta.env.VITE_SITE_URL || "https://bloomclient.org";
-const authRedirectUrl = `${siteUrl.replace(/\/+$/, "")}/dashboard`;
+
+function normalizePublicSiteUrl(rawValue?: string): string {
+  const fallback = "https://bloomclient.org";
+  const raw = String(rawValue || "").trim();
+  const currentOrigin = window.location.origin;
+
+  const isLocalOrigin = (value: string): boolean => {
+    try {
+      const url = new URL(value);
+      return ["localhost", "127.0.0.1", "0.0.0.0"].includes(url.hostname);
+    } catch {
+      return false;
+    }
+  };
+
+  if (raw) {
+    try {
+      const url = new URL(raw);
+      if (!isLocalOrigin(url.origin)) return url.origin.replace(/\/+$/, "");
+    } catch {
+      // Ignore invalid configured values.
+    }
+  }
+
+  if (!isLocalOrigin(currentOrigin)) return currentOrigin.replace(/\/+$/, "");
+  return fallback;
+}
+
+const siteUrl = normalizePublicSiteUrl(import.meta.env.VITE_SITE_URL);
+const authRedirectUrl = `${siteUrl}/dashboard`;
 
 const state: AppState = {
   news: [],
