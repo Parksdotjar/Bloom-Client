@@ -45,6 +45,46 @@ type SupportOption = {
   currency: string;
 };
 
+type SiteSession = {
+  access_token: string;
+  user: SiteUser;
+};
+
+type SiteUser = {
+  id: string;
+  email?: string;
+  user_metadata?: Record<string, unknown>;
+};
+
+type CommerceProfile = {
+  user_id: string;
+  username?: string;
+  email?: string;
+  profile_image_url?: string;
+  bud_license_status?: string;
+  bud_plan?: string;
+};
+
+type BudPurchase = {
+  id: string;
+  plan: "lifetime" | "monthly";
+  status: string;
+  amount_cents: number;
+  currency: string;
+  created_at?: string;
+  completed_at?: string;
+};
+
+type BudLicense = {
+  id: string;
+  plan: "lifetime" | "monthly";
+  activated: boolean;
+  activated_at?: string | null;
+  expires_at?: string | null;
+  revoked?: boolean;
+  created_at?: string;
+};
+
 type AppState = {
   release?: Release;
   releaseError?: string;
@@ -54,9 +94,21 @@ type AppState = {
   newsError?: string;
   supportOptions: SupportOption[];
   supportError?: string;
+  session?: SiteSession | null;
+  profile?: CommerceProfile | null;
+  budPurchases: BudPurchase[];
+  budLicenses: BudLicense[];
+  budSummaryError?: string;
+  budMonthlyAvailable: boolean;
+  revealedBudKey?: {
+    license_key: string;
+    plan: string;
+    expires_at?: string | null;
+    message: string;
+  } | null;
 };
 
-type Route = "/" | "/downloads" | "/news" | "/staff" | "/support" | "/about" | "/faq";
+type Route = "/" | "/downloads" | "/news" | "/staff" | "/support" | "/about" | "/faq" | "/login" | "/dashboard";
 
 const updatesJsonUrl = import.meta.env.VITE_UPDATES_JSON_URL || "/latest.json";
 const sksUpdatesJsonUrl = import.meta.env.VITE_SKS_UPDATES_JSON_URL || "/sks-latest.json";
@@ -64,7 +116,13 @@ const siteUrl = import.meta.env.VITE_SITE_URL || "https://bloomclient.org";
 
 const state: AppState = {
   news: [],
-  supportOptions: []
+  supportOptions: [],
+  session: null,
+  profile: null,
+  budPurchases: [],
+  budLicenses: [],
+  budMonthlyAvailable: false,
+  revealedBudKey: null
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -75,6 +133,7 @@ let hasMounted = false;
 let isTransitioning = false;
 const transitionStorageKey = "bloom-site-transitions";
 let transitionsEnabled = localStorage.getItem(transitionStorageKey) !== "off";
+let siteSupabase: any;
 
 const navItems: Array<{ path: Route; label: string }> = [
   { path: "/", label: "Home" },
@@ -176,6 +235,8 @@ function routeFromPath(pathname = window.location.pathname): Route {
   if (pathname === "/support") return "/support";
   if (pathname === "/about") return "/about";
   if (pathname === "/faq") return "/faq";
+  if (pathname === "/login") return "/login";
+  if (pathname === "/dashboard") return "/dashboard";
   return "/";
 }
 
@@ -197,6 +258,30 @@ function formatDate(value?: string): string {
     day: "numeric",
     year: "numeric"
   });
+}
+
+function formatMoney(cents?: number, currency = "USD"): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 0
+  }).format((cents || 0) / 100);
+}
+
+function currentUser(): SiteUser | undefined {
+  return state.session?.user;
+}
+
+function profileName(): string {
+  return state.profile?.username || currentUser()?.email?.split("@")[0] || "Account";
+}
+
+function avatarMarkup(className = "account-avatar"): string {
+  const url = state.profile?.profile_image_url;
+  const initials = profileName().slice(0, 2).toUpperCase();
+  return url
+    ? `<img class="${className}" src="${escapeHtml(url)}" alt="${escapeHtml(profileName())} profile picture" />`
+    : `<span class="${className}">${escapeHtml(initials)}</span>`;
 }
 
 function inferAssetName(url?: string): string | undefined {
@@ -308,6 +393,85 @@ function resolveEdgeBase(): string {
   }
 }
 
+function resolveBudEdgeBase(): string {
+  const explicit = import.meta.env.VITE_SUPABASE_BUD_FUNCTION_URL;
+  if (explicit) return String(explicit).replace(/\/+$/, "");
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  if (!supabaseUrl) return "";
+
+  try {
+    return `${new URL(supabaseUrl).origin.replace(/\/+$/, "")}/functions/v1/bud-license`;
+  } catch {
+    return `${String(supabaseUrl).replace(/\/+$/, "")}/functions/v1/bud-license`;
+  }
+}
+
+async function budFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const edgeBase = resolveBudEdgeBase();
+  const token = state.session?.access_token;
+  if (!edgeBase) throw new Error("BUD license services are not configured yet.");
+  if (!token) throw new Error("Sign in first.");
+
+  const headers = new Headers(init.headers || {});
+  headers.set("Authorization", `Bearer ${token}`);
+  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+
+  const response = await fetch(`${edgeBase}${path}`, { ...init, headers, cache: "no-store" });
+  const payload = (await response.json().catch(() => ({}))) as T & { message?: string; error?: string };
+  if (!response.ok) throw new Error(payload.message || payload.error || `Request failed (${response.status}).`);
+  return payload;
+}
+
+async function loadBudSummary(): Promise<void> {
+  if (!state.session) {
+    state.profile = null;
+    state.budPurchases = [];
+    state.budLicenses = [];
+    return;
+  }
+  try {
+    const payload = await budFetch<{
+      profile?: CommerceProfile | null;
+      purchases?: BudPurchase[];
+      licenses?: BudLicense[];
+      monthly_available?: boolean;
+    }>("/summary");
+    state.profile = payload.profile ?? null;
+    state.budPurchases = payload.purchases ?? [];
+    state.budLicenses = payload.licenses ?? [];
+    state.budMonthlyAvailable = Boolean(payload.monthly_available);
+    state.budSummaryError = undefined;
+  } catch (error) {
+    state.budSummaryError = error instanceof Error ? error.message : "Could not load dashboard.";
+  }
+}
+
+async function startBudCheckout(plan: "lifetime" | "monthly"): Promise<string> {
+  const payload = await budFetch<{ checkout_url?: string }>("/checkout", {
+    method: "POST",
+    body: JSON.stringify({ plan, return_origin: window.location.origin })
+  });
+  if (!payload.checkout_url) throw new Error("Checkout did not return a URL.");
+  return payload.checkout_url;
+}
+
+async function claimBudKey(): Promise<void> {
+  const payload = await budFetch<{
+    license_key?: string;
+    plan?: string;
+    expires_at?: string | null;
+    message?: string;
+  }>("/claim-key", { method: "POST", body: JSON.stringify({}) });
+  if (!payload.license_key) throw new Error("No license key was returned.");
+  state.revealedBudKey = {
+    license_key: payload.license_key,
+    plan: payload.plan || "bud",
+    expires_at: payload.expires_at,
+    message: payload.message || "Save this key. You will use it inside SkStudio to activate BUD."
+  };
+}
+
 async function loadSupportOptions(): Promise<void> {
   const edgeBase = resolveEdgeBase();
   if (!edgeBase) {
@@ -382,6 +546,38 @@ function releaseButtons(className = "hero-actions"): string {
   return `<div class="${className}">${client}${skstudio}</div>`;
 }
 
+function getSiteSupabase(): any | null {
+  if (siteSupabase) return siteSupabase;
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseAnonKey) return null;
+  siteSupabase = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true
+    }
+  });
+  return siteSupabase;
+}
+
+async function loadAuthState(): Promise<void> {
+  const supabase = getSiteSupabase();
+  if (!supabase) return;
+  const { data } = await supabase.auth.getSession();
+  state.session = (data?.session as SiteSession | null) ?? null;
+}
+
+function validatePassword(password: string): string[] {
+  const messages: string[] = [];
+  if (password.length < 12) messages.push("Use at least 12 characters.");
+  if (!/[A-Z]/.test(password)) messages.push("Add an uppercase letter.");
+  if (!/[a-z]/.test(password)) messages.push("Add a lowercase letter.");
+  if (!/[0-9]/.test(password)) messages.push("Add a number.");
+  if (!/[^A-Za-z0-9]/.test(password)) messages.push("Add a symbol.");
+  return messages;
+}
+
 function downloadCard(appName: string, eyebrow: string, release?: Release, error?: string): string {
   const version = release?.version ? `v${escapeHtml(release.version)}` : "Unavailable";
   const detail = error ? "Download info is not available right now." : "The latest Windows build is ready.";
@@ -411,6 +607,7 @@ function downloadCard(appName: string, eyebrow: string, release?: Release, error
 
 function renderHeader(route: Route): string {
   const infoActive = route === "/about" || route === "/faq";
+  const accountHref = state.session ? "/dashboard" : "/login";
   return `
     <header class="site-header">
       <a class="brand" href="/" data-route="/">
@@ -440,6 +637,9 @@ function renderHeader(route: Route): string {
         </div>
       </nav>
       <div class="header-actions">
+        <a class="account-button ${route === "/dashboard" || route === "/login" ? "active" : ""}" href="${accountHref}" data-route="${accountHref}" aria-label="${state.session ? "Open dashboard" : "Sign in"}">
+          ${avatarMarkup()}
+        </a>
         <div class="settings-menu">
           <button class="settings-toggle" type="button" aria-label="Open site settings" aria-expanded="false">
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -634,6 +834,157 @@ function renderSupport(): string {
   `;
 }
 
+function renderLogin(): string {
+  const configured = Boolean(getSiteSupabase());
+  return `
+    <section class="page-hero compact">
+      <p class="eyebrow">Account</p>
+      <h1>Sign in to Bloom Productions</h1>
+      <p>Use your account for SkStudio BUD licensing and dashboard access.</p>
+    </section>
+    <section class="auth-panel">
+      ${
+        configured
+          ? `
+            <form class="auth-card" data-auth-form="login">
+              <p class="eyebrow">Login</p>
+              <h2>Welcome back</h2>
+              <label>Email<input name="email" type="email" autocomplete="email" required /></label>
+              <label>Password<input name="password" type="password" autocomplete="current-password" required /></label>
+              <button class="btn primary" type="submit">Login</button>
+              <p class="auth-message" data-auth-message="login"></p>
+            </form>
+            <form class="auth-card" data-auth-form="signup">
+              <p class="eyebrow">Signup</p>
+              <h2>Create account</h2>
+              <label>Username<input name="username" type="text" autocomplete="username" minlength="3" maxlength="32" required /></label>
+              <label>Email<input name="email" type="email" autocomplete="email" required /></label>
+              <label>Password<input name="password" type="password" autocomplete="new-password" required /></label>
+              <ul class="password-rules">
+                <li>12+ characters</li>
+                <li>Uppercase and lowercase</li>
+                <li>Number and symbol</li>
+              </ul>
+              <button class="btn primary" type="submit">Create account</button>
+              <p class="auth-message" data-auth-message="signup"></p>
+            </form>
+          `
+          : `<article class="support-state"><h2>Accounts are not configured.</h2><p>Add the public Supabase URL and anon key to the website environment.</p></article>`
+      }
+    </section>
+  `;
+}
+
+function renderDashboard(): string {
+  if (!state.session) {
+    return `
+      <section class="page-hero compact">
+        <p class="eyebrow">Dashboard</p>
+        <h1>Sign in required.</h1>
+        <p>Login to view your profile, billing, and BUD license.</p>
+        <a class="btn primary" href="/login" data-route="/login">Login</a>
+      </section>
+    `;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const tab = params.get("tab") || "profile";
+  const latestPurchase = state.budPurchases[0];
+  const activeLicense = state.budLicenses.find((license) => !license.revoked) || state.budLicenses[0];
+  const keyReveal = state.revealedBudKey
+    ? `<article class="license-key-box">
+        <p>${escapeHtml(state.revealedBudKey.message)}</p>
+        <code>${escapeHtml(state.revealedBudKey.license_key)}</code>
+        <button class="btn secondary" type="button" data-copy-bud-key="${escapeHtml(state.revealedBudKey.license_key)}">Copy key</button>
+      </article>`
+    : "";
+
+  const profileTab = `
+    <section class="dashboard-panel">
+      <div class="profile-row">
+        ${avatarMarkup("dashboard-avatar")}
+        <div>
+          <h2>${escapeHtml(profileName())}</h2>
+          <p>${escapeHtml(currentUser()?.email || state.profile?.email || "No email")}</p>
+        </div>
+      </div>
+      <form class="dashboard-form" data-profile-form>
+        <label>Username<input name="username" type="text" value="${escapeHtml(profileName())}" minlength="3" maxlength="32" required /></label>
+        <label>Profile picture<input name="avatar" type="file" accept="image/png,image/jpeg,image/webp" /></label>
+        <button class="btn primary" type="submit">Save profile</button>
+        <p class="auth-message" data-profile-message></p>
+      </form>
+    </section>
+  `;
+
+  const budTab = `
+    <section class="dashboard-panel">
+      <div class="license-status">
+        <span>Status</span><strong>${escapeHtml(state.profile?.bud_license_status || "none")}</strong>
+        <span>Plan</span><strong>${escapeHtml(state.profile?.bud_plan || activeLicense?.plan || "none")}</strong>
+        <span>Activation</span><strong>${activeLicense?.activated ? "Activated" : activeLicense ? "Not activated" : "No key"}</strong>
+      </div>
+      ${state.budSummaryError ? `<p class="auth-message error">${escapeHtml(state.budSummaryError)}</p>` : ""}
+      <div class="license-options">
+        <article>
+          <p class="eyebrow">Lifetime</p>
+          <h2>$50</h2>
+          <button class="btn primary" type="button" data-bud-checkout="lifetime">Buy lifetime</button>
+        </article>
+        <article>
+          <p class="eyebrow">Monthly</p>
+          <h2>$10/month</h2>
+          <button class="btn primary" type="button" data-bud-checkout="monthly" ${state.budMonthlyAvailable ? "" : "disabled"}>Subscribe monthly</button>
+          ${state.budMonthlyAvailable ? "" : `<p>Monthly needs the MCsets subscription price id configured.</p>`}
+        </article>
+      </div>
+      <button class="btn secondary" type="button" data-claim-bud-key>Show new license key</button>
+      <p class="support-note">Save this key. You will use it inside SkStudio to activate BUD.</p>
+      ${keyReveal}
+    </section>
+  `;
+
+  const billingTab = `
+    <section class="dashboard-panel">
+      ${
+        state.budPurchases.length
+          ? state.budPurchases
+              .map(
+                (purchase) => `
+                  <article class="billing-row">
+                    <div>
+                      <strong>${escapeHtml(purchase.plan)}</strong>
+                      <span>${escapeHtml(formatDate(purchase.completed_at || purchase.created_at))}</span>
+                    </div>
+                    <span>${escapeHtml(purchase.status)}</span>
+                    <strong>${escapeHtml(formatMoney(purchase.amount_cents, purchase.currency))}</strong>
+                  </article>
+                `
+              )
+              .join("")
+          : `<article class="support-state"><h2>No billing yet.</h2><p>BUD purchases will show here after checkout.</p></article>`
+      }
+    </section>
+  `;
+
+  return `
+    <section class="page-hero compact">
+      <p class="eyebrow">Dashboard</p>
+      <h1>Your Bloom account</h1>
+      <p>Profile, BUD license, and billing for SkStudio.</p>
+    </section>
+    <section class="dashboard-shell">
+      <nav class="dashboard-tabs">
+        <a class="${tab === "profile" ? "active" : ""}" href="/dashboard?tab=profile" data-route="/dashboard?tab=profile">Profile</a>
+        <a class="${tab === "bud" ? "active" : ""}" href="/dashboard?tab=bud" data-route="/dashboard?tab=bud">BUD License</a>
+        <a class="${tab === "billing" ? "active" : ""}" href="/dashboard?tab=billing" data-route="/dashboard?tab=billing">Billing</a>
+        <button class="btn secondary" type="button" data-logout>Logout</button>
+      </nav>
+      ${tab === "bud" ? budTab : tab === "billing" ? billingTab : profileTab}
+    </section>
+  `;
+}
+
 async function loadSksRelease(): Promise<void> {
   try {
     const response = await fetch(sksUpdatesJsonUrl, { cache: "no-store" });
@@ -698,6 +1049,8 @@ function renderRoute(route: Route): string {
   if (route === "/news") return renderNews();
   if (route === "/staff") return renderStaff();
   if (route === "/support") return renderSupport();
+  if (route === "/login") return renderLogin();
+  if (route === "/dashboard") return renderDashboard();
   if (route === "/about") return renderAbout();
   if (route === "/faq") return renderFaq();
   return renderHome();
@@ -919,6 +1272,10 @@ function animatedPageSelector(): string {
     ".support-panel > *",
     ".support-option",
     ".support-state",
+    ".auth-panel",
+    ".auth-card",
+    ".dashboard-shell",
+    ".dashboard-panel",
     ".staff-card",
     ".about-grid article",
     ".faq-item",
@@ -995,7 +1352,8 @@ function runPageAnimations(isRouteChange = false): void {
 function mount(isRouteChange = false, skipAnimations = false): void {
   const route = routeFromPath();
   const title = [...navItems, ...infoItems].find((item) => item.path === route)?.label;
-  document.title = route === "/" ? "Bloom Productions | Official Website" : `Bloom Productions | ${title || (route === "/support" ? "Support" : "Info")}`;
+  const fallbackTitle = route === "/support" ? "Support" : route === "/login" ? "Login" : route === "/dashboard" ? "Dashboard" : "Info";
+  document.title = route === "/" ? "Bloom Productions | Official Website" : `Bloom Productions | ${title || fallbackTitle}`;
   root.innerHTML = `
     ${renderHeader(route)}
     <main>${renderRoute(route)}</main>
@@ -1117,6 +1475,170 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     }
   });
 
+  root.querySelector<HTMLFormElement>('[data-auth-form="login"]')?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const supabase = getSiteSupabase();
+    const form = event.currentTarget as HTMLFormElement;
+    const message = root.querySelector<HTMLElement>('[data-auth-message="login"]');
+    const button = form.querySelector<HTMLButtonElement>("button");
+    if (!supabase || !button) return;
+    button.disabled = true;
+    message!.textContent = "Signing in...";
+    const formData = new FormData(form);
+    const { error } = await supabase.auth.signInWithPassword({
+      email: String(formData.get("email") || ""),
+      password: String(formData.get("password") || "")
+    });
+    if (error) {
+      message!.textContent = error.message;
+      message!.classList.add("error");
+      button.disabled = false;
+      return;
+    }
+    await loadAuthState();
+    await loadBudSummary();
+    window.history.pushState({}, "", "/dashboard");
+    mount(true);
+  });
+
+  root.querySelector<HTMLFormElement>('[data-auth-form="signup"]')?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const supabase = getSiteSupabase();
+    const form = event.currentTarget as HTMLFormElement;
+    const message = root.querySelector<HTMLElement>('[data-auth-message="signup"]');
+    const button = form.querySelector<HTMLButtonElement>("button");
+    if (!supabase || !button) return;
+    const formData = new FormData(form);
+    const password = String(formData.get("password") || "");
+    const passwordIssues = validatePassword(password);
+    if (passwordIssues.length) {
+      message!.textContent = passwordIssues.join(" ");
+      message!.classList.add("error");
+      return;
+    }
+    button.disabled = true;
+    message!.textContent = "Creating account...";
+    const { error } = await supabase.auth.signUp({
+      email: String(formData.get("email") || ""),
+      password,
+      options: {
+        data: {
+          username: String(formData.get("username") || "").trim()
+        }
+      }
+    });
+    if (error) {
+      message!.textContent = error.message;
+      message!.classList.add("error");
+      button.disabled = false;
+      return;
+    }
+    await loadAuthState();
+    await loadBudSummary();
+    message!.textContent = state.session ? "Account created." : "Check your email to confirm your account.";
+    if (state.session) {
+      window.history.pushState({}, "", "/dashboard");
+      mount(true);
+    }
+  });
+
+  root.querySelector<HTMLButtonElement>("[data-logout]")?.addEventListener("click", async () => {
+    await getSiteSupabase()?.auth.signOut();
+    state.session = null;
+    state.profile = null;
+    state.budPurchases = [];
+    state.budLicenses = [];
+    state.revealedBudKey = null;
+    window.history.pushState({}, "", "/");
+    mount(true);
+  });
+
+  root.querySelector<HTMLFormElement>("[data-profile-form]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const supabase = getSiteSupabase();
+    const user = currentUser();
+    const message = root.querySelector<HTMLElement>("[data-profile-message]");
+    const form = event.currentTarget as HTMLFormElement;
+    const button = form.querySelector<HTMLButtonElement>("button");
+    if (!supabase || !user || !button) return;
+    button.disabled = true;
+    message!.textContent = "Saving...";
+    try {
+      const formData = new FormData(form);
+      const username = String(formData.get("username") || "").trim();
+      let profileImageUrl = state.profile?.profile_image_url;
+      const file = formData.get("avatar");
+      if (file instanceof File && file.size > 0) {
+        const ext = file.name.split(".").pop()?.toLowerCase() || "png";
+        const path = `${user.id}/avatar-${Date.now()}.${ext}`;
+        const { error: uploadError } = await supabase.storage.from("profile-images").upload(path, file, {
+          cacheControl: "3600",
+          upsert: true
+        });
+        if (uploadError) throw uploadError;
+        const { data } = supabase.storage.from("profile-images").getPublicUrl(path);
+        profileImageUrl = data.publicUrl;
+      }
+      const { error } = await supabase.from("commerce_profiles").upsert({
+        user_id: user.id,
+        username,
+        email: user.email,
+        profile_image_url: profileImageUrl
+      });
+      if (error) throw error;
+      await loadBudSummary();
+      message!.textContent = "Profile saved.";
+      mount(true, true);
+    } catch (error) {
+      message!.textContent = error instanceof Error ? error.message : "Could not save profile.";
+      message!.classList.add("error");
+      button.disabled = false;
+    }
+  });
+
+  root.querySelectorAll<HTMLButtonElement>("[data-bud-checkout]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const plan = button.dataset.budCheckout === "monthly" ? "monthly" : "lifetime";
+      button.disabled = true;
+      const original = button.textContent || "Checkout";
+      button.textContent = "Loading...";
+      try {
+        window.location.href = await startBudCheckout(plan);
+      } catch (error) {
+        button.textContent = error instanceof Error ? error.message : "Checkout failed.";
+      } finally {
+        window.setTimeout(() => {
+          button.disabled = false;
+          button.textContent = original;
+        }, 2400);
+      }
+    });
+  });
+
+  root.querySelector<HTMLButtonElement>("[data-claim-bud-key]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true;
+    button.textContent = "Checking...";
+    try {
+      await claimBudKey();
+      await loadBudSummary();
+      mount(true, true);
+    } catch (error) {
+      button.textContent = error instanceof Error ? error.message : "Could not show key.";
+      window.setTimeout(() => {
+        button.disabled = false;
+        button.textContent = "Show new license key";
+      }, 2600);
+    }
+  });
+
+  root.querySelector<HTMLButtonElement>("[data-copy-bud-key]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    const key = button.dataset.copyBudKey || "";
+    await navigator.clipboard.writeText(key);
+    button.textContent = "Copied";
+  });
+
   document.addEventListener(
     "click",
     () => {
@@ -1155,4 +1677,13 @@ function mount(isRouteChange = false, skipAnimations = false): void {
 
 window.addEventListener("popstate", () => mount(true, !transitionsEnabled));
 
-void Promise.all([loadRelease(), loadSksRelease(), loadNews(), loadSupportOptions()]).finally(mount);
+void (async () => {
+  await Promise.all([loadRelease(), loadSksRelease(), loadNews(), loadSupportOptions(), loadAuthState()]);
+  await loadBudSummary();
+  getSiteSupabase()?.auth.onAuthStateChange(async (_event: string, session: SiteSession | null) => {
+    state.session = session;
+    await loadBudSummary();
+    mount(true, true);
+  });
+  mount();
+})();
