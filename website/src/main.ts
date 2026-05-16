@@ -113,6 +113,7 @@ type Route = "/" | "/downloads" | "/news" | "/staff" | "/support" | "/about" | "
 const updatesJsonUrl = import.meta.env.VITE_UPDATES_JSON_URL || "/latest.json";
 const sksUpdatesJsonUrl = import.meta.env.VITE_SKS_UPDATES_JSON_URL || "/sks-latest.json";
 const siteUrl = import.meta.env.VITE_SITE_URL || "https://bloomclient.org";
+const authRedirectUrl = `${siteUrl.replace(/\/+$/, "")}/dashboard`;
 
 const state: AppState = {
   news: [],
@@ -1522,6 +1523,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       email: String(formData.get("email") || ""),
       password,
       options: {
+        emailRedirectTo: authRedirectUrl,
         data: {
           username: String(formData.get("username") || "").trim()
         }
