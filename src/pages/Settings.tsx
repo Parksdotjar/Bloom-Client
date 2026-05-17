@@ -59,6 +59,7 @@ import {
   ownerCreateModelCosmeticListing,
   uploadOwnerCosmeticModelAsset,
   loadOwnerCapesLite,
+  ensureCommerceIdentity,
   isCurrentUserOwner,
   loadOwnerMembers,
   ownerGrantCapeToUser,
@@ -96,6 +97,7 @@ import {
   readFartKeybindUnlocked
 } from '../constants/fartKeybind';
 import { BUD_ENABLED_KEY, BUD_SETTINGS_CHANGE_EVENT, readBudEnabled } from '../constants/bud';
+import { useAuth } from '../hooks/useAuth';
 
 type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'custom';
@@ -1027,6 +1029,7 @@ function normalizePartnerApplicationForms(forms: PartnerApplicationForm[]) {
 }
 
 export function Settings() {
+  const { authState } = useAuth();
   const [tab, setTab] = useState<SettingsTab>('general');
   const [appearanceSection, setAppearanceSection] = useState<AppearanceSection>('animation');
   const [minecraftPrefs, setMinecraftPrefs] = useState({
@@ -2701,6 +2704,11 @@ export function Settings() {
     const loadOwnerAccess = async () => {
       setUpdateOwnerChecking(true);
       try {
+        const mcUuid = authState?.profile.id?.trim();
+        const username = authState?.profile.name?.trim();
+        if (mcUuid && username) {
+          await ensureCommerceIdentity(mcUuid, username, username);
+        }
         const allowed = await isCurrentUserOwner();
         if (!mounted) return;
         setUpdateOwnerAccess(allowed);
@@ -2715,7 +2723,7 @@ export function Settings() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [authState?.profile.id, authState?.profile.name]);
 
   useEffect(() => {
     if (!selectedOwnerMember) return;
@@ -5555,7 +5563,12 @@ export function Settings() {
         </section>
       ) : tab === 'owner-utility' ? (
         <section className="g-panel p-6 space-y-4">
-          {!updateOwnerAccess ? (
+          {updateOwnerChecking ? (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Owner Utility</p>
+              <p className="text-xs g-muted mt-1">Checking owner role...</p>
+            </div>
+          ) : !updateOwnerAccess ? (
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
               <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Owner Utility</p>
               <p className="text-xs g-muted mt-1">Owner role required.</p>
