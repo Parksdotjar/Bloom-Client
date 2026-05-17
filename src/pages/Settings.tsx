@@ -118,6 +118,24 @@ const OWNER_MINECRAFT_UUIDS = new Set([
   '2790c9887660460491068944f4ea2dcb',
   'edfee06fd5af457cb0f736cb0f621fc6'
 ]);
+
+function formatSettingsError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    const obj = error as { message?: unknown; error?: unknown; details?: unknown; hint?: unknown };
+    for (const value of [obj.message, obj.error, obj.details, obj.hint]) {
+      if (typeof value === 'string' && value.trim()) return value;
+    }
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return 'Unknown error.';
+    }
+  }
+  return String(error || 'Unknown error.');
+}
+
 type AppearancePresetPayload = {
   themeMode: LauncherTheme;
   accentMode: AccentMode;
@@ -1587,7 +1605,7 @@ export function Settings() {
         setCustomBackgroundSource(dataUrl);
       }
     } catch (error) {
-      setCustomBackgroundError(error instanceof Error ? error.message : String(error));
+      setCustomBackgroundError(formatSettingsError(error));
     }
   };
 
@@ -1635,7 +1653,7 @@ export function Settings() {
       setCustomBackgroundPanX(0);
       setCustomBackgroundPanY(0);
     } catch (error) {
-      setCustomBackgroundError(error instanceof Error ? error.message : String(error));
+      setCustomBackgroundError(formatSettingsError(error));
     } finally {
       event.target.value = '';
     }
@@ -1654,7 +1672,7 @@ export function Settings() {
       }
       window.dispatchEvent(new CustomEvent(BACKGROUND_CHANGE_EVENT, { detail: { background: 'particles', previewDataUrl: null, previewVideoUrl: null, previewMediaType: null } }));
     } catch (error) {
-      setCustomBackgroundError(error instanceof Error ? error.message : String(error));
+      setCustomBackgroundError(formatSettingsError(error));
     }
   };
 
@@ -1848,7 +1866,7 @@ export function Settings() {
       await applyAppearancePresetPayload(importedPreset.payload, importedPreset.name);
       setAppearancePresetStatus(`Imported and applied "${importedPreset.name}".`);
     } catch (error) {
-      setAppearancePresetError(error instanceof Error ? error.message : String(error));
+      setAppearancePresetError(formatSettingsError(error));
     } finally {
       event.target.value = '';
     }
@@ -1916,7 +1934,7 @@ export function Settings() {
       await downloadAndInstallLauncherUpdate(availableUpdate);
       setUpdaterStatus('Installer launched. Closing app to apply update...');
     } catch (error) {
-      setUpdaterStatus(`Update install failed: ${error instanceof Error ? error.message : String(error)}`);
+      setUpdaterStatus(`Update install failed: ${formatSettingsError(error)}`);
     } finally {
       setInstallingUpdate(false);
     }
@@ -1953,7 +1971,7 @@ export function Settings() {
       setUpdaterStatus(`Published new update manifest: v${result.version}`);
       setAvailableUpdate(null);
     } catch (error) {
-      setPublishStatus(`Publish failed: ${error instanceof Error ? error.message : String(error)}`);
+      setPublishStatus(`Publish failed: ${formatSettingsError(error)}`);
     } finally {
       setPublishingUpdate(false);
     }
@@ -1997,7 +2015,7 @@ export function Settings() {
         }
       } catch (error) {
         if (!cancelled) {
-          setMinecraftPrefsError(error instanceof Error ? error.message : String(error));
+          setMinecraftPrefsError(formatSettingsError(error));
         }
       } finally {
         if (!cancelled) {
@@ -2020,7 +2038,7 @@ export function Settings() {
       setMinecraftPrefs(saved);
       setMinecraftPrefsStatus('Saved Minecraft settings.');
     } catch (error) {
-      setMinecraftPrefsError(error instanceof Error ? error.message : String(error));
+      setMinecraftPrefsError(formatSettingsError(error));
     }
   };
 
@@ -2053,7 +2071,7 @@ export function Settings() {
         setOwnerCustomCapeCreditsDraft('0');
       }
     } catch (error) {
-      setOwnerMembersError(error instanceof Error ? error.message : String(error));
+      setOwnerMembersError(formatSettingsError(error));
     } finally {
       setOwnerMembersLoading(false);
     }
@@ -2066,7 +2084,7 @@ export function Settings() {
       setOwnerAccountBadges(rows);
       setOwnerAccountBadgeDraft((current) => current || rows[0]?.id || '');
     } catch (error) {
-      setOwnerUtilityStatus(`Badge list failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Badge list failed: ${formatSettingsError(error)}`);
     }
   };
 
@@ -2076,7 +2094,7 @@ export function Settings() {
       const rows = await ownerListUserAccountBadges(userId);
       setOwnerUserAccountBadges(rows);
     } catch (error) {
-      setOwnerUtilityStatus(`User badge list failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`User badge list failed: ${formatSettingsError(error)}`);
     }
   };
 
@@ -2091,7 +2109,7 @@ export function Settings() {
       setOwnerRewardLevelDraft(String(rewards.profile.level ?? 1));
       setOwnerRewardXpDraft(String(rewards.profile.xp ?? 0));
     } catch (error) {
-      setOwnerUtilityStatus(`Reward profile failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Reward profile failed: ${formatSettingsError(error)}`);
     }
   };
 
@@ -2111,7 +2129,7 @@ export function Settings() {
         setOwnerCapeOptions(capes);
         if (capes.length > 0) setOwnerCapeRevokeId(capes[0].id);
       } catch (error) {
-        setOwnerUtilityStatus(`Cape list failed: ${error instanceof Error ? error.message : String(error)}`);
+        setOwnerUtilityStatus(`Cape list failed: ${formatSettingsError(error)}`);
       }
     }
   };
@@ -2129,7 +2147,7 @@ export function Settings() {
       const rows = await ownerLoadCustomCapeRewardCodes(200);
       setCustomCapeCodes(rows);
     } catch (error) {
-      setOwnerUtilityStatus(`Code list failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Code list failed: ${formatSettingsError(error)}`);
     } finally {
       setCustomCapeCodesLoading(false);
     }
@@ -2146,7 +2164,7 @@ export function Settings() {
         setPartnerApplyAudience('individual');
       }
     } catch (error) {
-      setPartnerApplyEditorStatus(`Form load failed: ${error instanceof Error ? error.message : String(error)}`);
+      setPartnerApplyEditorStatus(`Form load failed: ${formatSettingsError(error)}`);
     } finally {
       setPartnerApplyEditorBusy(false);
     }
@@ -2206,7 +2224,7 @@ export function Settings() {
       setPartnerApplyQuestionsDraft((savedForm.questions ?? []).map(toQuestionDraft));
       setPartnerApplyEditorStatus('Application form saved.');
     } catch (error) {
-      setPartnerApplyEditorStatus(`Save failed: ${error instanceof Error ? error.message : String(error)}`);
+      setPartnerApplyEditorStatus(`Save failed: ${formatSettingsError(error)}`);
     } finally {
       setPartnerApplyEditorBusy(false);
     }
@@ -2244,7 +2262,7 @@ export function Settings() {
       setOwnerRoleDraft(profile.role);
       setOwnerUtilityStatus(`Updated role for ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id} to ${profile.role}.`);
     } catch (error) {
-      setOwnerUtilityStatus(`Role update failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Role update failed: ${formatSettingsError(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2261,7 +2279,7 @@ export function Settings() {
         `Updated badge for ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id} to ${badge.effective_badge_key}.`
       );
     } catch (error) {
-      setOwnerUtilityStatus(`Badge update failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Badge update failed: ${formatSettingsError(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2284,7 +2302,7 @@ export function Settings() {
       setOwnerRewardXpDraft(String(profile.xp));
       setOwnerUtilityStatus('Reward level and XP updated.');
     } catch (error) {
-      setOwnerUtilityStatus(`Reward update failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Reward update failed: ${formatSettingsError(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2299,7 +2317,7 @@ export function Settings() {
       await refreshOwnerRewards(selectedOwnerMember.user_id);
       setOwnerUtilityStatus('Static cape code granted.');
     } catch (error) {
-      setOwnerUtilityStatus(`Cape code grant failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Cape code grant failed: ${formatSettingsError(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2314,7 +2332,7 @@ export function Settings() {
       await refreshOwnerRewards(selectedOwnerMember.user_id);
       setOwnerUtilityStatus('Static cape code revoked.');
     } catch (error) {
-      setOwnerUtilityStatus(`Cape code revoke failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Cape code revoke failed: ${formatSettingsError(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2347,7 +2365,7 @@ export function Settings() {
         `Balance updated successfully for ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id}. New balance: ${wallet.balance_bb.toLocaleString()} BB.`
       );
     } catch (error) {
-      setOwnerUtilityStatus(`Balance update failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Balance update failed: ${formatSettingsError(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2371,7 +2389,7 @@ export function Settings() {
       );
       setOwnerCapeGrantInput('');
     } catch (error) {
-      setOwnerUtilityStatus(`Grant failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Grant failed: ${formatSettingsError(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2394,7 +2412,7 @@ export function Settings() {
           : `${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id} does not own ${result.cape_slug}.`
       );
     } catch (error) {
-      setOwnerUtilityStatus(`Cape removal failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Cape removal failed: ${formatSettingsError(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2439,7 +2457,7 @@ export function Settings() {
         `Loaded ${model.elements.length} element${model.elements.length === 1 ? '' : 's'} from ${file.name}. UV map ${model.textureWidth}x${model.textureHeight}${pngSize ? `; embedded texture ${pngSize.width}x${pngSize.height}` : '; no embedded texture found'}.${mismatchWarning ? ` ${mismatchWarning}` : ''}`
       );
     } catch (error) {
-      setOwnerUtilityStatus(`.bbmodel import failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`.bbmodel import failed: ${formatSettingsError(error)}`);
     }
   };
 
@@ -2506,7 +2524,7 @@ export function Settings() {
         return null;
       });
     } catch (error) {
-      setOwnerUtilityStatus(`Model cosmetic create failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Model cosmetic create failed: ${formatSettingsError(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2523,7 +2541,7 @@ export function Settings() {
         `Partner bucks for ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id}: ${row.balance_bb.toLocaleString()} BB.`
       );
     } catch (error) {
-      setOwnerUtilityStatus(`Partner bucks fetch failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Partner bucks fetch failed: ${formatSettingsError(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2546,7 +2564,7 @@ export function Settings() {
         `Granted ${Math.floor(parsed).toLocaleString()} partner bucks to ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id}. New balance: ${row.balance_bb.toLocaleString()} BB.`
       );
     } catch (error) {
-      setOwnerUtilityStatus(`Partner bucks grant failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Partner bucks grant failed: ${formatSettingsError(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2567,7 +2585,7 @@ export function Settings() {
         `Granted ${row.name} to ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id}.`
       );
     } catch (error) {
-      setOwnerUtilityStatus(`Account badge grant failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Account badge grant failed: ${formatSettingsError(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2583,7 +2601,7 @@ export function Settings() {
       setOwnerBadgeBuilderIconUrl(url);
       setOwnerUtilityStatus('Custom badge icon uploaded.');
     } catch (error) {
-      setOwnerUtilityStatus(`Icon upload failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Icon upload failed: ${formatSettingsError(error)}`);
     } finally {
       event.target.value = '';
       setOwnerUtilityBusy(false);
@@ -2625,7 +2643,7 @@ export function Settings() {
       setOwnerBadgeBuilderObtainable('');
       setOwnerUtilityStatus(`Created account badge ${row.name}.`);
     } catch (error) {
-      setOwnerUtilityStatus(`Badge create failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Badge create failed: ${formatSettingsError(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2647,7 +2665,7 @@ export function Settings() {
         `Updated free custom cape code credits for ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id} to ${creditsRow.credits_remaining}.`
       );
     } catch (error) {
-      setOwnerUtilityStatus(`Free code credits update failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Free code credits update failed: ${formatSettingsError(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2666,7 +2684,7 @@ export function Settings() {
       await refreshOwnerCustomCapeCodes();
       setOwnerUtilityStatus(`Generated one-time code: ${row.code}`);
     } catch (error) {
-      setOwnerUtilityStatus(`Code generation failed: ${error instanceof Error ? error.message : String(error)}`);
+      setOwnerUtilityStatus(`Code generation failed: ${formatSettingsError(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2889,7 +2907,7 @@ export function Settings() {
         customBackgroundPanY
       )
         .catch((error) => {
-          setCustomBackgroundError(error instanceof Error ? error.message : String(error));
+          setCustomBackgroundError(formatSettingsError(error));
         })
         .finally(() => {
           setCustomBackgroundSaving(false);

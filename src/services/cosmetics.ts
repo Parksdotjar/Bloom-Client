@@ -759,7 +759,7 @@ export async function setUserRoleById(userId: string, role: CommerceRole) {
 
 export async function loadOwnerMembers() {
   const { data, error } = await supabase.rpc('commerce_owner_list_members');
-  if (error) throw error;
+  if (error) throw new Error(extractSupabaseErrorMessage(error, 'owner_list_members_failed'));
   return (data ?? []) as OwnerMemberRecord[];
 }
 
