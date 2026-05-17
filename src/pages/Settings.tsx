@@ -1029,7 +1029,7 @@ function normalizePartnerApplicationForms(forms: PartnerApplicationForm[]) {
 }
 
 export function Settings() {
-  const { authState } = useAuth();
+  const { authState, logout } = useAuth();
   const [tab, setTab] = useState<SettingsTab>('general');
   const [appearanceSection, setAppearanceSection] = useState<AppearanceSection>('animation');
   const [minecraftPrefs, setMinecraftPrefs] = useState({
@@ -4277,7 +4277,15 @@ export function Settings() {
           </div>
         </div>
       )}
-      <section className="g-panel-strong p-6">
+      <section className="g-panel-strong p-6 relative">
+        {authState && (
+          <button
+            onClick={logout}
+            className="absolute right-4 top-4 h-9 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] text-white/70 transition hover:border-white/25 hover:bg-white/[0.08] hover:text-white"
+          >
+            Sign out
+          </button>
+        )}
         <p className="text-[10px] uppercase tracking-[0.2em] font-extrabold g-accent-text">Settings</p>
         <h1 className="text-5xl font-extrabold text-white mt-1">Launcher Control</h1>
         <p className="text-sm g-muted mt-1">System, visuals, and runtime defaults.</p>
