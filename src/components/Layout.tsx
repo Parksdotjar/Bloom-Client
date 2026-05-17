@@ -1538,7 +1538,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
     const hiddenRoute =
       (location.pathname === '/chat' && !sidebarTabsVisibility.chat) ||
       (location.pathname === '/cosmetics' && !sidebarTabsVisibility.cosmetics) ||
-      (location.pathname === '/custom-cape' && !sidebarTabsVisibility['custom-cape']) ||
       (location.pathname === '/script-studio' && !sidebarTabsVisibility['script-studio']) ||
       (location.pathname === '/host-server' && (!hostServersUnlocked || !sidebarTabsVisibility['host-server'])) ||
       (location.pathname === '/games' && (!showGamesSection || !sidebarTabsVisibility.games));
