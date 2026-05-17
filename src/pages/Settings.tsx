@@ -50,7 +50,14 @@ import {
   ownerSetCustomCapeFreeCreditsByUserId,
   ownerGetPartnerWalletBalanceByUserId,
   ownerGrantPartnerWalletByUserId,
+  ownerCreateAccountBadge,
+  ownerGrantAccountBadge,
+  ownerListAccountBadges,
+  ownerListUserAccountBadges,
+  ownerUploadAccountBadgeIcon,
   ownerRevokeCapeFromUserById,
+  ownerCreateModelCosmeticListing,
+  uploadOwnerCosmeticModelAsset,
   loadOwnerCapesLite,
   isCurrentUserOwner,
   loadOwnerMembers,
@@ -67,14 +74,29 @@ import {
   type OwnerMemberBadgeRecord,
   type BadgeKey,
   type OwnerCapeLiteRecord,
+  type OwnerAccountBadgeRecord,
+  type OwnerUserBadgeRecord,
   type PartnerWalletRecord
 } from '../services/cosmetics';
+import { CosmeticModelPreview3D } from '../components/cosmetics/CosmeticModelPreview3D';
+import { getPrimaryCosmeticTextureSource, parseBloomBbmodel, type CosmeticModel } from '../services/blockbenchCosmetics';
+import {
+  ownerGrantStaticCapeCode,
+  ownerLoadRewardProfile,
+  ownerRevokeStaticCapeCode,
+  ownerSetRewardLevelXp,
+  type CapeCode,
+  type DailyLoginClaim,
+  type RewardProfile,
+  type StreakMilestoneReward
+} from '../services/account';
 import {
   FART_KEYBIND_UNLOCK_EVENT,
   FART_KEYBIND_UNLOCK_KEY,
   readFartKeybindUnlocked
 } from '../constants/fartKeybind';
 import { BUD_ENABLED_KEY, BUD_SETTINGS_CHANGE_EVENT, readBudEnabled } from '../constants/bud';
+import { useAuth } from '../hooks/useAuth';
 
 type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'custom';
@@ -91,6 +113,7 @@ type MotionEasingPreset = 'out-quad' | 'out-cubic' | 'in-out-cubic' | 'out-back'
 type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
 type StartupSceneTheme = 'nova' | 'horizon' | 'matrix';
 type StartupSceneSoundProfile = 'off' | 'shimmer' | 'impact';
+const OWNER_MINECRAFT_UUIDS = new Set(['e2701115aa1147d3a9e2e89334623026']);
 type AppearancePresetPayload = {
   themeMode: LauncherTheme;
   accentMode: AccentMode;
@@ -121,6 +144,10 @@ type AppearancePresetPayload = {
   iconPackMode: IconPackMode;
   roundnessLevel: number;
   buttonRoundnessLevel: number;
+  sidebarButtonRoundnessLevel: number;
+  glassRoundnessLevel: number;
+  widgetBorderRoundnessLevel: number;
+  instanceSlotRoundnessLevel: number;
   glassAmount: number;
   customBackgroundDataUrl?: string | null;
 };
@@ -141,9 +168,9 @@ type AppearancePresetExportFileV1 = {
 
 type SettingsTab = 'general' | 'appearance' | 'keybinds' | 'widgets' | 'updates' | 'owner-utility' | 'extra';
 type AppearanceSection = 'animation' | 'background' | 'sidebar' | 'style' | 'presets' | 'shop' | 'minecraft';
-type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help' | 'information';
+type SidebarTabId = 'home' | 'instances' | 'marketplace' | 'importer' | 'widgets' | 'cosmetics' | 'custom-cape' | 'notes' | 'chat' | 'script-studio' | 'host-server' | 'games' | 'help' | 'information';
 type SidebarTabsVisibility = Record<SidebarTabId, boolean>;
-type OwnerUtilityTab = 'members-economy' | 'cape-tools' | 'mcsets-events' | 'system';
+type OwnerUtilityTab = 'members-economy' | 'rewards' | 'badge-builder' | 'cape-tools' | 'model-cosmetics' | 'mcsets-events' | 'system';
 type PartnerApplyEditorAudience = PartnerApplicationAudience;
 
 type PartnerApplyQuestionDraft = PartnerApplicationQuestion & {
@@ -167,6 +194,7 @@ const SIDEBAR_TABS_VISIBILITY_DEFAULTS: SidebarTabsVisibility = {
   widgets: true,
   cosmetics: false,
   'custom-cape': false,
+  notes: true,
   chat: false,
   'script-studio': false,
   'host-server': false,
@@ -174,6 +202,19 @@ const SIDEBAR_TABS_VISIBILITY_DEFAULTS: SidebarTabsVisibility = {
   help: true,
   information: true
 };
+
+const ACCOUNT_BADGE_ICON_OPTIONS = [
+  'Award', 'Badge', 'Shield', 'Star', 'Sparkles', 'Crown', 'Gem', 'Heart', 'Flame', 'Zap',
+  'Rocket', 'Trophy', 'Medal', 'Target', 'Crosshair', 'Compass', 'Map', 'Flag', 'Bookmark', 'Key',
+  'Lock', 'Unlock', 'Eye', 'Sun', 'Moon', 'Cloud', 'Snowflake', 'Leaf', 'Flower', 'Sprout',
+  'Tree', 'Mountain', 'Waves', 'Droplets', 'Umbrella', 'Feather', 'Wind', 'Orbit', 'Atom', 'Cpu',
+  'Code', 'Terminal', 'Bot', 'Gamepad', 'Joystick', 'MousePointer', 'Palette', 'Brush', 'Pen', 'Image',
+  'Camera', 'Video', 'Music', 'Headphones', 'Mic', 'Radio', 'Wifi', 'Signal', 'Bell', 'Megaphone',
+  'Message', 'Users', 'UserPlus', 'Handshake', 'Gift', 'ShoppingBag', 'Coins', 'Wallet', 'CreditCard', 'Receipt',
+  'Package', 'Box', 'Archive', 'Server', 'Database', 'HardDrive', 'Monitor', 'Laptop', 'Smartphone', 'Globe',
+  'Link', 'Paperclip', 'File', 'Folder', 'Book', 'Scroll', 'Clipboard', 'Calendar', 'Clock', 'Timer',
+  'Hourglass', 'Activity', 'Gauge', 'BarChart', 'PieChart', 'TrendingUp', 'Layers', 'Blocks', 'Puzzle', 'Wand'
+] as const;
 
 const THEME_STORAGE_KEY = 'bloom_theme_mode';
 const THEME_CHANGE_EVENT = 'bloom-theme-change';
@@ -237,6 +278,15 @@ const ROUNDNESS_KEY = 'bloom_roundness_level';
 const ROUNDNESS_CHANGE_EVENT = 'bloom-roundness-change';
 const BUTTON_ROUNDNESS_KEY = 'bloom_button_roundness_level';
 const BUTTON_ROUNDNESS_CHANGE_EVENT = 'bloom-button-roundness-change';
+const SIDEBAR_BUTTON_ROUNDNESS_KEY = 'bloom_sidebar_button_roundness_level';
+const SIDEBAR_BUTTON_ROUNDNESS_CHANGE_EVENT = 'bloom-sidebar-button-roundness-change';
+const MASTER_ROUNDNESS_KEY = 'bloom_master_roundness_level';
+const GLASS_ROUNDNESS_KEY = 'bloom_glass_roundness_level';
+const GLASS_ROUNDNESS_CHANGE_EVENT = 'bloom-glass-roundness-change';
+const WIDGET_BORDER_ROUNDNESS_KEY = 'bloom_widget_border_roundness_level';
+const WIDGET_BORDER_ROUNDNESS_CHANGE_EVENT = 'bloom-widget-border-roundness-change';
+const INSTANCE_SLOT_ROUNDNESS_KEY = 'bloom_instance_slot_roundness_level';
+const INSTANCE_SLOT_ROUNDNESS_CHANGE_EVENT = 'bloom-instance-slot-roundness-change';
 const GLASS_AMOUNT_KEY = 'bloom_glass_amount';
 const GLASS_AMOUNT_CHANGE_EVENT = 'bloom-glass-amount-change';
 const SHORTCUT_SEARCH_KEY = 'bloom_shortcut_search';
@@ -538,6 +588,7 @@ function readSidebarTabsVisibility(): SidebarTabsVisibility {
       widgets: typeof parsed.widgets === 'boolean' ? parsed.widgets : SIDEBAR_TABS_VISIBILITY_DEFAULTS.widgets,
       cosmetics: false,
       'custom-cape': false,
+      notes: typeof parsed.notes === 'boolean' ? parsed.notes : SIDEBAR_TABS_VISIBILITY_DEFAULTS.notes,
       chat: typeof parsed.chat === 'boolean' ? parsed.chat : SIDEBAR_TABS_VISIBILITY_DEFAULTS.chat,
       'script-studio': typeof parsed['script-studio'] === 'boolean' ? parsed['script-studio'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['script-studio'],
       'host-server': typeof parsed['host-server'] === 'boolean' ? parsed['host-server'] : SIDEBAR_TABS_VISIBILITY_DEFAULTS['host-server'],
@@ -711,6 +762,10 @@ function parseAppearancePresetPayload(raw: unknown): AppearancePresetPayload | n
     iconPackMode: raw.iconPackMode,
     roundnessLevel: clampRoundness(Number(raw.roundnessLevel)),
     buttonRoundnessLevel: clampRoundness(Number(raw.buttonRoundnessLevel)),
+    sidebarButtonRoundnessLevel: Number.isFinite(Number(raw.sidebarButtonRoundnessLevel)) ? clampRoundness(Number(raw.sidebarButtonRoundnessLevel)) : 67,
+    glassRoundnessLevel: Number.isFinite(Number(raw.glassRoundnessLevel)) ? clampRoundness(Number(raw.glassRoundnessLevel)) : 100,
+    widgetBorderRoundnessLevel: Number.isFinite(Number(raw.widgetBorderRoundnessLevel)) ? clampRoundness(Number(raw.widgetBorderRoundnessLevel)) : 100,
+    instanceSlotRoundnessLevel: Number.isFinite(Number(raw.instanceSlotRoundnessLevel)) ? clampRoundness(Number(raw.instanceSlotRoundnessLevel)) : 67,
     glassAmount: clampGlassAmount(Number(raw.glassAmount)),
     customBackgroundDataUrl: typeof raw.customBackgroundDataUrl === 'string' ? raw.customBackgroundDataUrl : null
   };
@@ -957,6 +1012,7 @@ function normalizePartnerApplicationForms(forms: PartnerApplicationForm[]) {
 }
 
 export function Settings() {
+  const { authState } = useAuth();
   const [tab, setTab] = useState<SettingsTab>('general');
   const [appearanceSection, setAppearanceSection] = useState<AppearanceSection>('animation');
   const [minecraftPrefs, setMinecraftPrefs] = useState({
@@ -1008,10 +1064,35 @@ export function Settings() {
     if (Number.isFinite(stored)) return clampRoundness(stored);
     return 50;
   });
+  const [masterRoundnessLevel, setMasterRoundnessLevel] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(MASTER_ROUNDNESS_KEY));
+    if (Number.isFinite(stored)) return clampRoundness(stored);
+    return 100;
+  });
   const [buttonRoundnessLevel, setButtonRoundnessLevel] = useState<number>(() => {
     const stored = Number(localStorage.getItem(BUTTON_ROUNDNESS_KEY));
     if (Number.isFinite(stored)) return clampRoundness(stored);
     return 100;
+  });
+  const [sidebarButtonRoundnessLevel, setSidebarButtonRoundnessLevel] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(SIDEBAR_BUTTON_ROUNDNESS_KEY));
+    if (Number.isFinite(stored)) return clampRoundness(stored);
+    return 67;
+  });
+  const [glassRoundnessLevel, setGlassRoundnessLevel] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(GLASS_ROUNDNESS_KEY));
+    if (Number.isFinite(stored)) return clampRoundness(stored);
+    return 100;
+  });
+  const [widgetBorderRoundnessLevel, setWidgetBorderRoundnessLevel] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(WIDGET_BORDER_ROUNDNESS_KEY));
+    if (Number.isFinite(stored)) return clampRoundness(stored);
+    return 100;
+  });
+  const [instanceSlotRoundnessLevel, setInstanceSlotRoundnessLevel] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(INSTANCE_SLOT_ROUNDNESS_KEY));
+    if (Number.isFinite(stored)) return clampRoundness(stored);
+    return 67;
   });
   const [glassAmount, setGlassAmount] = useState<number>(() => {
     const stored = Number(localStorage.getItem(GLASS_AMOUNT_KEY));
@@ -1073,6 +1154,7 @@ export function Settings() {
   const [updateOwnerChecking, setUpdateOwnerChecking] = useState(true);
   const [updatePublishVersion, setUpdatePublishVersion] = useState('');
   const [updatePublishInstaller, setUpdatePublishInstaller] = useState<File | null>(null);
+  const [updatePublishMsi, setUpdatePublishMsi] = useState<File | null>(null);
   const [publishingUpdate, setPublishingUpdate] = useState(false);
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
   const [ownerUtilityOpen, setOwnerUtilityOpen] = useState(false);
@@ -1085,6 +1167,22 @@ export function Settings() {
   const [ownerBalanceDraft, setOwnerBalanceDraft] = useState('');
   const [ownerPartnerBucksDraft, setOwnerPartnerBucksDraft] = useState('');
   const [ownerSelectedPartnerWallet, setOwnerSelectedPartnerWallet] = useState<PartnerWalletRecord | null>(null);
+  const [ownerRewardProfile, setOwnerRewardProfile] = useState<RewardProfile | null>(null);
+  const [ownerRewardClaims, setOwnerRewardClaims] = useState<DailyLoginClaim[]>([]);
+  const [ownerRewardMilestones, setOwnerRewardMilestones] = useState<StreakMilestoneReward[]>([]);
+  const [ownerRewardCapeCodes, setOwnerRewardCapeCodes] = useState<CapeCode[]>([]);
+  const [ownerRewardLevelDraft, setOwnerRewardLevelDraft] = useState('1');
+  const [ownerRewardXpDraft, setOwnerRewardXpDraft] = useState('0');
+  const [ownerAccountBadges, setOwnerAccountBadges] = useState<OwnerAccountBadgeRecord[]>([]);
+  const [ownerUserAccountBadges, setOwnerUserAccountBadges] = useState<OwnerUserBadgeRecord[]>([]);
+  const [ownerAccountBadgeDraft, setOwnerAccountBadgeDraft] = useState('');
+  const [ownerBadgeBuilderCode, setOwnerBadgeBuilderCode] = useState('');
+  const [ownerBadgeBuilderName, setOwnerBadgeBuilderName] = useState('');
+  const [ownerBadgeBuilderDescription, setOwnerBadgeBuilderDescription] = useState('');
+  const [ownerBadgeBuilderIcon, setOwnerBadgeBuilderIcon] = useState<(typeof ACCOUNT_BADGE_ICON_OPTIONS)[number]>('Award');
+  const [ownerBadgeBuilderIconUrl, setOwnerBadgeBuilderIconUrl] = useState<string | null>(null);
+  const [ownerBadgeBuilderColor, setOwnerBadgeBuilderColor] = useState('#67e8f9');
+  const [ownerBadgeBuilderObtainable, setOwnerBadgeBuilderObtainable] = useState('');
   const [ownerCustomCapeCreditsDraft, setOwnerCustomCapeCreditsDraft] = useState('0');
   const [ownerRoleDraft, setOwnerRoleDraft] = useState<'user' | 'partner' | 'owner'>('user');
   const [ownerBadgeDraft, setOwnerBadgeDraft] = useState<'auto' | BadgeKey>('auto');
@@ -1092,6 +1190,16 @@ export function Settings() {
   const [ownerCapeGrantInput, setOwnerCapeGrantInput] = useState('');
   const [ownerCapeRevokeId, setOwnerCapeRevokeId] = useState('');
   const [ownerCapeOptions, setOwnerCapeOptions] = useState<OwnerCapeLiteRecord[]>([]);
+  const [ownerModelSlug, setOwnerModelSlug] = useState('');
+  const [ownerModelName, setOwnerModelName] = useState('');
+  const [ownerModelDescription, setOwnerModelDescription] = useState('');
+  const [ownerModelPrice, setOwnerModelPrice] = useState('0');
+  const [ownerModelRarity, setOwnerModelRarity] = useState('custom');
+  const [ownerModelBbmodelFile, setOwnerModelBbmodelFile] = useState<File | null>(null);
+  const [ownerModelPngSize, setOwnerModelPngSize] = useState<{ width: number; height: number } | null>(null);
+  const [ownerModelPreviewZoom, setOwnerModelPreviewZoom] = useState(1.4);
+  const [ownerModelPreviewUrl, setOwnerModelPreviewUrl] = useState<string | null>(null);
+  const [ownerModelPreview, setOwnerModelPreview] = useState<CosmeticModel | null>(null);
   const [ownerUtilityBusy, setOwnerUtilityBusy] = useState(false);
   const [ownerUtilityStatus, setOwnerUtilityStatus] = useState<string | null>(null);
   const [customCapeCodeLength, setCustomCapeCodeLength] = useState('12');
@@ -1152,6 +1260,7 @@ export function Settings() {
   const [shopRarityTheme, setShopRarityTheme] = useState<ShopRarityThemeSettings>(() => readShopRarityThemeSettings());
   const appearanceImportRef = useRef<HTMLInputElement | null>(null);
   const publishInstallerInputRef = useRef<HTMLInputElement | null>(null);
+  const publishMsiInputRef = useRef<HTMLInputElement | null>(null);
   const [backgroundVisualOpacity, setBackgroundVisualOpacity] = useState<number>(() => {
     const stored = Number(localStorage.getItem(BACKGROUND_VISUAL_OPACITY_KEY));
     if (Number.isFinite(stored)) return clampBackgroundOpacity(stored);
@@ -1307,6 +1416,46 @@ export function Settings() {
     setButtonRoundnessLevel(clamped);
     localStorage.setItem(BUTTON_ROUNDNESS_KEY, String(clamped));
     window.dispatchEvent(new CustomEvent(BUTTON_ROUNDNESS_CHANGE_EVENT, { detail: { roundness: clamped } }));
+  };
+
+  const applySidebarButtonRoundness = (next: number) => {
+    const clamped = clampRoundness(next);
+    setSidebarButtonRoundnessLevel(clamped);
+    localStorage.setItem(SIDEBAR_BUTTON_ROUNDNESS_KEY, String(clamped));
+    window.dispatchEvent(new CustomEvent(SIDEBAR_BUTTON_ROUNDNESS_CHANGE_EVENT, { detail: { roundness: clamped } }));
+  };
+
+  const applyGlassRoundness = (next: number) => {
+    const clamped = clampRoundness(next);
+    setGlassRoundnessLevel(clamped);
+    localStorage.setItem(GLASS_ROUNDNESS_KEY, String(clamped));
+    window.dispatchEvent(new CustomEvent(GLASS_ROUNDNESS_CHANGE_EVENT, { detail: { roundness: clamped } }));
+  };
+
+  const applyWidgetBorderRoundness = (next: number) => {
+    const clamped = clampRoundness(next);
+    setWidgetBorderRoundnessLevel(clamped);
+    localStorage.setItem(WIDGET_BORDER_ROUNDNESS_KEY, String(clamped));
+    window.dispatchEvent(new CustomEvent(WIDGET_BORDER_ROUNDNESS_CHANGE_EVENT, { detail: { roundness: clamped } }));
+  };
+
+  const applyInstanceSlotRoundness = (next: number) => {
+    const clamped = clampRoundness(next);
+    setInstanceSlotRoundnessLevel(clamped);
+    localStorage.setItem(INSTANCE_SLOT_ROUNDNESS_KEY, String(clamped));
+    window.dispatchEvent(new CustomEvent(INSTANCE_SLOT_ROUNDNESS_CHANGE_EVENT, { detail: { roundness: clamped } }));
+  };
+
+  const applyMasterRoundness = (next: number) => {
+    const clamped = clampRoundness(next);
+    setMasterRoundnessLevel(clamped);
+    localStorage.setItem(MASTER_ROUNDNESS_KEY, String(clamped));
+    applyRoundness(clamped);
+    applyButtonRoundness(clamped);
+    applySidebarButtonRoundness(clamped);
+    applyGlassRoundness(clamped);
+    applyWidgetBorderRoundness(clamped);
+    applyInstanceSlotRoundness(clamped);
   };
 
   const applyGlassAmount = (next: number) => {
@@ -1535,6 +1684,10 @@ export function Settings() {
     iconPackMode,
     roundnessLevel,
     buttonRoundnessLevel,
+    sidebarButtonRoundnessLevel,
+    glassRoundnessLevel,
+    widgetBorderRoundnessLevel,
+    instanceSlotRoundnessLevel,
     glassAmount,
     customBackgroundDataUrl: customBackgroundMediaKind === 'image' ? customBackgroundSaved : null
   });
@@ -1571,6 +1724,10 @@ export function Settings() {
     applyIconPack(payload.iconPackMode);
     applyRoundness(payload.roundnessLevel);
     applyButtonRoundness(payload.buttonRoundnessLevel);
+    applySidebarButtonRoundness(payload.sidebarButtonRoundnessLevel);
+    applyGlassRoundness(payload.glassRoundnessLevel);
+    applyWidgetBorderRoundness(payload.widgetBorderRoundnessLevel);
+    applyInstanceSlotRoundness(payload.instanceSlotRoundnessLevel);
     applyGlassAmount(payload.glassAmount);
 
     if (payload.backgroundMode === 'custom') {
@@ -1770,16 +1927,24 @@ export function Settings() {
       setPublishStatus('Select a Windows setup .exe first.');
       return;
     }
+    if (!updatePublishMsi) {
+      setPublishStatus('Select the Windows .msi first.');
+      return;
+    }
 
     setPublishingUpdate(true);
-    setPublishStatus('Uploading installer and writing latest.json...');
+    setPublishStatus('Deleting old update files, uploading installers, and writing latest.json...');
     try {
-      const result = await publishSupabaseLauncherUpdate(updatePublishVersion, updatePublishInstaller);
-      setPublishStatus(`Published v${result.version}. updates/latest.json now points to ${result.installerObjectPath}.`);
+      const result = await publishSupabaseLauncherUpdate(updatePublishVersion, updatePublishInstaller, updatePublishMsi);
+      setPublishStatus(`Published v${result.version}. latest.json now points to ${result.installerObjectPath} and ${result.msiObjectPath}.`);
       setUpdatePublishVersion('');
       setUpdatePublishInstaller(null);
+      setUpdatePublishMsi(null);
       if (publishInstallerInputRef.current) {
         publishInstallerInputRef.current.value = '';
+      }
+      if (publishMsiInputRef.current) {
+        publishMsiInputRef.current.value = '';
       }
       setUpdaterStatus(`Published new update manifest: v${result.version}`);
       setAvailableUpdate(null);
@@ -1890,15 +2055,52 @@ export function Settings() {
     }
   };
 
+  const refreshOwnerAccountBadges = async () => {
+    if (!updateOwnerAccess) return;
+    try {
+      const rows = await ownerListAccountBadges();
+      setOwnerAccountBadges(rows);
+      setOwnerAccountBadgeDraft((current) => current || rows[0]?.id || '');
+    } catch (error) {
+      setOwnerUtilityStatus(`Badge list failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const refreshOwnerUserAccountBadges = async (userId: string) => {
+    if (!updateOwnerAccess) return;
+    try {
+      const rows = await ownerListUserAccountBadges(userId);
+      setOwnerUserAccountBadges(rows);
+    } catch (error) {
+      setOwnerUtilityStatus(`User badge list failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const refreshOwnerRewards = async (userId: string) => {
+    if (!updateOwnerAccess) return;
+    try {
+      const rewards = await ownerLoadRewardProfile(userId);
+      setOwnerRewardProfile(rewards.profile);
+      setOwnerRewardClaims(rewards.claims ?? []);
+      setOwnerRewardMilestones(rewards.milestones ?? []);
+      setOwnerRewardCapeCodes(rewards.capeCodes ?? []);
+      setOwnerRewardLevelDraft(String(rewards.profile.level ?? 1));
+      setOwnerRewardXpDraft(String(rewards.profile.xp ?? 0));
+    } catch (error) {
+      setOwnerUtilityStatus(`Reward profile failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
   const openOwnerUtility = async () => {
     setOwnerUtilityStatus(null);
     setOwnerCapeGrantInput('');
     setOwnerCapeRevokeId('');
     setOwnerPartnerBucksDraft('');
     setOwnerSelectedPartnerWallet(null);
+    setOwnerUserAccountBadges([]);
     setOwnerUtilityTab('members-economy');
     setOwnerUtilityOpen(true);
-    await Promise.all([refreshOwnerMembers(), refreshOwnerCustomCapeCodes()]);
+    await Promise.all([refreshOwnerMembers(), refreshOwnerCustomCapeCodes(), refreshOwnerAccountBadges()]);
     if (updateOwnerAccess) {
       try {
         const capes = await loadOwnerCapesLite();
@@ -2011,9 +2213,16 @@ export function Settings() {
     setOwnerBalanceDraft(String(member.balance_bb ?? 0));
     setOwnerPartnerBucksDraft('');
     setOwnerSelectedPartnerWallet(null);
+    setOwnerRewardProfile(null);
+    setOwnerRewardClaims([]);
+    setOwnerRewardMilestones([]);
+    setOwnerRewardCapeCodes([]);
+    setOwnerRewardLevelDraft('1');
+    setOwnerRewardXpDraft('0');
     setOwnerRoleDraft(member.role);
     setOwnerCustomCapeCreditsDraft('0');
     setOwnerUtilityStatus(null);
+    void refreshOwnerRewards(member.user_id);
   };
 
   const handleOwnerApplyRole = async () => {
@@ -2049,6 +2258,59 @@ export function Settings() {
       );
     } catch (error) {
       setOwnerUtilityStatus(`Badge update failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
+  const handleOwnerApplyRewardLevelXp = async () => {
+    if (!selectedOwnerMember) return;
+    const level = Number.parseInt(ownerRewardLevelDraft, 10);
+    const xp = Number.parseInt(ownerRewardXpDraft, 10);
+    if (!Number.isFinite(level) || level < 1 || !Number.isFinite(xp) || xp < 0) {
+      setOwnerUtilityStatus('Reward level must be at least 1 and XP must be 0 or higher.');
+      return;
+    }
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      const profile = await ownerSetRewardLevelXp(selectedOwnerMember.user_id, level, xp);
+      setOwnerRewardProfile(profile);
+      setOwnerRewardLevelDraft(String(profile.level));
+      setOwnerRewardXpDraft(String(profile.xp));
+      setOwnerUtilityStatus('Reward level and XP updated.');
+    } catch (error) {
+      setOwnerUtilityStatus(`Reward update failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
+  const handleOwnerGrantStaticCapeReward = async () => {
+    if (!selectedOwnerMember) return;
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      await ownerGrantStaticCapeCode(selectedOwnerMember.user_id);
+      await refreshOwnerRewards(selectedOwnerMember.user_id);
+      setOwnerUtilityStatus('Static cape code granted.');
+    } catch (error) {
+      setOwnerUtilityStatus(`Cape code grant failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
+  const handleOwnerRevokeStaticCapeReward = async (codeId: string) => {
+    if (!selectedOwnerMember) return;
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      await ownerRevokeStaticCapeCode(codeId);
+      await refreshOwnerRewards(selectedOwnerMember.user_id);
+      setOwnerUtilityStatus('Static cape code revoked.');
+    } catch (error) {
+      setOwnerUtilityStatus(`Cape code revoke failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setOwnerUtilityBusy(false);
     }
@@ -2134,6 +2396,118 @@ export function Settings() {
     }
   };
 
+  const getOwnerModelUvMismatchWarning = (model: CosmeticModel | null, pngSize: { width: number; height: number } | null) => {
+    if (!model || !pngSize) return null;
+    if (model.textureWidth === pngSize.width && model.textureHeight === pngSize.height) return null;
+    return `UV mismatch detected: this model was unwrapped for ${model.textureWidth}x${model.textureHeight} but the texture is ${pngSize.width}x${pngSize.height}. Re-export the Blockbench model and texture with matching texture size, or use ${model.textureWidth}x${model.textureHeight} compatibility mode.`;
+  };
+
+  const ownerModelUvMismatchWarning = getOwnerModelUvMismatchWarning(ownerModelPreview, ownerModelPngSize);
+
+  const setOwnerModelTextureFromRuntime = async (model: CosmeticModel) => {
+    const textureSource = getPrimaryCosmeticTextureSource(model);
+    setOwnerModelPreviewUrl((current) => {
+      if (current?.startsWith('blob:')) URL.revokeObjectURL(current);
+      return textureSource;
+    });
+    const texture = model.textures[0];
+    setOwnerModelPngSize(texture ? { width: texture.width, height: texture.height } : null);
+  };
+
+  const handleOwnerModelBbmodelFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    setOwnerModelBbmodelFile(file);
+    setOwnerModelPreview(null);
+    setOwnerModelPngSize(null);
+    setOwnerModelPreviewUrl((current) => {
+      if (current?.startsWith('blob:')) URL.revokeObjectURL(current);
+      return null;
+    });
+    if (!file) return;
+    try {
+      const bbmodelText = await file.text();
+      const model = parseBloomBbmodel(bbmodelText, { slot: 'head' });
+      setOwnerModelPreview(model);
+      await setOwnerModelTextureFromRuntime(model);
+      const pngSize = model.textures[0] ? { width: model.textures[0].width, height: model.textures[0].height } : null;
+      const mismatchWarning = getOwnerModelUvMismatchWarning(model, pngSize);
+      setOwnerUtilityStatus(
+        `Loaded ${model.elements.length} element${model.elements.length === 1 ? '' : 's'} from ${file.name}. UV map ${model.textureWidth}x${model.textureHeight}${pngSize ? `; embedded texture ${pngSize.width}x${pngSize.height}` : '; no embedded texture found'}.${mismatchWarning ? ` ${mismatchWarning}` : ''}`
+      );
+    } catch (error) {
+      setOwnerUtilityStatus(`.bbmodel import failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const handleOwnerCreateModelCosmetic = async () => {
+    const slug = ownerModelSlug.trim().toLowerCase();
+    const name = ownerModelName.trim();
+    const price = Number.parseInt(ownerModelPrice, 10);
+    if (!slug || !/^[a-z0-9-]+$/.test(slug)) {
+      setOwnerUtilityStatus('Use a lowercase slug with letters, numbers, and dashes only.');
+      return;
+    }
+    if (!name) {
+      setOwnerUtilityStatus('Model cosmetic name is required.');
+      return;
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      setOwnerUtilityStatus('Price must be 0 or higher.');
+      return;
+    }
+    if (!ownerModelBbmodelFile || !ownerModelPreview) {
+      setOwnerUtilityStatus('Choose the exported Blockbench .bbmodel first.');
+      return;
+    }
+    const embeddedTexture = getPrimaryCosmeticTextureSource(ownerModelPreview);
+    if (!embeddedTexture) {
+      setOwnerUtilityStatus('The .bbmodel needs an embedded base64 texture. In Blockbench, save/export with texture source embedded.');
+      return;
+    }
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      const modelUpload = await uploadOwnerCosmeticModelAsset(ownerModelBbmodelFile, 'models');
+      await ownerCreateModelCosmeticListing({
+        slug,
+        name,
+        description: ownerModelDescription.trim(),
+        texture_url: embeddedTexture,
+        preview_url: embeddedTexture,
+        price_bb: price,
+        rarity: ownerModelRarity.trim() || 'custom',
+        rarity_label: ownerModelRarity.trim() || 'Custom',
+        rarity_color_start: '#22d3ee',
+        rarity_color_end: '#f472b6',
+        rarity_glow: 'rgba(34, 211, 238, 0.28)',
+        sort_order: 9999,
+        is_active: true,
+        is_featured: false,
+        cosmetic_slot: 'head',
+        model_json: {
+          ...ownerModelPreview,
+          sourceAssetUrl: modelUpload.publicUrl
+        } as unknown as Record<string, unknown>
+      });
+      setOwnerUtilityStatus(`${name} created as a head-slot model cosmetic.`);
+      setOwnerModelSlug('');
+      setOwnerModelName('');
+      setOwnerModelDescription('');
+      setOwnerModelPrice('0');
+      setOwnerModelBbmodelFile(null);
+      setOwnerModelPngSize(null);
+      setOwnerModelPreview(null);
+      setOwnerModelPreviewUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return null;
+      });
+    } catch (error) {
+      setOwnerUtilityStatus(`Model cosmetic create failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
   const handleOwnerRefreshPartnerWallet = async () => {
     if (!selectedOwnerMember) return;
     setOwnerUtilityBusy(true);
@@ -2174,6 +2548,85 @@ export function Settings() {
     }
   };
 
+  const handleOwnerGrantAccountBadge = async () => {
+    if (!selectedOwnerMember) return;
+    if (!ownerAccountBadgeDraft) {
+      setOwnerUtilityStatus('Choose an account badge first.');
+      return;
+    }
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      const row = await ownerGrantAccountBadge(selectedOwnerMember.user_id, ownerAccountBadgeDraft);
+      setOwnerUserAccountBadges((current) => [row, ...current.filter((badge) => badge.id !== row.id)]);
+      setOwnerUtilityStatus(
+        `Granted ${row.name} to ${selectedOwnerMember.username || selectedOwnerMember.display_name || selectedOwnerMember.user_id}.`
+      );
+    } catch (error) {
+      setOwnerUtilityStatus(`Account badge grant failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
+  const handleOwnerBadgeIconFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      const url = await ownerUploadAccountBadgeIcon(file);
+      setOwnerBadgeBuilderIconUrl(url);
+      setOwnerUtilityStatus('Custom badge icon uploaded.');
+    } catch (error) {
+      setOwnerUtilityStatus(`Icon upload failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      event.target.value = '';
+      setOwnerUtilityBusy(false);
+    }
+  };
+
+  const handleOwnerCreateAccountBadge = async () => {
+    const cleanName = ownerBadgeBuilderName.trim();
+    if (!cleanName) {
+      setOwnerUtilityStatus('Badge name is required.');
+      return;
+    }
+    const cleanCode = (ownerBadgeBuilderCode.trim() || cleanName)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    if (!cleanCode) {
+      setOwnerUtilityStatus('Badge code is required.');
+      return;
+    }
+    setOwnerUtilityBusy(true);
+    setOwnerUtilityStatus(null);
+    try {
+      const row = await ownerCreateAccountBadge({
+        code: cleanCode,
+        name: cleanName,
+        description: ownerBadgeBuilderDescription,
+        icon: ownerBadgeBuilderIcon,
+        iconUrl: ownerBadgeBuilderIconUrl,
+        color: ownerBadgeBuilderColor,
+        obtainable: ownerBadgeBuilderObtainable
+      });
+      setOwnerAccountBadges((current) => [row, ...current.filter((badge) => badge.id !== row.id)]);
+      setOwnerAccountBadgeDraft(row.id);
+      setOwnerBadgeBuilderCode('');
+      setOwnerBadgeBuilderName('');
+      setOwnerBadgeBuilderDescription('');
+      setOwnerBadgeBuilderIconUrl(null);
+      setOwnerBadgeBuilderObtainable('');
+      setOwnerUtilityStatus(`Created account badge ${row.name}.`);
+    } catch (error) {
+      setOwnerUtilityStatus(`Badge create failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOwnerUtilityBusy(false);
+    }
+  };
+
   const handleOwnerApplyCustomCapeCredits = async () => {
     if (!selectedOwnerMember) return;
     const parsed = Number(ownerCustomCapeCreditsDraft);
@@ -2200,12 +2653,13 @@ export function Settings() {
     const lengthRaw = Number(customCapeCodeLength);
     const length = Number.isFinite(lengthRaw) ? Math.max(4, Math.min(64, Math.floor(lengthRaw))) : 12;
     setOwnerUtilityBusy(true);
-    setOwnerUtilityStatus(null);
+    setOwnerUtilityStatus('Generating one-time custom cape code...');
     try {
       const row = await ownerGenerateCustomCapeRewardCode(length, customCapeCodeCharset);
       if (!row) throw new Error('code_generation_failed');
       setCustomCapeCodeLength(String(length));
       setCustomCapeCodes((current) => [row, ...current.filter((item) => item.id !== row.id)]);
+      await refreshOwnerCustomCapeCodes();
       setOwnerUtilityStatus(`Generated one-time code: ${row.code}`);
     } catch (error) {
       setOwnerUtilityStatus(`Code generation failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -2232,13 +2686,14 @@ export function Settings() {
     let mounted = true;
     const loadOwnerAccess = async () => {
       setUpdateOwnerChecking(true);
+      const mcUuid = authState?.profile.id?.replace(/-/g, '').toLowerCase();
       try {
         const allowed = await isCurrentUserOwner();
         if (!mounted) return;
-        setUpdateOwnerAccess(allowed);
+        setUpdateOwnerAccess(allowed || Boolean(mcUuid && OWNER_MINECRAFT_UUIDS.has(mcUuid)));
       } catch {
         if (!mounted) return;
-        setUpdateOwnerAccess(false);
+        setUpdateOwnerAccess(Boolean(mcUuid && OWNER_MINECRAFT_UUIDS.has(mcUuid)));
       } finally {
         if (mounted) setUpdateOwnerChecking(false);
       }
@@ -2247,7 +2702,7 @@ export function Settings() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [authState?.profile.id]);
 
   useEffect(() => {
     if (!selectedOwnerMember) return;
@@ -2275,9 +2730,35 @@ export function Settings() {
   }, [selectedOwnerMember?.user_id, updateOwnerAccess]);
 
   useEffect(() => {
+    if (!selectedOwnerMember || !updateOwnerAccess) {
+      setOwnerUserAccountBadges([]);
+      return;
+    }
+    let cancelled = false;
+    void ownerListUserAccountBadges(selectedOwnerMember.user_id)
+      .then((rows) => {
+        if (cancelled) return;
+        setOwnerUserAccountBadges(rows);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setOwnerUserAccountBadges([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOwnerMember?.user_id, updateOwnerAccess]);
+
+  useEffect(() => {
     if (ownerCapeRevokeId && ownerCapeOptions.some((cape) => cape.id === ownerCapeRevokeId)) return;
     setOwnerCapeRevokeId(ownerCapeOptions[0]?.id ?? '');
   }, [ownerCapeOptions, ownerCapeRevokeId]);
+
+  useEffect(() => {
+    return () => {
+      if (ownerModelPreviewUrl) URL.revokeObjectURL(ownerModelPreviewUrl);
+    };
+  }, [ownerModelPreviewUrl]);
 
   useEffect(() => {
     if (!selectedOwnerMember || !updateOwnerAccess) return;
@@ -2793,8 +3274,14 @@ export function Settings() {
                 <h3 className="text-2xl font-extrabold text-white mt-1">
                   {ownerUtilityTab === 'members-economy'
                     ? 'Members & Economy'
+                    : ownerUtilityTab === 'rewards'
+                      ? 'Rewards'
+                    : ownerUtilityTab === 'badge-builder'
+                      ? 'Badge Builder'
                     : ownerUtilityTab === 'cape-tools'
                       ? 'Cape Tools'
+                      : ownerUtilityTab === 'model-cosmetics'
+                        ? '3D Model Cosmetics'
                       : ownerUtilityTab === 'mcsets-events'
                         ? 'MCsets Events'
                         : 'System'}
@@ -2821,6 +3308,31 @@ export function Settings() {
                 Members & Economy
               </button>
               <button
+                onClick={() => {
+                  setOwnerUtilityTab('rewards');
+                  if (selectedOwnerMember) void refreshOwnerRewards(selectedOwnerMember.user_id);
+                }}
+                className={clsx(
+                  'h-9 flex-1 rounded-lg border text-[10px] font-extrabold uppercase tracking-[0.12em]',
+                  ownerUtilityTab === 'rewards'
+                    ? 'border-[var(--g-accent)] bg-white/[0.08] text-white'
+                    : 'border-white/12 bg-white/[0.02] text-white/70 hover:bg-white/[0.06]'
+                )}
+              >
+                Rewards
+              </button>
+              <button
+                onClick={() => setOwnerUtilityTab('badge-builder')}
+                className={clsx(
+                  'h-9 flex-1 rounded-lg border text-[10px] font-extrabold uppercase tracking-[0.12em]',
+                  ownerUtilityTab === 'badge-builder'
+                    ? 'border-[var(--g-accent)] bg-white/[0.08] text-white'
+                    : 'border-white/12 bg-white/[0.02] text-white/70 hover:bg-white/[0.06]'
+                )}
+              >
+                Badges
+              </button>
+              <button
                 onClick={() => setOwnerUtilityTab('cape-tools')}
                 className={clsx(
                   'h-9 flex-1 rounded-lg border text-[10px] font-extrabold uppercase tracking-[0.12em]',
@@ -2841,6 +3353,17 @@ export function Settings() {
                 )}
               >
                 MCsets Events
+              </button>
+              <button
+                onClick={() => setOwnerUtilityTab('model-cosmetics')}
+                className={clsx(
+                  'h-9 flex-1 rounded-lg border text-[10px] font-extrabold uppercase tracking-[0.12em]',
+                  ownerUtilityTab === 'model-cosmetics'
+                    ? 'border-[var(--g-accent)] bg-white/[0.08] text-white'
+                    : 'border-white/12 bg-white/[0.02] text-white/70 hover:bg-white/[0.06]'
+                )}
+              >
+                3D Models
               </button>
               <button
                 onClick={() => setOwnerUtilityTab('system')}
@@ -2896,7 +3419,7 @@ export function Settings() {
               </aside>
 
               <section className="min-h-0 rounded-xl border border-white/10 bg-white/[0.02] p-4 overflow-auto space-y-4">
-                {(ownerUtilityTab === 'members-economy' || ownerUtilityTab === 'cape-tools') && selectedOwnerMember ? (
+                {(ownerUtilityTab === 'members-economy' || ownerUtilityTab === 'rewards' || ownerUtilityTab === 'cape-tools') && selectedOwnerMember ? (
                   <>
                     <div className="rounded-lg border border-white/10 bg-black/40 p-3">
                       <p className="text-[11px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Selected Member</p>
@@ -3021,6 +3544,50 @@ export function Settings() {
                             Grant Bucks
                           </button>
                         </div>
+                        <div className="rounded-lg border border-white/10 bg-black/30 p-3 space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-[10px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Account Badges</p>
+                              <p className="text-xs text-white/45 mt-1">Badges shown on the premium Account page.</p>
+                            </div>
+                            <button
+                              onClick={() => selectedOwnerMember && void refreshOwnerUserAccountBadges(selectedOwnerMember.user_id)}
+                              disabled={ownerUtilityBusy}
+                              className="g-btn h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                            >
+                              Refresh
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {ownerUserAccountBadges.map((badge) => (
+                              <span key={badge.id} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[10px] font-extrabold uppercase tracking-[0.12em] text-white/75">
+                                {badge.icon_url ? <img src={badge.icon_url} className="h-4 w-4 object-contain" /> : <span style={{ color: badge.color }}>{badge.icon}</span>}
+                                {badge.name}
+                              </span>
+                            ))}
+                            {ownerUserAccountBadges.length === 0 && <p className="text-xs text-white/45">No account badges granted.</p>}
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                            <select
+                              value={ownerAccountBadgeDraft}
+                              onChange={(event) => setOwnerAccountBadgeDraft(event.target.value)}
+                              className="g-input h-10 text-sm"
+                            >
+                              {ownerAccountBadges.map((badge) => (
+                                <option key={badge.id} value={badge.id}>
+                                  {badge.name} ({badge.code})
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => { void handleOwnerGrantAccountBadge(); }}
+                              disabled={ownerUtilityBusy || !ownerAccountBadgeDraft}
+                              className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                            >
+                              Grant Badge
+                            </button>
+                          </div>
+                        </div>
                         <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
                           <input
                             value={ownerCustomCapeCreditsDraft}
@@ -3035,6 +3602,114 @@ export function Settings() {
                           >
                             Apply Credits
                           </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {ownerUtilityTab === 'rewards' && (
+                      <div className="rounded-lg border border-white/10 bg-black/40 p-3 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-[11px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Reward Profile</p>
+                            <p className="text-xs text-white/45 mt-1">Level, XP, streaks, claim history, and static cape codes.</p>
+                          </div>
+                          <button
+                            onClick={() => { void refreshOwnerRewards(selectedOwnerMember.user_id); }}
+                            disabled={ownerUtilityBusy}
+                            className="g-btn h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                          >
+                            Refresh
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                          <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+                            <p className="text-[10px] uppercase tracking-[0.12em] text-white/45 font-extrabold">Level</p>
+                            <p className="text-xl font-extrabold text-white mt-1">{ownerRewardProfile?.level ?? 1}</p>
+                          </div>
+                          <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+                            <p className="text-[10px] uppercase tracking-[0.12em] text-white/45 font-extrabold">XP</p>
+                            <p className="text-xl font-extrabold text-white mt-1">{(ownerRewardProfile?.xp ?? 0).toLocaleString()}</p>
+                          </div>
+                          <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+                            <p className="text-[10px] uppercase tracking-[0.12em] text-white/45 font-extrabold">Streak</p>
+                            <p className="text-xl font-extrabold text-white mt-1">{ownerRewardProfile?.current_streak ?? 0}</p>
+                          </div>
+                          <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+                            <p className="text-[10px] uppercase tracking-[0.12em] text-white/45 font-extrabold">Best</p>
+                            <p className="text-xl font-extrabold text-white mt-1">{ownerRewardProfile?.longest_streak ?? 0}</p>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-2">
+                          <input
+                            value={ownerRewardLevelDraft}
+                            onChange={(event) => setOwnerRewardLevelDraft(event.target.value)}
+                            placeholder="Level"
+                            className="g-input h-10 text-sm"
+                          />
+                          <input
+                            value={ownerRewardXpDraft}
+                            onChange={(event) => setOwnerRewardXpDraft(event.target.value)}
+                            placeholder="XP"
+                            className="g-input h-10 text-sm"
+                          />
+                          <button
+                            onClick={() => { void handleOwnerApplyRewardLevelXp(); }}
+                            disabled={ownerUtilityBusy}
+                            className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                          >
+                            Set Reward Stats
+                          </button>
+                        </div>
+
+                        <div className="rounded-lg border border-white/10 bg-black/30 p-3 space-y-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-[10px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Static Cape Codes</p>
+                            <button
+                              onClick={() => { void handleOwnerGrantStaticCapeReward(); }}
+                              disabled={ownerUtilityBusy}
+                              className="g-btn-accent h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                            >
+                              Grant Code
+                            </button>
+                          </div>
+                          {ownerRewardCapeCodes.length ? ownerRewardCapeCodes.map((code) => (
+                            <div key={code.id} className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/35 px-3 py-2">
+                              <div>
+                                <p className="text-xs font-extrabold text-white">{code.code}</p>
+                                <p className="text-[11px] text-white/45">{code.source} · {code.used ? 'used' : 'unused'}</p>
+                              </div>
+                              <button
+                                onClick={() => { void handleOwnerRevokeStaticCapeReward(code.id); }}
+                                disabled={ownerUtilityBusy}
+                                className="g-btn h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                              >
+                                Revoke
+                              </button>
+                            </div>
+                          )) : <p className="text-xs text-white/45">No static cape codes.</p>}
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="rounded-lg border border-white/10 bg-black/30 p-3 space-y-2">
+                            <p className="text-[10px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Daily Claims</p>
+                            {ownerRewardClaims.slice(0, 6).map((claim) => (
+                              <p key={claim.id} className="text-xs text-white/60">
+                                {new Date(claim.claimed_at).toLocaleString()} · streak {claim.streak_after_claim} · +{claim.xp_awarded} XP
+                              </p>
+                            ))}
+                            {ownerRewardClaims.length === 0 && <p className="text-xs text-white/45">No claims yet.</p>}
+                          </div>
+                          <div className="rounded-lg border border-white/10 bg-black/30 p-3 space-y-2">
+                            <p className="text-[10px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Milestones</p>
+                            {ownerRewardMilestones.slice(0, 6).map((reward) => (
+                              <p key={reward.id} className="text-xs text-white/60">
+                                {reward.milestone_days} days · {reward.cape_codes_awarded} code{reward.cape_codes_awarded === 1 ? '' : 's'}
+                              </p>
+                            ))}
+                            {ownerRewardMilestones.length === 0 && <p className="text-xs text-white/45">No milestones yet.</p>}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -3086,7 +3761,166 @@ export function Settings() {
                     )}
                   </>
                 ) : (
-                  ownerUtilityTab === 'mcsets-events' ? (
+                  ownerUtilityTab === 'model-cosmetics' ? (
+                    <div className="rounded-lg border border-white/10 bg-black/40 p-4 space-y-4">
+                      <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <input value={ownerModelSlug} onChange={(event) => setOwnerModelSlug(event.target.value)} className="g-input h-10 text-sm" placeholder="slug, e.g. bloom-top-hat" />
+                            <input value={ownerModelName} onChange={(event) => setOwnerModelName(event.target.value)} className="g-input h-10 text-sm" placeholder="Name" />
+                          </div>
+                          <textarea
+                            value={ownerModelDescription}
+                            onChange={(event) => setOwnerModelDescription(event.target.value)}
+                            className="g-input min-h-[82px] resize-none py-2 text-sm"
+                            placeholder="Description"
+                          />
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <input value={ownerModelPrice} onChange={(event) => setOwnerModelPrice(event.target.value)} className="g-input h-10 text-sm" placeholder="Price BB" />
+                            <input value={ownerModelRarity} onChange={(event) => setOwnerModelRarity(event.target.value)} className="g-input h-10 text-sm" placeholder="Rarity" />
+                          </div>
+                          <div className="grid grid-cols-1 gap-2">
+                            <label className="g-btn h-10 cursor-pointer px-4 text-xs font-extrabold uppercase tracking-[0.12em]">
+                              Blockbench .BBMODEL
+                              <input type="file" accept=".bbmodel,application/json" className="hidden" onChange={(event) => { void handleOwnerModelBbmodelFile(event); }} />
+                            </label>
+                          </div>
+                          <div className="grid grid-cols-1 gap-2">
+                            <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/55">Preview Zoom</span>
+                                <span className="text-xs font-bold text-white/70">{ownerModelPreviewZoom.toFixed(1)}x</span>
+                              </div>
+                              <input
+                                type="range"
+                                min={0.8}
+                                max={3}
+                                step={0.1}
+                                value={ownerModelPreviewZoom}
+                                onChange={(event) => setOwnerModelPreviewZoom(Number(event.target.value))}
+                                className="g-range mt-1 w-full"
+                              />
+                            </div>
+                          </div>
+                          <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-white/60">
+                            <p className="font-bold text-white/75">.bbmodel: {ownerModelBbmodelFile?.name ?? 'none'}</p>
+                            <p className="mt-1 font-bold text-white/75">Texture: {ownerModelPreviewUrl ? 'embedded' : 'none embedded'}</p>
+                            <p className="mt-1 font-bold text-white/75">UV map: {ownerModelPreview ? `${ownerModelPreview.textureWidth}x${ownerModelPreview.textureHeight}` : 'unknown'}</p>
+                            <p className="mt-1 font-bold text-white/75">PNG: {ownerModelPngSize ? `${ownerModelPngSize.width}x${ownerModelPngSize.height}` : 'unknown'}</p>
+                            {ownerModelUvMismatchWarning && (
+                              <p className="mt-2 rounded-md border border-amber-300/30 bg-amber-400/10 px-2 py-2 font-bold text-amber-100">
+                                {ownerModelUvMismatchWarning}
+                              </p>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => { void handleOwnerCreateModelCosmetic(); }}
+                            disabled={ownerUtilityBusy || !ownerModelPreview}
+                            className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                          >
+                            {ownerUtilityBusy ? 'Creating...' : 'Create 3D Cosmetic'}
+                          </button>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+                          <div className="h-[260px]">
+                            {ownerModelPreview && ownerModelPreviewUrl ? (
+                              <CosmeticModelPreview3D model={ownerModelPreview} textureUrl={ownerModelPreviewUrl} label={ownerModelName || 'Model cosmetic'} className="h-full w-full" zoom={ownerModelPreviewZoom} />
+                            ) : (
+                              <div className="flex h-full items-center justify-center text-xs text-white/45">Preview appears after JSON and PNG import.</div>
+                            )}
+                          </div>
+                          <p className="mt-3 text-xs text-white/55">
+                            Slot: head. Boxes: {ownerModelPreview?.boxes.length ?? 0}.
+                          </p>
+                        </div>
+                      </div>
+                      {ownerUtilityStatus && <p className="text-xs text-white/70">{ownerUtilityStatus}</p>}
+                    </div>
+                  ) : ownerUtilityTab === 'badge-builder' ? (
+                    <div className="rounded-lg border border-white/10 bg-black/40 p-4 space-y-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-sm font-extrabold text-white">Account Badge Builder</p>
+                          <p className="text-xs text-white/60 mt-1">Create Supabase-backed badges for the Account page.</p>
+                        </div>
+                        <button
+                          onClick={() => { void refreshOwnerAccountBadges(); }}
+                          className="g-btn h-9 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]"
+                        >
+                          Refresh Badges
+                        </button>
+                      </div>
+                      <div className="grid gap-4 xl:grid-cols-[1fr_300px]">
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <input value={ownerBadgeBuilderName} onChange={(event) => setOwnerBadgeBuilderName(event.target.value)} className="g-input h-10 text-sm" placeholder="Badge name" />
+                            <input value={ownerBadgeBuilderCode} onChange={(event) => setOwnerBadgeBuilderCode(event.target.value)} className="g-input h-10 text-sm" placeholder="Code, optional" />
+                          </div>
+                          <textarea
+                            value={ownerBadgeBuilderDescription}
+                            onChange={(event) => setOwnerBadgeBuilderDescription(event.target.value)}
+                            className="g-input min-h-[84px] resize-none py-2 text-sm"
+                            placeholder="Description"
+                          />
+                          <input value={ownerBadgeBuilderObtainable} onChange={(event) => setOwnerBadgeBuilderObtainable(event.target.value)} className="g-input h-10 text-sm" placeholder="How to obtain" />
+                          <div className="grid grid-cols-1 md:grid-cols-[1fr_120px] gap-2">
+                            <select
+                              value={ownerBadgeBuilderIcon}
+                              onChange={(event) => {
+                                setOwnerBadgeBuilderIcon(event.target.value as (typeof ACCOUNT_BADGE_ICON_OPTIONS)[number]);
+                                setOwnerBadgeBuilderIconUrl(null);
+                              }}
+                              className="g-input h-10 text-sm"
+                            >
+                              {ACCOUNT_BADGE_ICON_OPTIONS.map((icon) => (
+                                <option key={icon} value={icon}>{icon}</option>
+                              ))}
+                            </select>
+                            <input value={ownerBadgeBuilderColor} onChange={(event) => setOwnerBadgeBuilderColor(event.target.value)} type="color" className="h-10 w-full rounded-lg border border-white/12 bg-white/[0.04] p-1" />
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <label className="g-btn h-10 cursor-pointer px-4 text-xs font-extrabold uppercase tracking-[0.12em]">
+                              Import .ICO
+                              <input type="file" accept=".ico,image/x-icon,image/vnd.microsoft.icon" className="hidden" onChange={(event) => { void handleOwnerBadgeIconFile(event); }} />
+                            </label>
+                            {ownerBadgeBuilderIconUrl && (
+                              <button onClick={() => setOwnerBadgeBuilderIconUrl(null)} className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em]">
+                                Use Library Icon
+                              </button>
+                            )}
+                            <button onClick={() => { void handleOwnerCreateAccountBadge(); }} disabled={ownerUtilityBusy} className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50">
+                              Create Badge
+                            </button>
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-[10px] uppercase tracking-[0.16em] text-white/45 font-extrabold">Live Preview</p>
+                          <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-extrabold uppercase tracking-[0.14em] text-white">
+                            {ownerBadgeBuilderIconUrl ? <img src={ownerBadgeBuilderIconUrl} className="h-5 w-5 object-contain" /> : <span style={{ color: ownerBadgeBuilderColor }}>{ownerBadgeBuilderIcon}</span>}
+                            {ownerBadgeBuilderName || 'New Badge'}
+                          </div>
+                          <p className="mt-4 text-sm font-bold text-white">{ownerBadgeBuilderName || 'New Badge'}</p>
+                          <p className="mt-2 text-xs leading-5 text-white/55">{ownerBadgeBuilderDescription || 'Badge description preview.'}</p>
+                          <p className="mt-3 text-xs text-white/45">Obtained: {ownerBadgeBuilderObtainable || 'How users get this badge.'}</p>
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+                        <p className="text-[11px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Existing Badges</p>
+                        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                          {ownerAccountBadges.map((badge) => (
+                            <div key={badge.id} className="rounded-lg border border-white/10 bg-white/[0.025] p-3">
+                              <div className="flex items-center gap-2">
+                                {badge.icon_url ? <img src={badge.icon_url} className="h-5 w-5 object-contain" /> : <span style={{ color: badge.color }}>{badge.icon}</span>}
+                                <p className="text-sm font-extrabold text-white">{badge.name}</p>
+                              </div>
+                              <p className="mt-2 text-[10px] text-white/40">{badge.code}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      {ownerUtilityStatus && <p className="text-xs text-white/70">{ownerUtilityStatus}</p>}
+                    </div>
+                  ) : ownerUtilityTab === 'mcsets-events' ? (
                     <div className="rounded-lg border border-white/10 bg-black/40 p-4 space-y-2">
                       <p className="text-sm font-extrabold text-white">MCsets Events</p>
                       <p className="text-xs text-white/60">Webhook processing is active in Supabase Edge Functions.</p>
@@ -3117,9 +3951,26 @@ export function Settings() {
                           disabled={ownerUtilityBusy}
                           className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
                         >
-                          Generate One-Time Code
+                          {ownerUtilityBusy ? 'Generating...' : 'Generate One-Time Code'}
                         </button>
                       </div>
+                      {ownerUtilityStatus && (
+                        <div
+                          className={clsx(
+                            'rounded-lg border px-3 py-2 text-xs font-bold',
+                            ownerUtilityStatus.toLowerCase().includes('failed') ||
+                              ownerUtilityStatus.toLowerCase().includes('required') ||
+                              ownerUtilityStatus.toLowerCase().includes('owner_role_required') ||
+                              ownerUtilityStatus.toLowerCase().includes('auth_required')
+                              ? 'border-red-400/35 bg-red-500/12 text-red-100'
+                              : ownerUtilityStatus.toLowerCase().includes('generated')
+                                ? 'border-emerald-400/35 bg-emerald-500/12 text-emerald-100'
+                                : 'border-white/10 bg-white/[0.04] text-white/70'
+                          )}
+                        >
+                          {ownerUtilityStatus}
+                        </div>
+                      )}
                       <div className="rounded-lg border border-white/10 bg-black/30 p-3 space-y-2">
                         <div className="flex items-center justify-between gap-3">
                           <p className="text-[11px] uppercase tracking-[0.12em] text-white/55 font-extrabold">Recent Codes</p>
@@ -3654,6 +4505,28 @@ export function Settings() {
             </div>
           </AppearanceDropdown>
 
+          <AppearanceDropdown title="Master Roundness" description="Sets every roundness control at once: panels, buttons, sidebar buttons, widgets, instance slots, and glass.">
+            <div className="mt-3 flex items-center gap-3">
+              <input type="range" min={0} max={100} step={1} value={masterRoundnessLevel} onChange={(event) => applyMasterRoundness(Number(event.target.value))} className="w-full g-range" />
+              <span className="w-12 text-right text-sm font-extrabold text-white">{masterRoundnessLevel}</span>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {[
+                { value: 0, label: 'Sharp' },
+                { value: 50, label: 'Soft' },
+                { value: 100, label: 'Round' }
+              ].map((preset) => (
+                <button
+                  key={preset.value}
+                  onClick={() => applyMasterRoundness(preset.value)}
+                  className={clsx('g-btn h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]', masterRoundnessLevel === preset.value ? 'g-btn-accent' : '')}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </AppearanceDropdown>
+
           <AppearanceDropdown title="Button Roundness" description="Separate corner control for buttons. Set it to 0 for rectangular buttons.">
             <div className="mt-3 flex items-center gap-3">
               <input type="range" min={0} max={100} step={1} value={buttonRoundnessLevel} onChange={(event) => applyButtonRoundness(Number(event.target.value))} className="w-full g-range" />
@@ -3661,10 +4534,53 @@ export function Settings() {
             </div>
           </AppearanceDropdown>
 
+          <AppearanceDropdown title="Sidebar Button Roundness" description="Controls only the sidebar icon buttons. Use 0 for square, 100 for full circles.">
+            <div className="mt-3 flex items-center gap-3">
+              <input type="range" min={0} max={100} step={1} value={sidebarButtonRoundnessLevel} onChange={(event) => applySidebarButtonRoundness(Number(event.target.value))} className="w-full g-range" />
+              <span className="w-12 text-right text-sm font-extrabold text-white">{sidebarButtonRoundnessLevel}</span>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {[
+                { value: 0, label: 'Square' },
+                { value: 67, label: 'Default' },
+                { value: 100, label: 'Circle' }
+              ].map((preset) => (
+                <button
+                  key={preset.value}
+                  onClick={() => applySidebarButtonRoundness(preset.value)}
+                  className={clsx('g-btn h-8 px-3 text-[10px] font-extrabold uppercase tracking-[0.12em]', sidebarButtonRoundnessLevel === preset.value ? 'g-btn-accent' : '')}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </AppearanceDropdown>
+
           <AppearanceDropdown title="Roundedness" description="Sharp to pill shape across core UI panels and controls.">
             <div className="mt-3 flex items-center gap-3">
               <input type="range" min={0} max={100} step={1} value={roundnessLevel} onChange={(event) => applyRoundness(Number(event.target.value))} className="w-full g-range" />
               <span className="w-12 text-right text-sm font-extrabold text-white">{roundnessLevel}</span>
+            </div>
+          </AppearanceDropdown>
+
+          <AppearanceDropdown title="Glass Roundness" description="Controls the corner radius on glass panels and glass cards.">
+            <div className="mt-3 flex items-center gap-3">
+              <input type="range" min={0} max={100} step={1} value={glassRoundnessLevel} onChange={(event) => applyGlassRoundness(Number(event.target.value))} className="w-full g-range" />
+              <span className="w-12 text-right text-sm font-extrabold text-white">{glassRoundnessLevel}</span>
+            </div>
+          </AppearanceDropdown>
+
+          <AppearanceDropdown title="Widget Border Roundness" description="Controls the outer widget frames and draggable widget title bars.">
+            <div className="mt-3 flex items-center gap-3">
+              <input type="range" min={0} max={100} step={1} value={widgetBorderRoundnessLevel} onChange={(event) => applyWidgetBorderRoundness(Number(event.target.value))} className="w-full g-range" />
+              <span className="w-12 text-right text-sm font-extrabold text-white">{widgetBorderRoundnessLevel}</span>
+            </div>
+          </AppearanceDropdown>
+
+          <AppearanceDropdown title="Instance Slot Roundness" description="Controls the instance list rows inside the Instances widget.">
+            <div className="mt-3 flex items-center gap-3">
+              <input type="range" min={0} max={100} step={1} value={instanceSlotRoundnessLevel} onChange={(event) => applyInstanceSlotRoundness(Number(event.target.value))} className="w-full g-range" />
+              <span className="w-12 text-right text-sm font-extrabold text-white">{instanceSlotRoundnessLevel}</span>
             </div>
           </AppearanceDropdown>
 
@@ -4111,6 +5027,7 @@ export function Settings() {
                 { id: 'marketplace', label: 'Marketplace' },
                 { id: 'importer', label: 'Importer' },
                 { id: 'widgets', label: 'Widgets' },
+                { id: 'notes', label: 'Notes' },
                 { id: 'chat', label: 'Chat' },
                 { id: 'script-studio', label: 'Script Studio (IDE)' },
                 { id: 'host-server', label: 'Host Server' },
@@ -4524,10 +5441,10 @@ export function Settings() {
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
               <div>
                 <p className="text-xs uppercase tracking-[0.14em] font-extrabold text-white/60">Owner Update Publisher</p>
-                <p className="text-xs g-muted mt-1">Upload one new `.exe` and Bloom will replace `updates/BloomClient-latest-x64-setup.exe` and regenerate `updates/latest.json` automatically.</p>
+                <p className="text-xs g-muted mt-1">Upload the release `.exe` and `.msi`. Bloom deletes old update files and regenerates `updates/latest.json` from the filenames you choose.</p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-2">
                 <input
                   value={updatePublishVersion}
                   onChange={(event) => setUpdatePublishVersion(event.target.value)}
@@ -4541,6 +5458,13 @@ export function Settings() {
                 >
                   {updatePublishInstaller ? 'Change .exe' : 'Choose .exe'}
                 </button>
+                <button
+                  onClick={() => publishMsiInputRef.current?.click()}
+                  disabled={publishingUpdate}
+                  className="g-btn h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
+                >
+                  {updatePublishMsi ? 'Change .msi' : 'Choose .msi'}
+                </button>
               </div>
 
               <input
@@ -4553,14 +5477,29 @@ export function Settings() {
                   setUpdatePublishInstaller(file);
                 }}
               />
+              <input
+                ref={publishMsiInputRef}
+                type="file"
+                accept=".msi,application/x-msi,application/x-ms-installer"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  setUpdatePublishMsi(file);
+                }}
+              />
 
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[11px] text-white/65">
-                  {updatePublishInstaller ? `Selected: ${updatePublishInstaller.name}` : 'No installer selected.'}
-                </p>
+                <div className="space-y-1">
+                  <p className="text-[11px] text-white/65">
+                    EXE: {updatePublishInstaller ? updatePublishInstaller.name : 'No .exe selected.'}
+                  </p>
+                  <p className="text-[11px] text-white/65">
+                    MSI: {updatePublishMsi ? updatePublishMsi.name : 'No .msi selected.'}
+                  </p>
+                </div>
                 <button
                   onClick={() => { void runPublishUpdate(); }}
-                  disabled={publishingUpdate || !updatePublishInstaller || !updatePublishVersion.trim()}
+                  disabled={publishingUpdate || !updatePublishInstaller || !updatePublishMsi || !updatePublishVersion.trim()}
                   className="g-btn-accent h-10 px-4 text-xs font-extrabold uppercase tracking-[0.12em] disabled:opacity-50"
                 >
                   {publishingUpdate ? 'Publishing...' : 'Publish Update'}
