@@ -809,7 +809,7 @@ main {
 .auth-card,
 .dashboard-panel,
 .dashboard-tabs,
-.license-options article,
+.license-card,
 .license-key-box,
 .billing-row {
   border: 1px solid var(--line);
@@ -828,7 +828,7 @@ main {
 
 .auth-card h2,
 .dashboard-panel h2,
-.license-options h2 {
+.license-card h2 {
   margin: 0;
   font-size: 24px;
 }
@@ -915,7 +915,7 @@ main {
 }
 
 .profile-row p,
-.license-options p,
+.license-card p,
 .billing-row span {
   color: var(--muted);
 }
@@ -945,18 +945,186 @@ main {
 .license-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 16px;
 }
 
-.license-options article,
+.license-card,
 .license-key-box,
 .billing-row {
   padding: 16px;
 }
 
-.license-options p {
+.license-card {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-height: 370px;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.025)),
+    rgba(6, 10, 11, 0.74);
+}
+
+.license-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.14), transparent 38%, rgba(255, 255, 255, 0.08));
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  padding: 1px;
+}
+
+.license-card-lifetime::before {
+  background: linear-gradient(
+    120deg,
+    rgba(86, 255, 155, 0.88),
+    rgba(175, 255, 214, 0.34),
+    rgba(54, 172, 103, 0.72),
+    rgba(86, 255, 155, 0.88)
+  );
+  background-size: 260% 260%;
+  animation: licenseBorderFlow 5200ms linear infinite;
+  padding: 1.5px;
+}
+
+.license-card-lifetime {
+  box-shadow:
+    0 0 0 1px rgba(86, 255, 155, 0.08),
+    0 18px 60px rgba(0, 0, 0, 0.36),
+    0 0 38px rgba(86, 255, 155, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.license-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.license-card-icon {
+  width: 42px;
+  height: 42px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.license-card-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: rgba(247, 247, 242, 0.86);
+}
+
+.license-card-lifetime .license-card-icon {
+  border-color: rgba(86, 255, 155, 0.24);
+  background: rgba(86, 255, 155, 0.08);
+}
+
+.license-card-lifetime .license-card-icon svg {
+  fill: rgba(160, 255, 205, 0.96);
+}
+
+.license-price {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.license-price strong {
+  color: var(--text);
+  font-size: 30px;
+  line-height: 1;
+}
+
+.license-price span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.license-card-copy {
+  display: grid;
+  gap: 7px;
+  min-height: 96px;
+}
+
+.license-card-copy .eyebrow {
+  margin: 0;
+}
+
+.license-card-copy p {
+  max-width: 34ch;
+}
+
+.license-card .btn {
+  width: 100%;
+  min-height: 42px;
+}
+
+.license-card-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.license-card-list span {
+  position: relative;
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(247, 247, 242, 0.72);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.license-card-list span::before {
+  content: "";
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background:
+    linear-gradient(135deg, transparent 54%, rgba(255, 255, 255, 0.72) 55% 63%, transparent 64%),
+    linear-gradient(45deg, transparent 42%, rgba(255, 255, 255, 0.72) 43% 52%, transparent 53%),
+    rgba(255, 255, 255, 0.045);
+}
+
+.license-card-lifetime .license-card-list span::before {
+  border-color: rgba(86, 255, 155, 0.28);
+  background:
+    linear-gradient(135deg, transparent 54%, rgba(158, 255, 204, 0.96) 55% 63%, transparent 64%),
+    linear-gradient(45deg, transparent 42%, rgba(158, 255, 204, 0.96) 43% 52%, transparent 53%),
+    rgba(86, 255, 155, 0.08);
+}
+
+.license-card > p {
   margin: 0;
   font-size: 13px;
+}
+
+@keyframes licenseBorderFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  100% {
+    background-position: 260% 50%;
+  }
 }
 
 .license-key-box {
