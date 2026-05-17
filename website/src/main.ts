@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { animate as animeAnimate, stagger } from "animejs";
 import "./style.css";
+import "./dashboard.css";
 
 type UpdatePlatform = {
   installerUrl?: string;
@@ -965,115 +966,164 @@ function renderDashboard(): string {
   const latestPurchase = state.budPurchases[0];
   const activeLicense = state.budLicenses.find((license) => !license.revoked) || state.budLicenses[0];
   const keyReveal = state.revealedBudKey
-    ? `<article class="license-key-box">
+    ? `<div class="dash-license-key">
         <p>${escapeHtml(state.revealedBudKey.message)}</p>
-        <code>${escapeHtml(state.revealedBudKey.license_key)}</code>
-        <button class="btn secondary" type="button" data-copy-bud-key="${escapeHtml(state.revealedBudKey.license_key)}">Copy key</button>
-      </article>`
+        <div class="dash-key-row">
+          <code>${escapeHtml(state.revealedBudKey.license_key)}</code>
+          <button class="dash-ghost-button" type="button" data-copy-bud-key="${escapeHtml(state.revealedBudKey.license_key)}">Copy</button>
+        </div>
+      </div>`
     : "";
 
   const profileTab = `
-    <section class="dashboard-panel">
-      <div class="profile-row">
-        ${avatarMarkup("dashboard-avatar")}
+    <section class="dash-view dash-profile-view">
+      <div class="dash-section-heading">
+        <span>Profile</span>
+        <h1>Account details</h1>
+        <p>Update the identity shown on Bloom Productions services.</p>
+      </div>
+      <div class="dash-profile-head">
+        ${avatarMarkup("dash-avatar")}
         <div>
           <h2>${escapeHtml(profileName())}</h2>
           <p>${escapeHtml(currentUser()?.email || state.profile?.email || "No email")}</p>
         </div>
       </div>
-      <form class="dashboard-form" data-profile-form>
-        <label>Username<input name="username" type="text" value="${escapeHtml(profileName())}" minlength="3" maxlength="32" required /></label>
-        <label>Profile picture<input name="avatar" type="file" accept="image/png,image/jpeg,image/webp" /></label>
-        <button class="btn primary" type="submit">Save profile</button>
+      <form class="dash-form" data-profile-form>
+        <label>
+          <span>Username</span>
+          <input name="username" type="text" value="${escapeHtml(profileName())}" minlength="3" maxlength="32" required />
+        </label>
+        <label>
+          <span>Email</span>
+          <input type="email" value="${escapeHtml(currentUser()?.email || state.profile?.email || "")}" disabled />
+        </label>
+        <label>
+          <span>Profile picture</span>
+          <input name="avatar" type="file" accept="image/png,image/jpeg,image/webp" />
+        </label>
+        <button class="dash-primary-button" type="submit">Save profile</button>
         <p class="auth-message" data-profile-message></p>
       </form>
     </section>
   `;
 
   const budTab = `
-    <section class="dashboard-panel">
-      <div class="license-status">
-        <span>Status</span><strong>${escapeHtml(state.profile?.bud_license_status || "none")}</strong>
-        <span>Plan</span><strong>${escapeHtml(state.profile?.bud_plan || activeLicense?.plan || "none")}</strong>
-        <span>Activation</span><strong>${activeLicense?.activated ? "Activated" : activeLicense ? "Not activated" : "No key"}</strong>
+    <section class="dash-view dash-license-view">
+      <div class="dash-section-heading">
+        <span>BUD License</span>
+        <h1>License access</h1>
+        <p>Manage the license used to activate BUD inside SkStudio.</p>
+      </div>
+      <div class="dash-license-strip">
+        <div>
+          <span>LICENSE</span>
+          <strong>${escapeHtml(state.profile?.bud_license_status || "none")}</strong>
+        </div>
+        <div>
+          <span>PLAN</span>
+          <strong>${escapeHtml(state.profile?.bud_plan || activeLicense?.plan || "none")}</strong>
+        </div>
+        <div>
+          <span>ACTIVATION</span>
+          <strong>${activeLicense?.activated ? "Activated" : activeLicense ? "Not activated" : "No key"}</strong>
+        </div>
       </div>
       ${state.budSummaryError ? `<p class="auth-message error">${escapeHtml(state.budSummaryError)}</p>` : ""}
-      <div class="license-options">
-        <article class="license-card license-card-lifetime">
-          <span class="license-badge">Lifetime</span>
-          <div class="license-price">
+      <div class="dash-pricing">
+        <article class="dash-price-card dash-price-card-lifetime">
+          <span class="dash-price-label">Lifetime</span>
+          <div class="dash-price">
             <strong>$50</strong>
-            <span>/ one time</span>
+            <span>one time</span>
           </div>
-          <div class="license-card-copy">
-            <h2>BUD AI License</h2>
-            <p>One-time payment for a BUD AI license.</p>
-          </div>
-          <button class="btn primary" type="button" data-bud-checkout="lifetime">Buy lifetime</button>
-          <div class="license-card-list">
+          <p>One-time payment.</p>
+          <div class="dash-price-line">
             <span>Get a BUD AI license</span>
           </div>
+          <button class="dash-price-button" type="button" data-bud-checkout="lifetime">Buy lifetime</button>
         </article>
-        <article class="license-card">
-          <span class="license-badge">Monthly</span>
-          <div class="license-price">
+        <article class="dash-price-card">
+          <span class="dash-price-label">Monthly</span>
+          <div class="dash-price">
             <strong>$10</strong>
             <span>/month</span>
           </div>
-          <div class="license-card-copy">
-            <h2>BUD AI License</h2>
-            <p>Monthly billing for an active BUD AI license.</p>
-          </div>
-          <button class="btn primary" type="button" data-bud-checkout="monthly" ${state.budMonthlyAvailable ? "" : "disabled"}>Subscribe monthly</button>
-          ${state.budMonthlyAvailable ? "" : `<p>Monthly needs the MCsets subscription price id configured.</p>`}
-          <div class="license-card-list">
+          <p>Monthly billing.</p>
+          <div class="dash-price-line">
             <span>Get a BUD AI license</span>
           </div>
+          <button class="dash-price-button" type="button" data-bud-checkout="monthly" ${state.budMonthlyAvailable ? "" : "disabled"}>Subscribe monthly</button>
+          ${state.budMonthlyAvailable ? "" : `<p class="dash-muted-line">Monthly needs the MCsets subscription price id configured.</p>`}
         </article>
       </div>
-      <button class="btn secondary" type="button" data-claim-bud-key>Show new license key</button>
-      <p class="support-note">Save this key. You will use it inside SkStudio to activate BUD.</p>
+      <button class="dash-ghost-button dash-key-button" type="button" data-claim-bud-key>Show new license key</button>
+      <p class="dash-warning">Save this key. You will use it inside SkStudio to activate BUD.</p>
       ${keyReveal}
     </section>
   `;
 
   const billingTab = `
-    <section class="dashboard-panel">
+    <section class="dash-view dash-billing-view">
+      <div class="dash-section-heading">
+        <span>Billing</span>
+        <h1>Purchase history</h1>
+        <p>Only completed BUD purchases and subscription records appear here.</p>
+      </div>
+      <div class="dash-billing-list">
       ${
         state.budPurchases.length
           ? state.budPurchases
               .map(
                 (purchase) => `
-                  <article class="billing-row">
+                  <div class="dash-billing-row">
                     <div>
                       <strong>${escapeHtml(purchase.plan)}</strong>
                       <span>${escapeHtml(formatDate(purchase.completed_at || purchase.created_at))}</span>
                     </div>
                     <span>${escapeHtml(purchase.status)}</span>
                     <strong>${escapeHtml(formatMoney(purchase.amount_cents, purchase.currency))}</strong>
-                  </article>
+                  </div>
                 `
               )
               .join("")
-          : `<article class="support-state"><h2>No billing yet.</h2><p>BUD purchases will show here after checkout.</p></article>`
+          : `<p class="dash-empty">No billing yet. BUD purchases will show here after checkout.</p>`
       }
+      </div>
     </section>
   `;
 
+  const dashboardTabs = [
+    { id: "profile", label: "Profile", href: "/dashboard?tab=profile" },
+    { id: "bud", label: "BUD License", href: "/dashboard?tab=bud" },
+    { id: "billing", label: "Billing", href: "/dashboard?tab=billing" }
+  ];
+  const dashboardEmail = currentUser()?.email || state.profile?.email || "No email";
+
   return `
-    <section class="page-hero compact">
-      <p class="eyebrow">Dashboard</p>
-      <h1>Your Bloom account</h1>
-      <p>Profile, BUD license, and billing for SkStudio.</p>
-    </section>
-    <section class="dashboard-shell">
-      <nav class="dashboard-tabs">
-        <a class="${tab === "profile" ? "active" : ""}" href="/dashboard?tab=profile" data-route="/dashboard?tab=profile">Profile</a>
-        <a class="${tab === "bud" ? "active" : ""}" href="/dashboard?tab=bud" data-route="/dashboard?tab=bud">BUD License</a>
-        <a class="${tab === "billing" ? "active" : ""}" href="/dashboard?tab=billing" data-route="/dashboard?tab=billing">Billing</a>
-        <button class="btn secondary" type="button" data-logout>Logout</button>
-      </nav>
-      ${tab === "bud" ? budTab : tab === "billing" ? billingTab : profileTab}
+    <section class="dash-app" aria-label="Bloom account dashboard">
+      <aside class="dash-sidebar">
+        <button class="dash-account-chip" type="button" data-logout title="Sign out">
+          ${avatarMarkup("dash-side-avatar")}
+          <span>${escapeHtml(profileName())}</span>
+          <span class="dash-account-caret">⌄</span>
+        </button>
+        <nav class="dash-side-tabs" aria-label="Dashboard tabs">
+          ${dashboardTabs
+            .map(
+              (item) => `
+                <a class="${tab === item.id ? "active" : ""}" href="${item.href}" data-route="${item.href}">
+                  ${escapeHtml(item.label)}
+                </a>
+              `
+            )
+            .join("")}
+        </nav>
+        <p class="dash-side-email">${escapeHtml(dashboardEmail)}</p>
+      </aside>
+      <main class="dash-main">
+        ${tab === "bud" ? budTab : tab === "billing" ? billingTab : profileTab}
+      </main>
     </section>
   `;
 }
