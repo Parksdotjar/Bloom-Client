@@ -1509,10 +1509,6 @@ function runPageAnimations(isRouteChange = false): void {
     delay: stagger(80, { start: 320 }),
     ease: "outCubic"
   });
-
-  root.querySelectorAll<HTMLElement>(animatedPageSelector()).forEach((element) => {
-    element.style.opacity = "1";
-  });
 }
 
 function mount(isRouteChange = false, skipAnimations = false): void {
