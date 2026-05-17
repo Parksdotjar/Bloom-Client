@@ -24,6 +24,7 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_ANON_KEY) {
 }
 
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+const OWNER_USER_IDS = new Set(["951a26df-2baa-445e-8dd6-30d4878eade2"]);
 
 function jsonResponse(status: number, body: JsonObject) {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
@@ -148,7 +149,8 @@ async function requireOwner(request: Request) {
   const profile = await ensureProfile(user);
   const isParksEmail = (user.email ?? "").toLowerCase() === "urlocalparks@gmail.com";
   const isParksProfile = asString(profile.username)?.toLowerCase() === "parks" && asString(profile.email)?.toLowerCase() === "urlocalparks@gmail.com";
-  if (profile.role !== "owner" || !isParksEmail || !isParksProfile) {
+  const isAllowedOwner = (isParksEmail && isParksProfile) || OWNER_USER_IDS.has(user.id);
+  if (profile.role !== "owner" || !isAllowedOwner) {
     return { response: jsonResponse(403, { ok: false, error: "owner_required" }) };
   }
   return { user, profile };

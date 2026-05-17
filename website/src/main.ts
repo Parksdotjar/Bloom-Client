@@ -210,6 +210,7 @@ const staffMembers = [
 ];
 
 const discordInviteUrl = "https://discord.gg/aSCnu2CTm6";
+const ownerUserIds = new Set(["951a26df-2baa-445e-8dd6-30d4878eade2"]);
 
 const faqItems = [
   {
@@ -509,10 +510,17 @@ async function claimBudKey(): Promise<void> {
 }
 
 function isOwnerProfile(): boolean {
+  const user = currentUser();
+  const isAllowedOwner = user?.id ? ownerUserIds.has(user.id) : false;
   return (
     state.profile?.role === "owner" &&
-    profileName().toLowerCase() === "parks" &&
-    String(currentUser()?.email || state.profile?.email || "").toLowerCase() === "urlocalparks@gmail.com"
+    (
+      isAllowedOwner ||
+      (
+        profileName().toLowerCase() === "parks" &&
+        String(user?.email || state.profile?.email || "").toLowerCase() === "urlocalparks@gmail.com"
+      )
+    )
   );
 }
 
