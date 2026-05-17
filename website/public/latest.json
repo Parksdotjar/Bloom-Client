@@ -1,21 +1,22 @@
-{
-  "version": "2.0.0",
-  "installerUrl": "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/Bloom%20Client_2.0.0_x64-setup.exe",
-  "assetName": "Bloom Client_2.0.0_x64-setup.exe",
-  "msiUrl": "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/Bloom%20Client_2.0.0_x64_en-US.msi",
-  "msiAssetName": "Bloom Client_2.0.0_x64_en-US.msi",
-  "fallbackInstallerUrls": [
-    "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/Bloom%20Client_latest_x64-setup.exe"
-  ],
-  "windows": {
-    "installerUrl": "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/Bloom%20Client_2.0.0_x64-setup.exe",
-    "assetName": "Bloom Client_2.0.0_x64-setup.exe",
-    "nsisUrl": "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/Bloom%20Client_2.0.0_x64-setup.exe",
-    "nsisAssetName": "Bloom Client_2.0.0_x64-setup.exe",
-    "msiUrl": "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/Bloom%20Client_2.0.0_x64_en-US.msi",
-    "msiAssetName": "Bloom Client_2.0.0_x64_en-US.msi",
-    "fallbackInstallerUrls": [
-      "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/Bloom%20Client_latest_x64-setup.exe"
-    ]
-  }
+﻿{
+    "version":  "2.0.3",
+    "installerUrl":  "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/Bloom%20Client_2.0.3_x64-setup.exe",
+    "assetName":  "Bloom Client_2.0.3_x64-setup.exe",
+    "msiUrl":  "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/Bloom%20Client_2.0.3_x64_en-US.msi",
+    "msiAssetName":  "Bloom Client_2.0.3_x64_en-US.msi",
+    "fallbackInstallerUrls":  [
+                                  "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/Bloom%20Client_latest_x64-setup.exe"
+                              ],
+    "windows":  {
+                    "installerUrl":  "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/Bloom%20Client_2.0.3_x64-setup.exe",
+                    "assetName":  "Bloom Client_2.0.3_x64-setup.exe",
+                    "nsisUrl":  "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/Bloom%20Client_2.0.3_x64-setup.exe",
+                    "nsisAssetName":  "Bloom Client_2.0.3_x64-setup.exe",
+                    "msiUrl":  "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/Bloom%20Client_2.0.3_x64_en-US.msi",
+                    "msiAssetName":  "Bloom Client_2.0.3_x64_en-US.msi",
+                    "fallbackInstallerUrls":  [
+                                                  "https://zdzsinylfqeqqvtoleug.supabase.co/storage/v1/object/public/updates/Bloom%20Client_latest_x64-setup.exe"
+                                              ]
+                }
 }
+

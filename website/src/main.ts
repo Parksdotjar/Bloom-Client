@@ -173,10 +173,12 @@ let transitionsEnabled = localStorage.getItem(transitionStorageKey) !== "off";
 let siteSupabase: any;
 
 const navItems: Array<{ path: Route; label: string }> = [
-  { path: "/", label: "Home" },
   { path: "/downloads", label: "Downloads" },
   { path: "/news", label: "News" },
-  { path: "/staff", label: "Staff" }
+  { path: "/staff", label: "Staff" },
+  { path: "/support", label: "Support" },
+  { path: "/about", label: "About" },
+  { path: "/faq", label: "FAQ" }
 ];
 
 const infoItems: Array<{ path: Route; label: string }> = [
@@ -680,12 +682,10 @@ function downloadCard(appName: string, eyebrow: string, release?: Release, error
 }
 
 function renderHeader(route: Route): string {
-  const infoActive = route === "/about" || route === "/faq";
   const accountHref = state.session ? "/dashboard" : "/login";
   return `
     <header class="site-header">
       <a class="brand" href="/" data-route="/">
-        <img src="/logo.png" alt="Bloom Productions logo" />
         <span>Bloom Productions</span>
       </a>
       <nav class="nav">
@@ -695,39 +695,12 @@ function renderHeader(route: Route): string {
               `<a class="${item.path === route ? "active" : ""}" href="${item.path}" data-route="${item.path}">${item.label}</a>`
           )
           .join("")}
-        <div class="info-menu">
-          <button class="info-toggle ${infoActive ? "active" : ""}" type="button" aria-expanded="false">
-            Info
-            <span class="info-arrow" aria-hidden="true"></span>
-          </button>
-          <div class="info-dropdown">
-            ${infoItems
-              .map(
-                (item) =>
-                  `<a class="${item.path === route ? "active" : ""}" href="${item.path}" data-route="${item.path}">${item.label}</a>`
-              )
-              .join("")}
-          </div>
-        </div>
       </nav>
       <div class="header-actions">
-        <a class="account-button ${route === "/dashboard" || route === "/login" ? "active" : ""}" href="${accountHref}" data-route="${accountHref}" aria-label="${state.session ? "Open dashboard" : "Sign in"}">
-          ${avatarMarkup()}
+        <a class="login-link ${route === "/dashboard" || route === "/login" ? "active" : ""}" href="${accountHref}" data-route="${accountHref}">
+          ${state.session ? "Dashboard" : "Log in"}
         </a>
-        <div class="settings-menu">
-          <button class="settings-toggle" type="button" aria-label="Open site settings" aria-expanded="false">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M19.4 13.5c.08-.49.08-1.01 0-1.5l2-1.55-2-3.46-2.36.95a7.6 7.6 0 0 0-1.3-.76L15.38 4h-4l-.36 3.18c-.46.2-.9.46-1.3.76L7.36 7l-2 3.46 2 1.55a7.44 7.44 0 0 0 0 1.5l-2 1.55 2 3.46 2.36-.95c.4.3.84.56 1.3.76l.36 3.18h4l.36-3.18c.46-.2.9-.46 1.3-.76l2.36.95 2-3.46-2-1.55ZM13.38 15.5a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z" />
-            </svg>
-          </button>
-          <div class="settings-dropdown">
-            <label class="settings-row">
-              <span>Transitions</span>
-              <input class="transition-toggle" type="checkbox" ${transitionsEnabled ? "checked" : ""} />
-            </label>
-          </div>
-        </div>
-        <a class="top-download" href="/downloads" data-route="/downloads">Downloads</a>
+        <a class="top-download" href="/downloads" data-route="/downloads">Get started</a>
       </div>
     </header>
   `;
@@ -737,18 +710,22 @@ function renderHome(): string {
   return `
     <section class="hero-section">
       <div class="hero-copy">
-        <p class="eyebrow">Official Bloom Productions</p>
-        <h1>Bloom Productions</h1>
-        <p class="lead">Enjoy Apps and Tools Built By The Future</p>
+        <p class="pill-link">Bloom Client and SkStudio builds</p>
+        <h1>Tools for quieter creation.</h1>
+        <p class="lead">Bloom Productions makes focused software for launching, editing, and building without extra noise.</p>
         ${releaseButtons()}
+      </div>
+      <div class="hero-object" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
       </div>
     </section>
 
-    <section class="section">
-      <div class="section-heading">
-        <p class="eyebrow">Projects</p>
-        <h2>Built around useful apps, not a landing page.</h2>
-      </div>
+    <section class="section product-strip">
       <div class="feature-grid">
         ${productCards
           .map(
@@ -765,11 +742,11 @@ function renderHome(): string {
 
     <section class="section split-band">
       <div>
-        <p class="eyebrow">Updates</p>
-        <h2>Get the latest Bloom Productions builds.</h2>
-        <p>Install Bloom Client or SkStudio from the official download page.</p>
+        <p class="eyebrow">Latest builds</p>
+        <h2>Download the current releases.</h2>
+        <p>Bloom Client and SkStudio installers stay linked from one official place.</p>
       </div>
-      <a class="btn secondary" href="/downloads" data-route="/downloads">Check downloads</a>
+      <a class="btn secondary" href="/downloads" data-route="/downloads">Open downloads</a>
     </section>
   `;
 }
@@ -869,7 +846,7 @@ function renderSupport(): string {
             (option) => `
               <article class="support-option">
                 <div>
-                  <p class="eyebrow">Contribution</p>
+                  <p class="eyebrow">Support</p>
                   <h2>${escapeHtml(option.label)}</h2>
                 </div>
                 <button class="btn primary support-button" type="button" data-support-option="${escapeHtml(option.slug)}">
@@ -883,26 +860,31 @@ function renderSupport(): string {
 
   return `
     <section class="page-hero compact">
-      <p class="eyebrow">Support Me</p>
+      <p class="eyebrow">Support</p>
       <h1>Support Bloom</h1>
-        <p>Help support Bloom Productions development.</p>
+      <p>Help support Bloom Productions development.</p>
     </section>
     <section class="support-panel">
       <div class="support-copy">
-        <h2>Even Just $1 Helps Alot!</h2>
+        <h2>Every contribution helps keep Bloom moving forward.</h2>
+        <p>This page is for people who want to support the projects directly. It does not unlock rewards, perks, or in-game items.</p>
       </div>
       ${statusMessage}
+      <form class="support-custom support-slider-panel" data-support-custom>
+        <div class="support-slider-head">
+          <label for="support-custom-amount">Choose an amount</label>
+          <strong>$<span data-support-slider-value>25</span></strong>
+        </div>
+        <input id="support-custom-amount" name="amount" type="range" min="1" max="500" step="1" value="25" aria-label="Custom support amount in USD" />
+        <div class="support-slider-scale">
+          <span>$1</span>
+          <span>$500</span>
+        </div>
+        <button class="btn primary support-button" type="submit">Support custom amount</button>
+      </form>
       <div class="support-options">
         ${optionsMarkup}
       </div>
-      <form class="support-custom" data-support-custom>
-        <label for="support-custom-amount">you pick your ammount &#8594;</label>
-        <div class="support-custom-entry">
-          <span>$</span>
-          <input id="support-custom-amount" name="amount" type="number" min="1" step="1" inputmode="numeric" pattern="[0-9]*" placeholder="" aria-label="Custom support amount in USD" />
-          <button class="btn primary support-button" type="submit">Support Bloom</button>
-        </div>
-      </form>
       <p class="support-note">Checkout opens through McSets and is processed server-side.</p>
     </section>
   `;
@@ -1549,7 +1531,6 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     ${dashboardMode ? "" : renderHeader(route)}
     <main>${renderRoute(route)}</main>
     ${dashboardMode ? "" : renderFooter()}
-    ${dashboardMode ? "" : renderSupportCta()}
     ${renderOwnerPanel()}
   `;
 
@@ -1603,6 +1584,12 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     const input = event.currentTarget as HTMLInputElement;
     transitionsEnabled = input.checked;
     localStorage.setItem(transitionStorageKey, transitionsEnabled ? "on" : "off");
+  });
+
+  root.querySelector<HTMLInputElement>("#support-custom-amount")?.addEventListener("input", (event) => {
+    const input = event.currentTarget as HTMLInputElement;
+    const output = root.querySelector<HTMLElement>("[data-support-slider-value]");
+    if (output) output.textContent = input.value;
   });
 
   root.querySelectorAll<HTMLButtonElement>("[data-support-option]").forEach((button) => {
