@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { animate as animeAnimate, stagger } from "animejs";
+import { animate as animeAnimate } from "animejs";
 import "./style.css";
 import "./dashboard.css";
 
@@ -1465,22 +1465,11 @@ function runPageAnimations(isRouteChange = false): void {
 
   document.querySelectorAll<HTMLElement>(".site-backdrop").forEach((layer) => {
     layer.style.opacity = "0";
-    animeAnimate(layer, {
-      opacity: [0, 1],
-      duration: 2200,
-      ease: "outCubic"
-    });
   });
 
   document.querySelectorAll<HTMLElement>(".page-ambient").forEach((layer) => {
     layer.style.opacity = "0";
     layer.style.filter = "blur(24px)";
-    animeAnimate(layer, {
-      opacity: [0, 1],
-      filter: ["blur(24px)", "blur(0px)"],
-      duration: 2200,
-      ease: "outCubic"
-    });
   });
 
   root.querySelectorAll<HTMLElement>(animatedPageSelector()).forEach((element) => {
@@ -1492,22 +1481,77 @@ function runPageAnimations(isRouteChange = false): void {
   if (header) {
     header.style.opacity = "0";
     header.style.transform = "translateY(-24px)";
-    animeAnimate(header, {
-      opacity: [0, 1],
-      translateY: [-24, 0],
-      duration: 2200,
-      delay: 180,
-      ease: "outCubic"
-    });
   }
 
-  const pageTargets = root.querySelectorAll<HTMLElement>(animatedPageSelector().replace(".site-header,", ""));
-  animeAnimate(pageTargets, {
-    opacity: [0, 1],
-    translateY: [32, 0],
-    duration: 2200,
-    delay: stagger(80, { start: 320 }),
-    ease: "outCubic"
+  const pageTargets = Array.from(root.querySelectorAll<HTMLElement>(animatedPageSelector().replace(".site-header,", "")));
+
+  requestAnimationFrame(() => {
+    document.querySelectorAll<HTMLElement>(".site-backdrop").forEach((layer) => {
+      const animation = layer.animate([{ opacity: 0 }, { opacity: 1 }], {
+        duration: 2200,
+        easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+        fill: "both"
+      });
+      animation.finished.then(() => {
+        layer.style.opacity = "1";
+      }).catch(() => undefined);
+    });
+
+    document.querySelectorAll<HTMLElement>(".page-ambient").forEach((layer) => {
+      const animation = layer.animate(
+        [
+          { opacity: 0, filter: "blur(24px)" },
+          { opacity: 1, filter: "blur(0px)" }
+        ],
+        {
+          duration: 2200,
+          easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+          fill: "both"
+        }
+      );
+      animation.finished.then(() => {
+        layer.style.opacity = "1";
+        layer.style.filter = "blur(0px)";
+      }).catch(() => undefined);
+    });
+
+    if (header) {
+      const animation = header.animate(
+        [
+          { opacity: 0, transform: "translateY(-24px)" },
+          { opacity: 1, transform: "translateY(0)" }
+        ],
+        {
+          duration: 2200,
+          delay: 180,
+          easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+          fill: "both"
+        }
+      );
+      animation.finished.then(() => {
+        header.style.opacity = "1";
+        header.style.transform = "translateY(0)";
+      }).catch(() => undefined);
+    }
+
+    pageTargets.forEach((element, index) => {
+      const animation = element.animate(
+        [
+          { opacity: 0, transform: "translateY(32px)" },
+          { opacity: 1, transform: "translateY(0)" }
+        ],
+        {
+          duration: 2200,
+          delay: 320 + index * 80,
+          easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+          fill: "both"
+        }
+      );
+      animation.finished.then(() => {
+        element.style.opacity = "1";
+        element.style.transform = "translateY(0)";
+      }).catch(() => undefined);
+    });
   });
 }
 
