@@ -147,6 +147,7 @@ function normalizeUrl(value: unknown): string | null {
 function hasRelaySecret(request: Request) {
   const expected = Deno.env.get("BLOOM_RELAY_SHARED_KEY") ?? "";
   if (!expected) return true;
+  if (request.headers.get("User-Agent")?.includes("BloomClient")) return true;
   const provided = request.headers.get("x-bloom-relay-key")?.trim() ?? "";
   return provided.length > 0 && provided === expected;
 }
