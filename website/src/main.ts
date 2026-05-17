@@ -1463,16 +1463,14 @@ function runPageAnimations(isRouteChange = false): void {
     return;
   }
 
-  document.querySelectorAll<HTMLElement>(".site-backdrop").forEach((layer) => {
+  backgroundLayers.forEach((layer) => {
+    layer.style.transition = "none";
     layer.style.opacity = "0";
-  });
-
-  document.querySelectorAll<HTMLElement>(".page-ambient").forEach((layer) => {
-    layer.style.opacity = "0";
-    layer.style.filter = "blur(24px)";
+    if (layer.classList.contains("page-ambient")) layer.style.filter = "blur(24px)";
   });
 
   root.querySelectorAll<HTMLElement>(animatedPageSelector()).forEach((element) => {
+    element.style.transition = "none";
     element.style.opacity = "0";
     element.style.transform = "translateY(32px)";
   });
@@ -1486,71 +1484,25 @@ function runPageAnimations(isRouteChange = false): void {
   const pageTargets = Array.from(root.querySelectorAll<HTMLElement>(animatedPageSelector().replace(".site-header,", "")));
 
   requestAnimationFrame(() => {
-    document.querySelectorAll<HTMLElement>(".site-backdrop").forEach((layer) => {
-      const animation = layer.animate([{ opacity: 0 }, { opacity: 1 }], {
-        duration: 2200,
-        easing: "cubic-bezier(0.22, 1, 0.36, 1)",
-        fill: "both"
+    requestAnimationFrame(() => {
+      backgroundLayers.forEach((layer) => {
+        layer.style.transition = "opacity 2200ms cubic-bezier(0.22, 1, 0.36, 1), filter 2200ms cubic-bezier(0.22, 1, 0.36, 1)";
+        layer.style.opacity = "1";
+        if (layer.classList.contains("page-ambient")) layer.style.filter = "blur(0px)";
       });
-      animation.finished.then(() => {
-        layer.style.opacity = "1";
-      }).catch(() => undefined);
-    });
 
-    document.querySelectorAll<HTMLElement>(".page-ambient").forEach((layer) => {
-      const animation = layer.animate(
-        [
-          { opacity: 0, filter: "blur(24px)" },
-          { opacity: 1, filter: "blur(0px)" }
-        ],
-        {
-          duration: 2200,
-          easing: "cubic-bezier(0.22, 1, 0.36, 1)",
-          fill: "both"
-        }
-      );
-      animation.finished.then(() => {
-        layer.style.opacity = "1";
-        layer.style.filter = "blur(0px)";
-      }).catch(() => undefined);
-    });
-
-    if (header) {
-      const animation = header.animate(
-        [
-          { opacity: 0, transform: "translateY(-24px)" },
-          { opacity: 1, transform: "translateY(0)" }
-        ],
-        {
-          duration: 2200,
-          delay: 180,
-          easing: "cubic-bezier(0.22, 1, 0.36, 1)",
-          fill: "both"
-        }
-      );
-      animation.finished.then(() => {
+      if (header) {
+        header.style.transition = "opacity 2200ms cubic-bezier(0.22, 1, 0.36, 1) 180ms, transform 2200ms cubic-bezier(0.22, 1, 0.36, 1) 180ms";
         header.style.opacity = "1";
         header.style.transform = "translateY(0)";
-      }).catch(() => undefined);
-    }
+      }
 
-    pageTargets.forEach((element, index) => {
-      const animation = element.animate(
-        [
-          { opacity: 0, transform: "translateY(32px)" },
-          { opacity: 1, transform: "translateY(0)" }
-        ],
-        {
-          duration: 2200,
-          delay: 320 + index * 80,
-          easing: "cubic-bezier(0.22, 1, 0.36, 1)",
-          fill: "both"
-        }
-      );
-      animation.finished.then(() => {
+      pageTargets.forEach((element, index) => {
+        const delay = 320 + index * 80;
+        element.style.transition = `opacity 2200ms cubic-bezier(0.22, 1, 0.36, 1) ${delay}ms, transform 2200ms cubic-bezier(0.22, 1, 0.36, 1) ${delay}ms`;
         element.style.opacity = "1";
         element.style.transform = "translateY(0)";
-      }).catch(() => undefined);
+      });
     });
   });
 }
@@ -1921,6 +1873,9 @@ void (async () => {
   await Promise.all([loadRelease(), loadSksRelease(), loadNews(), loadSupportOptions(), loadAuthState()]);
   await loadBudSummary();
   getSiteSupabase()?.auth.onAuthStateChange(async (_event: string, session: SiteSession | null) => {
+    const currentToken = state.session?.access_token ?? null;
+    const nextToken = session?.access_token ?? null;
+    if (currentToken === nextToken) return;
     state.session = session;
     await loadBudSummary();
     mount(true, true);
