@@ -710,9 +710,9 @@ function renderHome(): string {
   return `
     <section class="hero-section">
       <div class="hero-copy">
-        <p class="pill-link">Bloom Client and SkStudio builds</p>
-        <h1>Tools for quieter creation.</h1>
-        <p class="lead">Bloom Productions makes focused software for launching, editing, and building without extra noise.</p>
+        <p class="pill-link">NEW: SkStudio</p>
+        <h1>Bloom Productions</h1>
+        <p class="lead">Tools for the future, built by the future!</p>
         ${releaseButtons()}
       </div>
       <div class="hero-object" aria-hidden="true">
@@ -866,8 +866,6 @@ function renderSupport(): string {
     </section>
     <section class="support-panel">
       <div class="support-copy">
-        <h2>Every contribution helps keep Bloom moving forward.</h2>
-        <p>This page is for people who want to support the projects directly. It does not unlock rewards, perks, or in-game items.</p>
       </div>
       ${statusMessage}
       <form class="support-custom support-slider-panel" data-support-custom>
