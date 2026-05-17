@@ -1574,13 +1574,9 @@ export async function ownerCreateModelCosmeticListing(input: CreateCapeListingIn
 export async function isCurrentUserOwner() {
   const userId = await getSupabaseUserId();
   if (!userId) return false;
-  const { data, error } = await supabase
-    .from('commerce_profiles')
-    .select('role')
-    .eq('user_id', userId)
-    .maybeSingle();
+  const { data, error } = await supabase.rpc('commerce_is_owner', { p_user_id: userId });
   if (error) throw error;
-  return (data?.role ?? 'user') === 'owner';
+  return data === true;
 }
 
 export async function loadLatestCustomCapeDraft() {

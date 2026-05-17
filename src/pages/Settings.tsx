@@ -96,7 +96,6 @@ import {
   readFartKeybindUnlocked
 } from '../constants/fartKeybind';
 import { BUD_ENABLED_KEY, BUD_SETTINGS_CHANGE_EVENT, readBudEnabled } from '../constants/bud';
-import { useAuth } from '../hooks/useAuth';
 
 type LauncherTheme = 'light' | 'light-gray' | 'dark' | 'gray' | 'true-dark' | 'ocean' | 'forest' | 'sunset' | 'paper' | 'crt' | 'synthwave' | 'sandstone' | 'minecraft' | 'cartoon' | 'strength-smp' | 'blueprint' | 'holo-grid' | 'lavaforge' | 'candy-pop' | 'mono-ink';
 type AccentMode = 'purple' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'custom';
@@ -113,12 +112,6 @@ type MotionEasingPreset = 'out-quad' | 'out-cubic' | 'in-out-cubic' | 'out-back'
 type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
 type StartupSceneTheme = 'nova' | 'horizon' | 'matrix';
 type StartupSceneSoundProfile = 'off' | 'shimmer' | 'impact';
-const OWNER_MINECRAFT_UUIDS = new Set([
-  'e2701115aa1147d3a9e2e89334623026',
-  '2790c9887660460491068944f4ea2dcb',
-  'edfee06fd5af457cb0f736cb0f621fc6'
-]);
-
 function formatSettingsError(error: unknown) {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
@@ -1034,7 +1027,6 @@ function normalizePartnerApplicationForms(forms: PartnerApplicationForm[]) {
 }
 
 export function Settings() {
-  const { authState } = useAuth();
   const [tab, setTab] = useState<SettingsTab>('general');
   const [appearanceSection, setAppearanceSection] = useState<AppearanceSection>('animation');
   const [minecraftPrefs, setMinecraftPrefs] = useState({
@@ -2708,14 +2700,13 @@ export function Settings() {
     let mounted = true;
     const loadOwnerAccess = async () => {
       setUpdateOwnerChecking(true);
-      const mcUuid = authState?.profile.id?.replace(/-/g, '').toLowerCase();
       try {
         const allowed = await isCurrentUserOwner();
         if (!mounted) return;
-        setUpdateOwnerAccess(allowed || Boolean(mcUuid && OWNER_MINECRAFT_UUIDS.has(mcUuid)));
+        setUpdateOwnerAccess(allowed);
       } catch {
         if (!mounted) return;
-        setUpdateOwnerAccess(Boolean(mcUuid && OWNER_MINECRAFT_UUIDS.has(mcUuid)));
+        setUpdateOwnerAccess(false);
       } finally {
         if (mounted) setUpdateOwnerChecking(false);
       }
@@ -2724,7 +2715,7 @@ export function Settings() {
     return () => {
       mounted = false;
     };
-  }, [authState?.profile.id]);
+  }, []);
 
   useEffect(() => {
     if (!selectedOwnerMember) return;
