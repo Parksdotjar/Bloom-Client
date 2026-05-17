@@ -710,18 +710,10 @@ function renderHome(): string {
   return `
     <section class="hero-section">
       <div class="hero-copy">
-        <p class="pill-link">NEW: SkStudio</p>
+        <p class="pill-link">Status: Beta Test</p>
         <h1>Bloom Productions</h1>
         <p class="lead">Tools for the future, built by the future!</p>
         ${releaseButtons()}
-      </div>
-      <div class="hero-object" aria-hidden="true">
-        <span></span>
-        <span></span>
-        <span></span>
-        <span></span>
-        <span></span>
-        <span></span>
       </div>
     </section>
 

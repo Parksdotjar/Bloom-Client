@@ -213,15 +213,18 @@ main {
   width: min(1120px, calc(100vw - 48px));
   min-height: calc(100vh - 56px);
   display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(320px, 0.8fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  gap: clamp(34px, 8vw, 110px);
+  justify-items: center;
   margin: 0 auto;
   padding: 70px 0 110px;
+  text-align: center;
 }
 
 .hero-copy {
-  max-width: 620px;
+  max-width: 760px;
+  display: grid;
+  justify-items: center;
 }
 
 .hero-copy h1,
@@ -253,13 +256,13 @@ main {
 
 .lead {
   max-width: 610px;
-  margin: 28px 0 0;
+  margin: 28px auto 0;
   font-size: clamp(17px, 1.55vw, 21px);
 }
 
 .pill-link {
   width: fit-content;
-  margin: 0 0 36px;
+  margin: 0 auto 36px;
   border: 1px solid rgba(34, 200, 120, 0.46);
   border-radius: 999px;
   padding: 7px 12px;
@@ -281,51 +284,15 @@ main {
 
 .hero-actions,
 .button-row {
+  justify-content: center;
   flex-wrap: wrap;
   gap: 16px;
   margin-top: 30px;
 }
 
 .hero-object {
-  position: relative;
-  width: min(420px, 100%);
-  aspect-ratio: 1;
-  justify-self: center;
-  transform: rotate(-17deg);
-  filter: drop-shadow(0 42px 70px rgba(0, 0, 0, 0.82));
+  display: none;
 }
-
-.hero-object::before {
-  content: "";
-  position: absolute;
-  inset: 18%;
-  border-radius: 32px;
-  background: radial-gradient(circle at 40% 20%, rgba(255, 255, 255, 0.28), transparent 18%), #030303;
-  filter: blur(24px);
-  opacity: 0.58;
-}
-
-.hero-object span {
-  position: absolute;
-  width: 34%;
-  height: 34%;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 13px;
-  background:
-    radial-gradient(circle at 30% 18%, rgba(255, 255, 255, 0.22), transparent 17%),
-    linear-gradient(145deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.015) 42%, rgba(0, 0, 0, 0.66)),
-    #050505;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    inset 0 -22px 34px rgba(0, 0, 0, 0.58);
-}
-
-.hero-object span:nth-child(1) { left: 9%; top: 21%; }
-.hero-object span:nth-child(2) { left: 42%; top: 13%; }
-.hero-object span:nth-child(3) { left: 55%; top: 45%; }
-.hero-object span:nth-child(4) { left: 21%; top: 54%; }
-.hero-object span:nth-child(5) { left: 62%; top: 76%; width: 25%; height: 25%; }
-.hero-object span:nth-child(6) { left: 5%; top: 62%; width: 22%; height: 22%; }
 
 .section,
 .page-hero,
