@@ -1,15 +1,63 @@
 .dash-app {
-  width: min(100vw, 1440px);
-  min-height: calc(100vh - 92px);
-  margin: 24px auto 0;
+  position: relative;
+  width: 100vw;
+  min-height: 100vh;
+  margin: 0;
   display: grid;
   grid-template-columns: 236px minmax(0, 1fr);
   border-top: 1px solid rgba(255, 255, 255, 0.09);
   background: #000;
 }
 
+body.dashboard-page {
+  background: #000;
+}
+
+body.dashboard-page .site-backdrop,
+body.dashboard-page .page-ambient,
+body.dashboard-page .particle-canvas {
+  display: none;
+}
+
+body.dashboard-page main {
+  position: relative;
+  z-index: 5;
+}
+
+.dash-home-back {
+  position: fixed;
+  left: 250px;
+  top: 12px;
+  z-index: 20;
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(247, 247, 242, 0.78);
+  text-decoration: none;
+}
+
+.dash-home-back:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+}
+
+.dash-home-back svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .dash-sidebar {
-  min-height: calc(100vh - 92px);
+  min-height: 100vh;
   display: grid;
   grid-template-rows: auto 1fr auto;
   border-right: 1px solid rgba(255, 255, 255, 0.1);
@@ -106,8 +154,8 @@
 }
 
 .dash-main {
-  min-height: calc(100vh - 92px);
-  padding: 38px clamp(24px, 7vw, 108px);
+  min-height: 100vh;
+  padding: 78px clamp(24px, 7vw, 108px) 38px;
 }
 
 .dash-view {
@@ -466,7 +514,11 @@
 
   .dash-main {
     min-height: 70vh;
-    padding: 30px 18px 70px;
+    padding: 76px 18px 70px;
+  }
+
+  .dash-home-back {
+    left: 18px;
   }
 
   .dash-license-strip,

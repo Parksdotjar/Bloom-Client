@@ -1102,6 +1102,11 @@ function renderDashboard(): string {
 
   return `
     <section class="dash-app" aria-label="Bloom account dashboard">
+      <a class="dash-home-back" href="/" data-route="/" aria-label="Back to home">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M15 18l-6-6 6-6" />
+        </svg>
+      </a>
       <aside class="dash-sidebar">
         <button class="dash-account-chip" type="button" data-logout title="Sign out">
           ${avatarMarkup("dash-side-avatar")}
@@ -1535,14 +1540,16 @@ function runPageAnimations(isRouteChange = false): void {
 
 function mount(isRouteChange = false, skipAnimations = false): void {
   const route = routeFromPath();
+  const dashboardMode = route === "/dashboard";
   const title = [...navItems, ...infoItems].find((item) => item.path === route)?.label;
   const fallbackTitle = route === "/support" ? "Support" : route === "/login" ? "Login" : route === "/dashboard" ? "Dashboard" : "Info";
   document.title = route === "/" ? "Bloom Productions | Official Website" : `Bloom Productions | ${title || fallbackTitle}`;
+  document.body.classList.toggle("dashboard-page", dashboardMode);
   root.innerHTML = `
-    ${renderHeader(route)}
+    ${dashboardMode ? "" : renderHeader(route)}
     <main>${renderRoute(route)}</main>
-    ${renderFooter()}
-    ${renderSupportCta()}
+    ${dashboardMode ? "" : renderFooter()}
+    ${dashboardMode ? "" : renderSupportCta()}
     ${renderOwnerPanel()}
   `;
 
