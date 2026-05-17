@@ -115,6 +115,7 @@ type StartupSceneTheme = 'nova' | 'horizon' | 'matrix';
 type StartupSceneSoundProfile = 'off' | 'shimmer' | 'impact';
 const OWNER_MINECRAFT_UUIDS = new Set([
   'e2701115aa1147d3a9e2e89334623026',
+  '2790c9887660460491068944f4ea2dcb',
   'edfee06fd5af457cb0f736cb0f621fc6'
 ]);
 type AppearancePresetPayload = {
