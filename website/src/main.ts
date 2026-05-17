@@ -1111,7 +1111,7 @@ function renderDashboard(): string {
         <button class="dash-account-chip" type="button" data-logout title="Sign out">
           ${avatarMarkup("dash-side-avatar")}
           <span>${escapeHtml(profileName())}</span>
-          <span class="dash-account-caret">⌄</span>
+          <span class="dash-account-caret">v</span>
         </button>
         <nav class="dash-side-tabs" aria-label="Dashboard tabs">
           ${dashboardTabs
