@@ -955,16 +955,50 @@ function renderDashboard(): string {
       </div>
       ${state.budSummaryError ? `<p class="auth-message error">${escapeHtml(state.budSummaryError)}</p>` : ""}
       <div class="license-options">
-        <article>
-          <p class="eyebrow">Lifetime</p>
-          <h2>$50</h2>
+        <article class="license-card license-card-lifetime">
+          <div class="license-card-top">
+            <span class="license-card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 3 4.8 6.2v5.3c0 4.6 3.1 8.8 7.2 9.9 4.1-1.1 7.2-5.3 7.2-9.9V6.2L12 3Zm3.3 7.3-4 4a1 1 0 0 1-1.4 0l-1.7-1.7 1.4-1.4 1 1 3.3-3.3 1.4 1.4Z" /></svg>
+            </span>
+            <div class="license-price">
+              <strong>$50</strong>
+              <span>one time</span>
+            </div>
+          </div>
+          <div class="license-card-copy">
+            <p class="eyebrow">Lifetime</p>
+            <h2>BUD License</h2>
+            <p>Pay once and keep your BUD license active without a monthly bill.</p>
+          </div>
           <button class="btn primary" type="button" data-bud-checkout="lifetime">Buy lifetime</button>
+          <div class="license-card-list">
+            <span>Includes one BUD license key</span>
+            <span>One-time payment</span>
+            <span>Use inside SkStudio after activation</span>
+          </div>
         </article>
-        <article>
-          <p class="eyebrow">Monthly</p>
-          <h2>$10/month</h2>
+        <article class="license-card">
+          <div class="license-card-top">
+            <span class="license-card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M7 3h10a2 2 0 0 1 2 2v14l-7-3-7 3V5a2 2 0 0 1 2-2Zm5 4a3 3 0 0 0-3 3c0 1.18.68 2.2 1.67 2.69L9.5 15h5l-1.17-2.31A3 3 0 0 0 12 7Z" /></svg>
+            </span>
+            <div class="license-price">
+              <strong>$10</strong>
+              <span>per month</span>
+            </div>
+          </div>
+          <div class="license-card-copy">
+            <p class="eyebrow">Monthly</p>
+            <h2>BUD License</h2>
+            <p>Keep an active BUD license with a recurring monthly subscription.</p>
+          </div>
           <button class="btn primary" type="button" data-bud-checkout="monthly" ${state.budMonthlyAvailable ? "" : "disabled"}>Subscribe monthly</button>
           ${state.budMonthlyAvailable ? "" : `<p>Monthly needs the MCsets subscription price id configured.</p>`}
+          <div class="license-card-list">
+            <span>Includes one BUD license key</span>
+            <span>Billed monthly while active</span>
+            <span>Access depends on active billing</span>
+          </div>
         </article>
       </div>
       <button class="btn secondary" type="button" data-claim-bud-key>Show new license key</button>
