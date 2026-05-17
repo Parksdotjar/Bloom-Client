@@ -1450,60 +1450,15 @@ function fadeCurrentPageOut(): Promise<void> {
 }
 
 function runPageAnimations(isRouteChange = false): void {
-  const backgroundLayers = document.querySelectorAll<HTMLElement>(".site-backdrop, .page-ambient");
-  if (isRouteChange || motionQuery.matches) {
-    backgroundLayers.forEach((layer) => {
-      layer.style.opacity = "1";
-      layer.style.filter = "blur(0px)";
-    });
-    root.querySelectorAll<HTMLElement>(animatedPageSelector()).forEach((element) => {
-      element.style.opacity = "1";
-      element.style.transform = "none";
-    });
-    return;
-  }
+  if (!motionQuery.matches) return;
 
-  backgroundLayers.forEach((layer) => {
-    layer.style.transition = "none";
-    layer.style.opacity = "0";
-    if (layer.classList.contains("page-ambient")) layer.style.filter = "blur(24px)";
+  document.querySelectorAll<HTMLElement>(".site-backdrop, .page-ambient").forEach((layer) => {
+    layer.style.opacity = "1";
+    layer.style.filter = "blur(0px)";
   });
-
   root.querySelectorAll<HTMLElement>(animatedPageSelector()).forEach((element) => {
-    element.style.transition = "none";
-    element.style.opacity = "0";
-    element.style.transform = "translateY(32px)";
-  });
-
-  const header = root.querySelector<HTMLElement>(".site-header");
-  if (header) {
-    header.style.opacity = "0";
-    header.style.transform = "translateY(-24px)";
-  }
-
-  const pageTargets = Array.from(root.querySelectorAll<HTMLElement>(animatedPageSelector().replace(".site-header,", "")));
-
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      backgroundLayers.forEach((layer) => {
-        layer.style.transition = "opacity 2200ms cubic-bezier(0.22, 1, 0.36, 1), filter 2200ms cubic-bezier(0.22, 1, 0.36, 1)";
-        layer.style.opacity = "1";
-        if (layer.classList.contains("page-ambient")) layer.style.filter = "blur(0px)";
-      });
-
-      if (header) {
-        header.style.transition = "opacity 2200ms cubic-bezier(0.22, 1, 0.36, 1) 180ms, transform 2200ms cubic-bezier(0.22, 1, 0.36, 1) 180ms";
-        header.style.opacity = "1";
-        header.style.transform = "translateY(0)";
-      }
-
-      pageTargets.forEach((element, index) => {
-        const delay = 320 + index * 80;
-        element.style.transition = `opacity 2200ms cubic-bezier(0.22, 1, 0.36, 1) ${delay}ms, transform 2200ms cubic-bezier(0.22, 1, 0.36, 1) ${delay}ms`;
-        element.style.opacity = "1";
-        element.style.transform = "translateY(0)";
-      });
-    });
+    element.style.opacity = "1";
+    element.style.transform = "none";
   });
 }
 
