@@ -603,7 +603,7 @@ function readSidebarTabsVisibility(): SidebarTabsVisibility {
       marketplace: typeof parsed.marketplace === 'boolean' ? parsed.marketplace : SIDEBAR_TABS_VISIBILITY_DEFAULTS.marketplace,
       importer: typeof parsed.importer === 'boolean' ? parsed.importer : SIDEBAR_TABS_VISIBILITY_DEFAULTS.importer,
       widgets: typeof parsed.widgets === 'boolean' ? parsed.widgets : SIDEBAR_TABS_VISIBILITY_DEFAULTS.widgets,
-      cosmetics: false,
+      cosmetics: typeof parsed.cosmetics === 'boolean' ? parsed.cosmetics : SIDEBAR_TABS_VISIBILITY_DEFAULTS.cosmetics,
       'custom-cape': false,
       notes: typeof parsed.notes === 'boolean' ? parsed.notes : SIDEBAR_TABS_VISIBILITY_DEFAULTS.notes,
       chat: typeof parsed.chat === 'boolean' ? parsed.chat : SIDEBAR_TABS_VISIBILITY_DEFAULTS.chat,
@@ -5056,6 +5056,7 @@ export function Settings() {
                 { id: 'marketplace', label: 'Marketplace' },
                 { id: 'importer', label: 'Importer' },
                 { id: 'widgets', label: 'Widgets' },
+                { id: 'cosmetics', label: 'Cosmetic Locker' },
                 { id: 'notes', label: 'Notes' },
                 { id: 'chat', label: 'Chat' },
                 { id: 'script-studio', label: 'Script Studio (IDE)' },
@@ -5075,7 +5076,7 @@ export function Settings() {
                 </div>
               ))}
             </div>
-            <p className="text-[11px] g-muted">Default hidden tabs: Games, Script Studio, Chat, and Host Server.</p>
+            <p className="text-[11px] g-muted">Default hidden tabs: Cosmetic Locker, Games, Script Studio, Chat, and Host Server.</p>
           </AppearanceDropdown>
                 </>
               )}
