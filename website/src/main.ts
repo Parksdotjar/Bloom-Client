@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { animate as animeAnimate } from "animejs";
+import { animate as animeAnimate, stagger } from "animejs";
 import "./style.css";
 import "./dashboard.css";
 
@@ -1450,14 +1450,68 @@ function fadeCurrentPageOut(): Promise<void> {
 }
 
 function runPageAnimations(isRouteChange = false): void {
-  document.querySelectorAll<HTMLElement>(".site-backdrop, .page-ambient").forEach((layer) => {
-    layer.style.opacity = "1";
-    layer.style.filter = "blur(0px)";
+  const backgroundLayers = document.querySelectorAll<HTMLElement>(".site-backdrop, .page-ambient");
+  if (isRouteChange || motionQuery.matches) {
+    backgroundLayers.forEach((layer) => {
+      layer.style.opacity = "1";
+      layer.style.filter = "blur(0px)";
+    });
+    root.querySelectorAll<HTMLElement>(animatedPageSelector()).forEach((element) => {
+      element.style.opacity = "1";
+      element.style.transform = "none";
+    });
+    return;
+  }
+
+  document.querySelectorAll<HTMLElement>(".site-backdrop").forEach((layer) => {
+    layer.style.opacity = "0";
+    animeAnimate(layer, {
+      opacity: [0, 1],
+      duration: 2200,
+      ease: "outCubic"
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>(".page-ambient").forEach((layer) => {
+    layer.style.opacity = "0";
+    layer.style.filter = "blur(24px)";
+    animeAnimate(layer, {
+      opacity: [0, 1],
+      filter: ["blur(24px)", "blur(0px)"],
+      duration: 2200,
+      ease: "outCubic"
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>(animatedPageSelector()).forEach((element) => {
+    element.style.opacity = "0";
+    element.style.transform = "translateY(32px)";
+  });
+
+  const header = root.querySelector<HTMLElement>(".site-header");
+  if (header) {
+    header.style.opacity = "0";
+    header.style.transform = "translateY(-24px)";
+    animeAnimate(header, {
+      opacity: [0, 1],
+      translateY: [-24, 0],
+      duration: 2200,
+      delay: 180,
+      ease: "outCubic"
+    });
+  }
+
+  const pageTargets = root.querySelectorAll<HTMLElement>(animatedPageSelector().replace(".site-header,", ""));
+  animeAnimate(pageTargets, {
+    opacity: [0, 1],
+    translateY: [32, 0],
+    duration: 2200,
+    delay: stagger(80, { start: 320 }),
+    ease: "outCubic"
   });
 
   root.querySelectorAll<HTMLElement>(animatedPageSelector()).forEach((element) => {
     element.style.opacity = "1";
-    element.style.transform = "none";
   });
 }
 

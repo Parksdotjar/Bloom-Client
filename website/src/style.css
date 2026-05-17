@@ -113,8 +113,8 @@ main {
   border-bottom: 1px solid var(--line);
   background: rgba(0, 0, 0, 0.58);
   backdrop-filter: blur(16px);
-  opacity: 1;
-  transform: none;
+  opacity: 0;
+  transform: translateY(-24px);
 }
 
 .brand {
@@ -870,8 +870,9 @@ code {
 .auth-card,
 .site-footer,
 .site-footer > * {
-  opacity: 1;
-  transform: none;
+  opacity: 0;
+  transform: translateY(32px);
+  will-change: opacity, transform;
 }
 
 @media (max-width: 980px) {
