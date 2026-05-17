@@ -142,6 +142,18 @@ async function ensureProfile(user: { id: string; email?: string | null; user_met
   return data as JsonObject;
 }
 
+async function requireOwner(request: Request) {
+  const user = await authUser(request);
+  if (!user) return { response: jsonResponse(401, { ok: false, error: "not_authenticated" }) };
+  const profile = await ensureProfile(user);
+  const isParksEmail = (user.email ?? "").toLowerCase() === "urlocalparks@gmail.com";
+  const isParksProfile = asString(profile.username)?.toLowerCase() === "parks" && asString(profile.email)?.toLowerCase() === "urlocalparks@gmail.com";
+  if (profile.role !== "owner" || !isParksEmail || !isParksProfile) {
+    return { response: jsonResponse(403, { ok: false, error: "owner_required" }) };
+  }
+  return { user, profile };
+}
+
 async function handleSummary(request: Request) {
   const user = await authUser(request);
   if (!user) return jsonResponse(401, { ok: false, error: "not_authenticated" });
@@ -176,15 +188,30 @@ async function handleCheckout(request: Request) {
   const username = asString(profile.username) ?? `user-${user.id.slice(0, 8)}`;
   const { successUrl, cancelUrl } = createReturnUrls(payload);
   const purchaseId = crypto.randomUUID();
-  const body: JsonObject = {
-    currency: "USD",
-    name: plan === "monthly" ? "BUD License Monthly" : "BUD License Lifetime",
-    success_url: successUrl,
-    cancel_url: cancelUrl,
-    metadata: { source: "bud_license", purchase_id: purchaseId, user_id: user.id, username, plan, mode },
-  };
-  if (plan === "monthly") body.price_id = MCSETS_BUD_MONTHLY_PRICE_ID.trim();
-  else body.amount = 5000;
+  const body: JsonObject =
+    plan === "monthly"
+      ? {
+          currency: "usd",
+          items: [
+            {
+              name: "BUD License Monthly",
+              amount: 1000,
+              quantity: 1,
+              price_id: MCSETS_BUD_MONTHLY_PRICE_ID.trim(),
+            },
+          ],
+          success_url: successUrl,
+          cancel_url: cancelUrl,
+          customer_email: user.email ?? undefined,
+        }
+      : {
+          currency: "USD",
+          name: "BUD License Lifetime",
+          amount: 5000,
+          success_url: successUrl,
+          cancel_url: cancelUrl,
+          metadata: { source: "bud_license", purchase_id: purchaseId, user_id: user.id, username, plan, mode },
+        };
 
   const response = await fetch(`${MCSETS_ENTERPRISE_BASE_URL.replace(/\/+$/, "")}/checkout/sessions`, {
     method: "POST",
@@ -193,7 +220,21 @@ async function handleCheckout(request: Request) {
   });
   const mcsetsPayload = await response.json().catch(() => ({}));
   if (!response.ok || !(mcsetsPayload as { success?: boolean }).success) {
-    return jsonResponse(response.status >= 400 ? response.status : 500, { ok: false, error: "mcsets_checkout_create_failed", message: asString((mcsetsPayload as JsonObject).message) ?? "Checkout failed." });
+    const errorPayload = asObject(mcsetsPayload);
+    const detailMessage = Array.isArray(errorPayload?.errors)
+      ? (errorPayload?.errors as unknown[])
+          .map((entry) => {
+            const item = asObject(entry);
+            return asString(item?.message) ?? asString(item?.error) ?? asString(item?.field) ?? null;
+          })
+          .filter(Boolean)
+          .join(" | ")
+      : null;
+    return jsonResponse(response.status >= 400 ? response.status : 500, {
+      ok: false,
+      error: "mcsets_checkout_create_failed",
+      message: detailMessage || asString(errorPayload?.message) || "Checkout failed.",
+    });
   }
   const { sessionId, checkoutUrl } = readMcsetsCheckoutSession(mcsetsPayload);
   if (!sessionId || !checkoutUrl) return jsonResponse(502, { ok: false, error: "mcsets_checkout_response_invalid" });
@@ -214,6 +255,7 @@ async function handleCheckout(request: Request) {
 async function handleClaimKey(request: Request) {
   const user = await authUser(request);
   if (!user) return jsonResponse(401, { ok: false, error: "not_authenticated" });
+  const profile = await ensureProfile(user);
   const { data: purchase } = await admin
     .from("bud_purchases")
     .select("*")
@@ -222,21 +264,54 @@ async function handleClaimKey(request: Request) {
     .order("completed_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (!purchase) return jsonResponse(402, { ok: false, error: "no_completed_purchase", message: "Complete a BUD license purchase first." });
-  const { data: existing } = await admin.from("bud_license_keys").select("id").eq("purchase_id", purchase.id).maybeSingle();
-  if (existing) return jsonResponse(409, { ok: false, error: "license_key_already_claimed", message: "This purchase already has a key. Keys are shown once." });
+  const isFreePlan = !purchase && profile.bud_license_status === "active" && profile.bud_plan === "free";
+  if (!purchase && !isFreePlan) return jsonResponse(402, { ok: false, error: "no_completed_purchase", message: "Complete a BUD license purchase first." });
+  const existingQuery = admin.from("bud_license_keys").select("id");
+  const { data: existing } = purchase
+    ? await existingQuery.eq("purchase_id", purchase.id).maybeSingle()
+    : await existingQuery.eq("user_id", user.id).eq("product", "bud").eq("plan", "free").maybeSingle();
+  if (existing) return jsonResponse(409, { ok: false, error: "license_key_already_claimed", message: "This license already has a key. Keys are shown once." });
   const rawKey = `BUD-${crypto.randomUUID()}-${crypto.randomUUID().slice(0, 8)}`.toUpperCase();
   const hash = await sha256Hex(rawKey);
-  const expiresAt = purchase.plan === "monthly" ? new Date(Date.now() + 31 * 24 * 60 * 60 * 1000).toISOString() : null;
+  const plan = isFreePlan ? "free" : asString(purchase.plan) ?? "lifetime";
+  const expiresAt = plan === "monthly" ? new Date(Date.now() + 31 * 24 * 60 * 60 * 1000).toISOString() : null;
   await admin.from("bud_license_keys").insert({
     user_id: user.id,
-    username: purchase.username,
-    purchase_id: purchase.id,
+    username: asString(purchase?.username) ?? asString(profile.username) ?? `user-${user.id.slice(0, 8)}`,
+    purchase_id: purchase?.id ?? null,
     license_key_hash: hash,
-    plan: purchase.plan,
+    plan,
     expires_at: expiresAt,
   });
-  return jsonResponse(200, { ok: true, license_key: rawKey, plan: purchase.plan, expires_at: expiresAt, message: "Save this key. You will use it inside SkStudio to activate BUD." });
+  return jsonResponse(200, { ok: true, license_key: rawKey, plan, expires_at: expiresAt, message: "Save this key. You will use it inside SkStudio to activate BUD." });
+}
+
+async function handleOwnerUsers(request: Request) {
+  const owner = await requireOwner(request);
+  if ("response" in owner) return owner.response;
+  const { data, error } = await admin
+    .from("commerce_profiles")
+    .select("user_id,username,display_name,email,bud_license_status,bud_plan,role,created_at")
+    .order("created_at", { ascending: false })
+    .limit(250);
+  if (error) return jsonResponse(500, { ok: false, error: "owner_users_failed", message: error.message });
+  return jsonResponse(200, { ok: true, users: data ?? [] });
+}
+
+async function handleOwnerFreeLicense(request: Request) {
+  const owner = await requireOwner(request);
+  if ("response" in owner) return owner.response;
+  const payload = await readPayload(request);
+  const userId = asString(payload.user_id);
+  if (!userId) return jsonResponse(400, { ok: false, error: "user_id_required" });
+  const { data, error } = await admin
+    .from("commerce_profiles")
+    .update({ bud_license_status: "active", bud_plan: "free", updated_at: new Date().toISOString() })
+    .eq("user_id", userId)
+    .select("user_id,username,display_name,email,bud_license_status,bud_plan,role")
+    .single();
+  if (error) return jsonResponse(500, { ok: false, error: "free_license_failed", message: error.message });
+  return jsonResponse(200, { ok: true, user: data });
 }
 
 async function recordAttempt(username: string | null, hash: string | null, ip: string | null, deviceHint: string | null, success: boolean, failureReason?: string) {
@@ -339,6 +414,8 @@ Deno.serve(async (request) => {
     if (request.method === "GET" && (route === "/" || route === "/summary")) return await handleSummary(request);
     if (request.method === "POST" && route === "/checkout") return await handleCheckout(request);
     if (request.method === "POST" && route === "/claim-key") return await handleClaimKey(request);
+    if (request.method === "GET" && route === "/owner/users") return await handleOwnerUsers(request);
+    if (request.method === "POST" && route === "/owner/free-license") return await handleOwnerFreeLicense(request);
     if (request.method === "POST" && route === "/activate") return await handleActivate(request);
     if (request.method === "POST" && route === "/webhook") return await handleWebhook(request);
     return jsonResponse(404, { ok: false, error: "route_not_found" });

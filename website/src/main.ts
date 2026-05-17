@@ -59,7 +59,9 @@ type SiteUser = {
 type CommerceProfile = {
   user_id: string;
   username?: string;
+  display_name?: string;
   email?: string;
+  role?: string;
   profile_image_url?: string;
   bud_license_status?: string;
   bud_plan?: string;
@@ -67,7 +69,7 @@ type CommerceProfile = {
 
 type BudPurchase = {
   id: string;
-  plan: "lifetime" | "monthly";
+  plan: "lifetime" | "monthly" | "free";
   status: string;
   amount_cents: number;
   currency: string;
@@ -77,7 +79,7 @@ type BudPurchase = {
 
 type BudLicense = {
   id: string;
-  plan: "lifetime" | "monthly";
+  plan: "lifetime" | "monthly" | "free";
   activated: boolean;
   activated_at?: string | null;
   expires_at?: string | null;
@@ -106,6 +108,9 @@ type AppState = {
     expires_at?: string | null;
     message: string;
   } | null;
+  ownerPanelOpen: boolean;
+  ownerUsers: CommerceProfile[];
+  ownerError?: string;
 };
 
 type Route = "/" | "/downloads" | "/news" | "/staff" | "/support" | "/about" | "/faq" | "/login" | "/dashboard";
@@ -151,7 +156,9 @@ const state: AppState = {
   budPurchases: [],
   budLicenses: [],
   budMonthlyAvailable: false,
-  revealedBudKey: null
+  revealedBudKey: null,
+  ownerPanelOpen: false,
+  ownerUsers: []
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -499,6 +506,32 @@ async function claimBudKey(): Promise<void> {
     expires_at: payload.expires_at,
     message: payload.message || "Save this key. You will use it inside SkStudio to activate BUD."
   };
+}
+
+function isOwnerProfile(): boolean {
+  return (
+    state.profile?.role === "owner" &&
+    profileName().toLowerCase() === "parks" &&
+    String(currentUser()?.email || state.profile?.email || "").toLowerCase() === "urlocalparks@gmail.com"
+  );
+}
+
+async function loadOwnerUsers(): Promise<void> {
+  if (!isOwnerProfile()) return;
+  try {
+    const payload = await budFetch<{ users?: CommerceProfile[] }>("/owner/users");
+    state.ownerUsers = payload.users ?? [];
+    state.ownerError = undefined;
+  } catch (error) {
+    state.ownerError = error instanceof Error ? error.message : "Could not load users.";
+  }
+}
+
+async function grantFreeBudLicense(userId: string): Promise<void> {
+  await budFetch<{ ok?: boolean }>("/owner/free-license", {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId })
+  });
 }
 
 async function loadSupportOptions(): Promise<void> {
@@ -1153,6 +1186,47 @@ function renderSupportCta(): string {
   `;
 }
 
+function renderOwnerPanel(): string {
+  if (!isOwnerProfile()) return "";
+  const users = state.ownerUsers.length
+    ? state.ownerUsers
+        .map((user) => {
+          const name = user.username || user.display_name || user.email || "Unnamed user";
+          const plan = user.bud_plan || "none";
+          const status = user.bud_license_status || "none";
+          const isFree = plan === "free" && status === "active";
+          return `
+            <article class="owner-user-row">
+              <div>
+                <strong>${escapeHtml(name)}</strong>
+                <span>${escapeHtml(plan)} · ${escapeHtml(status)}</span>
+              </div>
+              <button class="btn secondary" type="button" data-owner-free-license="${escapeHtml(user.user_id)}" ${isFree ? "disabled" : ""}>
+                ${isFree ? "Free active" : "Give free"}
+              </button>
+            </article>
+          `;
+        })
+        .join("")
+    : `<article class="owner-user-row empty"><strong>No users loaded.</strong><span>Open the panel to refresh.</span></article>`;
+
+  return `
+    <aside class="owner-corner ${state.ownerPanelOpen ? "open" : ""}" aria-label="Owner panel">
+      <button class="owner-corner-toggle" type="button" data-owner-panel-toggle aria-expanded="${state.ownerPanelOpen ? "true" : "false"}">
+        Owner Panel
+      </button>
+      <section class="owner-corner-panel" aria-hidden="${state.ownerPanelOpen ? "false" : "true"}">
+        <div class="owner-panel-head">
+          <p class="eyebrow">Owner</p>
+          <h2>Users</h2>
+        </div>
+        ${state.ownerError ? `<p class="auth-message error">${escapeHtml(state.ownerError)}</p>` : ""}
+        <div class="owner-user-list">${users}</div>
+      </section>
+    </aside>
+  `;
+}
+
 function initParticles(): void {
   if (document.querySelector(".particle-canvas")) return;
 
@@ -1408,6 +1482,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     <main>${renderRoute(route)}</main>
     ${renderFooter()}
     ${renderSupportCta()}
+    ${renderOwnerPanel()}
   `;
 
   if (isRouteChange || hasMounted) {
@@ -1599,6 +1674,8 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     state.budPurchases = [];
     state.budLicenses = [];
     state.revealedBudKey = null;
+    state.ownerPanelOpen = false;
+    state.ownerUsers = [];
     window.history.pushState({}, "", "/");
     mount(true);
   });
@@ -1687,6 +1764,29 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     const key = button.dataset.copyBudKey || "";
     await navigator.clipboard.writeText(key);
     button.textContent = "Copied";
+  });
+
+  root.querySelector<HTMLButtonElement>("[data-owner-panel-toggle]")?.addEventListener("click", async () => {
+    state.ownerPanelOpen = !state.ownerPanelOpen;
+    if (state.ownerPanelOpen) await loadOwnerUsers();
+    mount(true, true);
+  });
+
+  root.querySelectorAll<HTMLButtonElement>("[data-owner-free-license]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const userId = button.dataset.ownerFreeLicense || "";
+      if (!userId) return;
+      button.disabled = true;
+      button.textContent = "Saving...";
+      try {
+        await grantFreeBudLicense(userId);
+        await Promise.all([loadOwnerUsers(), loadBudSummary()]);
+        mount(true, true);
+      } catch (error) {
+        state.ownerError = error instanceof Error ? error.message : "Could not give free license.";
+        mount(true, true);
+      }
+    });
   });
 
   document.addEventListener(
