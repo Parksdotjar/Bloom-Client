@@ -113,7 +113,10 @@ type MotionEasingPreset = 'out-quad' | 'out-cubic' | 'in-out-cubic' | 'out-back'
 type IconPackMode = 'default' | 'bold' | 'rounded' | 'pixel';
 type StartupSceneTheme = 'nova' | 'horizon' | 'matrix';
 type StartupSceneSoundProfile = 'off' | 'shimmer' | 'impact';
-const OWNER_MINECRAFT_UUIDS = new Set(['e2701115aa1147d3a9e2e89334623026']);
+const OWNER_MINECRAFT_UUIDS = new Set([
+  'e2701115aa1147d3a9e2e89334623026',
+  'edfee06fd5af457cb0f736cb0f621fc6'
+]);
 type AppearancePresetPayload = {
   themeMode: LauncherTheme;
   accentMode: AccentMode;

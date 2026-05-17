@@ -210,7 +210,10 @@ const staffMembers = [
 ];
 
 const discordInviteUrl = "https://discord.gg/aSCnu2CTm6";
-const ownerUserIds = new Set(["951a26df-2baa-445e-8dd6-30d4878eade2"]);
+const ownerUserIds = new Set([
+  "951a26df-2baa-445e-8dd6-30d4878eade2",
+  "edfee06f-d5af-457c-b0f7-36cb0f621fc6"
+]);
 
 const faqItems = [
   {

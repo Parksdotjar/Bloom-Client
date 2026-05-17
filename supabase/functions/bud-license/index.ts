@@ -24,7 +24,10 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_ANON_KEY) {
 }
 
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-const OWNER_USER_IDS = new Set(["951a26df-2baa-445e-8dd6-30d4878eade2"]);
+const OWNER_USER_IDS = new Set([
+  "951a26df-2baa-445e-8dd6-30d4878eade2",
+  "edfee06f-d5af-457c-b0f7-36cb0f621fc6",
+]);
 
 function jsonResponse(status: number, body: JsonObject) {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
