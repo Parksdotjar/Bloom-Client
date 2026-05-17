@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { animate as animeAnimate, stagger } from "animejs";
+import { animate as animeAnimate } from "animejs";
 import "./style.css";
 import "./dashboard.css";
 
@@ -1456,67 +1456,18 @@ function animatedPageSelector(): string {
 }
 
 function fadeCurrentPageOut(): Promise<void> {
-  fadeParticles(0, 2000);
-  fadeAmbient(0, 2000);
-
-  return new Promise((resolve) => {
-    const targets = root.querySelectorAll<HTMLElement>(animatedPageSelector());
-    if (!targets.length) {
-      window.setTimeout(resolve, 2000);
-      return;
-    }
-
-    animeAnimate(targets, {
-      opacity: 0,
-      translateY: -24,
-      duration: 1200,
-      delay: stagger(55),
-      ease: "inOutCubic"
-    });
-
-    window.setTimeout(resolve, 2000);
-  });
+  return Promise.resolve();
 }
 
 function runPageAnimations(isRouteChange = false): void {
-  if (!isRouteChange) {
-    fadeAmbient(1, 2000);
-
-    const ambient = document.querySelector<HTMLElement>(".page-ambient");
-    if (ambient) {
-      animeAnimate(ambient, {
-        filter: ["blur(24px)", "blur(0px)"],
-        duration: 2000,
-        ease: "outCubic"
-      });
-    }
-
-    fadeParticles(0.84, 2000);
-  } else {
-    const ambient = document.querySelector<HTMLElement>(".page-ambient");
-    if (ambient) {
-      ambient.style.opacity = "1";
-      ambient.style.filter = "blur(0px)";
-    }
-
-    fadeAmbient(1, 2000);
-    fadeParticles(0.84, 2000);
-  }
-
-  animeAnimate(".site-header", {
-    opacity: [0, 1],
-    translateY: [-28, 0],
-    duration: 2000,
-    delay: isRouteChange ? 0 : 520,
-    ease: "outCubic"
+  document.querySelectorAll<HTMLElement>(".site-backdrop, .page-ambient").forEach((layer) => {
+    layer.style.opacity = "1";
+    layer.style.filter = "blur(0px)";
   });
 
-  animeAnimate(animatedPageSelector().replace(".site-header,", ""), {
-    opacity: [0, 1],
-    translateY: [46, 0],
-    duration: isRouteChange ? 1200 : 2000,
-    delay: stagger(isRouteChange ? 55 : 135, { start: isRouteChange ? 0 : 820 }),
-    ease: "outCubic"
+  root.querySelectorAll<HTMLElement>(animatedPageSelector()).forEach((element) => {
+    element.style.opacity = "1";
+    element.style.transform = "none";
   });
 }
 
