@@ -133,21 +133,74 @@ body.dashboard-page main {
 }
 
 .dash-side-tabs a {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   min-height: 34px;
   display: flex;
   align-items: center;
-  border-radius: 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   padding: 0 12px;
-  color: var(--muted);
+  color: rgba(244, 244, 241, 0.5);
   text-decoration: none;
   font-size: 13px;
   font-weight: 650;
+  background:
+    radial-gradient(circle at 92% 18%, rgba(255, 255, 255, 0.055), transparent 24%),
+    linear-gradient(96deg, rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0.005) 62%, rgba(255, 255, 255, 0.035));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.018);
+  transition: color 170ms ease, border-color 170ms ease, background 170ms ease, box-shadow 170ms ease;
 }
 
-.dash-side-tabs a:hover,
+.dash-side-tabs a::before,
+.dash-side-tabs a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.dash-side-tabs a::before {
+  background:
+    radial-gradient(circle at 8% 18%, rgba(255, 255, 255, 0.22), transparent 18%),
+    radial-gradient(circle at 92% 82%, rgba(255, 255, 255, 0.34), transparent 20%),
+    linear-gradient(94deg, #050505 0%, #090909 50%, rgba(255, 255, 255, 0.13) 100%);
+}
+
+.dash-side-tabs a::after {
+  inset: 1px;
+  border-radius: 7px;
+  background:
+    linear-gradient(100deg, transparent 0 58%, rgba(255, 255, 255, 0.14) 72%, transparent 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.09), transparent 42%);
+  filter: blur(0.2px);
+}
+
+.dash-side-tabs a:hover {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.dash-side-tabs a:hover::before {
+  opacity: 0.34;
+}
+
 .dash-side-tabs a.active {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.34);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.08),
+    0 10px 28px rgba(0, 0, 0, 0.32);
+}
+
+.dash-side-tabs a.active::before,
+.dash-side-tabs a.active::after {
+  opacity: 1;
 }
 
 .dash-side-email {
@@ -262,6 +315,9 @@ body.dashboard-page main {
 .dash-primary-button,
 .dash-ghost-button,
 .dash-price-button {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   min-height: 38px;
   border-radius: 10px;
   padding: 0 14px;
@@ -273,18 +329,48 @@ body.dashboard-page main {
 
 .dash-primary-button,
 .dash-price-button {
-  border: 1px solid rgba(255, 255, 255, 0.82);
-  background: #f2f2ef;
-  color: #070707;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.92), transparent 26%),
+    radial-gradient(circle at 92% 100%, rgba(255, 255, 255, 0.55), transparent 30%),
+    linear-gradient(180deg, #f7f7f5 0%, #d8d8d4 100%);
+  color: #050505;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    inset 0 -10px 20px rgba(0, 0, 0, 0.08),
+    0 16px 38px rgba(255, 255, 255, 0.07),
+    0 8px 26px rgba(0, 0, 0, 0.32);
 }
 
 .dash-ghost-button {
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.045);
+  background:
+    radial-gradient(circle at 15% 0%, rgba(255, 255, 255, 0.11), transparent 26%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.028));
   color: var(--text);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -10px 18px rgba(0, 0, 0, 0.2),
+    0 12px 28px rgba(0, 0, 0, 0.22);
+}
+
+.dash-primary-button::before,
+.dash-ghost-button::before,
+.dash-price-button::before {
+  content: "";
+  position: absolute;
+  inset: -80% -25%;
+  z-index: -1;
+  background: linear-gradient(112deg, transparent 35%, rgba(255, 255, 255, 0.42) 46%, transparent 58%);
+  opacity: 0.34;
+  transform: translateX(-45%);
+  animation: dashButtonShine 6.4s ease-in-out infinite;
 }
 
 .dash-license-strip {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   width: min(100%, 930px);
   min-height: 118px;
   display: grid;
@@ -295,8 +381,41 @@ body.dashboard-page main {
   border-radius: 20px;
   padding: 24px 26px;
   background:
-    radial-gradient(circle at 22% 0%, rgba(34, 200, 120, 0.18), transparent 36%),
-    linear-gradient(95deg, rgba(2, 47, 26, 0.84), #020202 74%);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.006)),
+    rgba(0, 0, 0, 0.82);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 0 60px rgba(34, 200, 120, 0.09);
+}
+
+.dash-license-strip::before,
+.dash-license-strip::after {
+  content: "";
+  position: absolute;
+  inset: -90px -70px;
+  z-index: -1;
+  pointer-events: none;
+  filter: blur(24px);
+  opacity: 0.88;
+}
+
+.dash-license-strip::before {
+  background:
+    radial-gradient(circle at 18% 28%, rgba(34, 200, 120, 0.44), transparent 30%),
+    radial-gradient(circle at 60% 18%, rgba(90, 255, 176, 0.22), transparent 30%),
+    radial-gradient(circle at 78% 72%, rgba(43, 155, 255, 0.14), transparent 28%),
+    linear-gradient(100deg, rgba(0, 0, 0, 0.3), rgba(2, 44, 23, 0.48), rgba(0, 0, 0, 0.66));
+  background-size: 120% 120%, 150% 150%, 140% 140%, 100% 100%;
+  animation: dashLicenseFog 7.4s ease-in-out infinite alternate;
+}
+
+.dash-license-strip::after {
+  background:
+    radial-gradient(circle at 74% 38%, rgba(255, 255, 255, 0.08), transparent 20%),
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.22'/%3E%3C/svg%3E");
+  background-size: 100% 100%, 180px 180px;
+  mix-blend-mode: screen;
+  animation: dashLicenseGrain 4.2s steps(2, end) infinite;
 }
 
 .dash-license-strip strong {
@@ -479,6 +598,55 @@ body.dashboard-page main {
 
   100% {
     background-position: 260% 50%;
+  }
+}
+
+@keyframes dashButtonShine {
+  0%,
+  38% {
+    transform: translateX(-58%) rotate(0deg);
+    opacity: 0;
+  }
+
+  52% {
+    opacity: 0.48;
+  }
+
+  72%,
+  100% {
+    transform: translateX(58%) rotate(0deg);
+    opacity: 0;
+  }
+}
+
+@keyframes dashLicenseFog {
+  0% {
+    transform: translate3d(-18px, 8px, 0) scale(1, 0.92) rotate(0deg);
+    background-position: 6% 42%, 86% 14%, 54% 82%, 50% 50%;
+  }
+
+  45% {
+    transform: translate3d(18px, -10px, 0) scale(1.16, 0.86) rotate(4deg);
+    background-position: 82% 18%, 14% 74%, 92% 36%, 50% 50%;
+  }
+
+  100% {
+    transform: translate3d(4px, 16px, 0) scale(0.9, 1.18) rotate(-6deg);
+    background-position: 20% 84%, 68% 40%, 16% 18%, 50% 50%;
+  }
+}
+
+@keyframes dashLicenseGrain {
+  0% {
+    background-position: 50% 50%, 0 0;
+  }
+
+  50% {
+    background-position: 52% 47%, 70px -32px;
+  }
+
+  100% {
+    background-position: 47% 54%, -52px 86px;
   }
 }
 
