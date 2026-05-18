@@ -114,7 +114,7 @@ type AppState = {
   ownerError?: string;
 };
 
-type Route = "/" | "/downloads" | "/news" | "/staff" | "/support" | "/about" | "/faq" | "/login" | "/dashboard";
+type Route = "/" | "/downloads" | "/news" | "/staff" | "/support" | "/about" | "/faq" | "/login" | "/signup" | "/dashboard";
 
 const updatesJsonUrl = import.meta.env.VITE_UPDATES_JSON_URL || "/latest.json";
 const sksUpdatesJsonUrl = import.meta.env.VITE_SKS_UPDATES_JSON_URL || "/sks-latest.json";
@@ -171,6 +171,7 @@ let isTransitioning = false;
 const transitionStorageKey = "bloom-site-transitions";
 let transitionsEnabled = localStorage.getItem(transitionStorageKey) !== "off";
 let siteSupabase: any;
+let ditherWaveStarted = false;
 
 const navItems: Array<{ path: Route; label: string }> = [
   { path: "/downloads", label: "Downloads" },
@@ -279,6 +280,7 @@ function routeFromPath(pathname = window.location.pathname): Route {
   if (pathname === "/about") return "/about";
   if (pathname === "/faq") return "/faq";
   if (pathname === "/login") return "/login";
+  if (pathname === "/signup") return "/signup";
   if (pathname === "/dashboard") return "/dashboard";
   return "/";
 }
@@ -880,43 +882,48 @@ function renderSupport(): string {
   `;
 }
 
-function renderLogin(): string {
+function renderAuth(mode: "login" | "signup"): string {
   const configured = Boolean(getSiteSupabase());
+  const isSignup = mode === "signup";
+  const switchHref = isSignup ? "/login" : "/signup";
+  const switchText = isSignup ? "Already have an account?" : "Need an account?";
+  const switchAction = isSignup ? "Log in." : "Create one.";
   return `
-    <section class="page-hero compact">
-      <p class="eyebrow">Account</p>
-      <h1>Sign in to Bloom Productions</h1>
-      <p>Use your account for SkStudio BUD licensing and dashboard access.</p>
-    </section>
-    <section class="auth-panel">
+    <section class="auth-shell">
+      <a class="auth-back" href="/" data-route="/">‹ Home</a>
+      <div class="auth-ribbon-field auth-ribbon-field-a" aria-hidden="true"></div>
+      <div class="auth-ribbon-field auth-ribbon-field-b" aria-hidden="true"></div>
+      <div class="auth-center">
+        <span class="auth-logo" aria-hidden="true"><img src="/logo.png" alt="" /></span>
+        <h1>${isSignup ? "Create a Bloom account" : "Log in to Bloom"}</h1>
+        <p class="auth-switch">${switchText} <a href="${switchHref}" data-route="${switchHref}">${switchAction}</a></p>
       ${
         configured
           ? `
-            <form class="auth-card" data-auth-form="login">
-              <p class="eyebrow">Login</p>
-              <h2>Welcome back</h2>
+            <form class="auth-card auth-card-single" data-auth-form="${isSignup ? "signup" : "login"}">
+              ${
+                isSignup
+                  ? `<label>Username<input name="username" type="text" autocomplete="username" minlength="3" maxlength="32" placeholder="parks" required /></label>`
+                  : ""
+              }
               <label>Email<input name="email" type="email" autocomplete="email" required /></label>
-              <label>Password<input name="password" type="password" autocomplete="current-password" required /></label>
-              <button class="btn primary" type="submit">Login</button>
-              <p class="auth-message" data-auth-message="login"></p>
-            </form>
-            <form class="auth-card" data-auth-form="signup">
-              <p class="eyebrow">Signup</p>
-              <h2>Create account</h2>
-              <label>Username<input name="username" type="text" autocomplete="username" minlength="3" maxlength="32" required /></label>
-              <label>Email<input name="email" type="email" autocomplete="email" required /></label>
-              <label>Password<input name="password" type="password" autocomplete="new-password" required /></label>
-              <ul class="password-rules">
-                <li>12+ characters</li>
-                <li>Uppercase and lowercase</li>
-                <li>Number and symbol</li>
-              </ul>
-              <button class="btn primary" type="submit">Create account</button>
-              <p class="auth-message" data-auth-message="signup"></p>
+              <label>Password<input name="password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" required /></label>
+              ${
+                isSignup
+                  ? `<ul class="password-rules">
+                      <li>12+ characters</li>
+                      <li>Uppercase and lowercase</li>
+                      <li>Number and symbol</li>
+                    </ul>`
+                  : ""
+              }
+              <button class="btn primary" type="submit">${isSignup ? "Create account" : "Login"}</button>
+              <p class="auth-message" data-auth-message="${isSignup ? "signup" : "login"}"></p>
             </form>
           `
           : `<article class="support-state"><h2>Accounts are not configured.</h2><p>Add the public Supabase URL and anon key to the website environment.</p></article>`
       }
+      </div>
     </section>
   `;
 }
@@ -1169,7 +1176,8 @@ function renderRoute(route: Route): string {
   if (route === "/news") return renderNews();
   if (route === "/staff") return renderStaff();
   if (route === "/support") return renderSupport();
-  if (route === "/login") return renderLogin();
+  if (route === "/login") return renderAuth("login");
+  if (route === "/signup") return renderAuth("signup");
   if (route === "/dashboard") return renderDashboard();
   if (route === "/about") return renderAbout();
   if (route === "/faq") return renderFaq();
@@ -1263,6 +1271,196 @@ function renderOwnerPanel(): string {
       </section>
     </aside>
   `;
+}
+
+function initDitherWaveBackground(): void {
+  if (ditherWaveStarted || document.querySelector(".dither-wave-canvas")) return;
+  ditherWaveStarted = true;
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "dither-wave-canvas";
+  canvas.setAttribute("aria-hidden", "true");
+  document.body.prepend(canvas);
+
+  const gl = canvas.getContext("webgl", {
+    alpha: true,
+    antialias: false,
+    depth: false,
+    stencil: false,
+    premultipliedAlpha: true,
+    preserveDrawingBuffer: false
+  });
+
+  if (!gl) {
+    canvas.remove();
+    ditherWaveStarted = false;
+    initAmbientLayer();
+    return;
+  }
+
+  const vertexSource = `
+    attribute vec2 a_position;
+    varying vec2 v_uv;
+    void main() {
+      v_uv = a_position * 0.5 + 0.5;
+      gl_Position = vec4(a_position, 0.0, 1.0);
+    }
+  `;
+
+  const fragmentSource = `
+    precision highp float;
+
+    uniform vec2 u_resolution;
+    uniform vec2 u_mouse;
+    uniform float u_time;
+    varying vec2 v_uv;
+
+    float hash(vec2 p) {
+      p = fract(p * vec2(123.34, 456.21));
+      p += dot(p, p + 45.32);
+      return fract(p.x * p.y);
+    }
+
+    float band(vec2 uv, float offset, float scale, float width) {
+      float wave = sin((uv.x * 2.0 + uv.y * 0.55 + offset) * 3.14159);
+      float ridge = uv.y - 0.5 - wave * scale;
+      return 1.0 - smoothstep(0.0, width, abs(ridge));
+    }
+
+    float slowNoise(float x) {
+      return sin(x) * 0.52 + sin(x * 0.37 + 1.8) * 0.31 + sin(x * 0.13 + 4.1) * 0.17;
+    }
+
+    void main() {
+      vec2 uv = v_uv;
+      vec2 centered = uv - 0.5;
+      centered.x *= u_resolution.x / max(u_resolution.y, 1.0);
+
+      float t = u_time;
+      float bend = slowNoise(t * 0.21);
+      float stretch = slowNoise(t * 0.11 + 6.0);
+      float drift = slowNoise(t * 0.17 + 2.4);
+      float pulse = 0.5 + 0.5 * sin(t * 0.09 + sin(t * 0.027) * 2.2);
+      vec2 mouse = u_mouse / max(u_resolution, vec2(1.0));
+      vec2 mouseDelta = uv - mouse;
+      mouseDelta.x *= u_resolution.x / max(u_resolution.y, 1.0);
+
+      float dotPitch = 7.0;
+      vec2 grid = gl_FragCoord.xy / dotPitch;
+      vec2 cell = fract(grid) - 0.5;
+      float dots = 1.0 - smoothstep(0.21, 0.35, length(cell));
+
+      float checker = mod(floor(grid.x) + floor(grid.y), 2.0);
+      float ordered = hash(floor(grid));
+
+      vec2 warpedUv = uv;
+      warpedUv.x += sin(uv.y * (2.4 + stretch * 0.46) + t * 0.34 + bend) * (0.038 + pulse * 0.03);
+      warpedUv.y += sin(uv.x * (1.8 + bend * 0.32) - t * 0.28 + drift) * (0.028 + (1.0 - pulse) * 0.022);
+      warpedUv += vec2(drift, bend) * 0.026;
+
+      float waveA = band(warpedUv + vec2(sin(t * 0.28 + drift) * 0.038, 0.0), t * (0.09 + pulse * 0.055), 0.105 + pulse * 0.075, 0.18 + abs(bend) * 0.09);
+      float waveB = band(vec2(1.0 - warpedUv.x, warpedUv.y) + vec2(0.0, sin(t * 0.22 + bend) * 0.034), t * (-0.075 - abs(stretch) * 0.045) + 0.72, 0.075 + abs(drift) * 0.062, 0.15 + pulse * 0.085);
+      float diagonal = smoothstep(-0.54, 0.42, centered.x + centered.y * (0.68 + stretch * 0.16) + sin(t * 0.12 + drift) * (0.09 + pulse * 0.09));
+      float mouseLight = exp(-dot(mouseDelta, mouseDelta) * 20.0) * 0.2;
+
+      float field = waveA * 0.58 + waveB * 0.32 + diagonal * 0.12 + mouseLight;
+      field += sin((uv.x * (16.0 + stretch * 2.2) + uv.y * (8.0 + bend * 1.4)) + t * (0.12 + pulse * 0.12)) * 0.025;
+      field = clamp(field, 0.0, 1.0);
+
+      float dither = step(ordered * 0.88 + checker * 0.045, field);
+      float vignette = smoothstep(0.9, 0.18, length(centered));
+      float side = abs(uv.x - 0.5) * 2.0;
+      float meniscus = 0.6 + (1.0 - pow(side, 1.65)) * 0.23;
+      float verticalFade = 1.0 - smoothstep(meniscus, meniscus + 0.18, uv.y);
+      verticalFade *= smoothstep(1.02, 0.72, uv.y);
+      float alpha = dots * dither * vignette * verticalFade * 0.28;
+
+      vec3 ink = vec3(0.30, 0.32, 0.32);
+      vec3 lowGlow = vec3(0.02, 0.024, 0.023) * (field * 0.55 + mouseLight);
+
+      gl_FragColor = vec4(ink * alpha + lowGlow, alpha + field * 0.035);
+    }
+  `;
+
+  const compileShader = (type: number, source: string) => {
+    const shader = gl.createShader(type);
+    if (!shader) return null;
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      console.warn(gl.getShaderInfoLog(shader));
+      gl.deleteShader(shader);
+      return null;
+    }
+    return shader;
+  };
+
+  const vertexShader = compileShader(gl.VERTEX_SHADER, vertexSource);
+  const fragmentShader = compileShader(gl.FRAGMENT_SHADER, fragmentSource);
+  const program = gl.createProgram();
+  if (!vertexShader || !fragmentShader || !program) {
+    canvas.remove();
+    ditherWaveStarted = false;
+    initAmbientLayer();
+    return;
+  }
+
+  gl.attachShader(program, vertexShader);
+  gl.attachShader(program, fragmentShader);
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    console.warn(gl.getProgramInfoLog(program));
+    canvas.remove();
+    ditherWaveStarted = false;
+    initAmbientLayer();
+    return;
+  }
+
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), gl.STATIC_DRAW);
+
+  const positionLocation = gl.getAttribLocation(program, "a_position");
+  const resolutionLocation = gl.getUniformLocation(program, "u_resolution");
+  const mouseLocation = gl.getUniformLocation(program, "u_mouse");
+  const timeLocation = gl.getUniformLocation(program, "u_time");
+  const mouse = { x: window.innerWidth * 0.68, y: window.innerHeight * 0.42 };
+
+  const resize = () => {
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+    const width = Math.floor(window.innerWidth * pixelRatio);
+    const effectHeight = Math.max(620, Math.min(920, Math.round(window.innerHeight * 0.96)));
+    const height = Math.floor(effectHeight * pixelRatio);
+    canvas.width = width;
+    canvas.height = height;
+    canvas.style.width = `${window.innerWidth}px`;
+    canvas.style.height = `${effectHeight}px`;
+    gl.viewport(0, 0, width, height);
+  };
+
+  const handlePointerMove = (event: PointerEvent) => {
+    mouse.x = event.clientX;
+    mouse.y = window.innerHeight - event.clientY;
+  };
+
+  const render = (time: number) => {
+    gl.useProgram(program);
+    gl.enableVertexAttribArray(positionLocation);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+    gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
+    gl.uniform2f(mouseLocation, mouse.x * Math.min(window.devicePixelRatio || 1, 1.5), mouse.y * Math.min(window.devicePixelRatio || 1, 1.5));
+    gl.uniform1f(timeLocation, time * 0.001);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    requestAnimationFrame(render);
+  };
+
+  window.addEventListener("resize", resize);
+  window.addEventListener("pointermove", handlePointerMove);
+  resize();
+  requestAnimationFrame(render);
 }
 
 function initParticles(): void {
@@ -1465,14 +1663,16 @@ function runPageAnimations(isRouteChange = false): void {
 function mount(isRouteChange = false, skipAnimations = false): void {
   const route = routeFromPath();
   const dashboardMode = route === "/dashboard";
+  const authMode = route === "/login" || route === "/signup";
   const title = [...navItems, ...infoItems].find((item) => item.path === route)?.label;
-  const fallbackTitle = route === "/support" ? "Support" : route === "/login" ? "Login" : route === "/dashboard" ? "Dashboard" : "Info";
+  const fallbackTitle = route === "/support" ? "Support" : route === "/login" ? "Login" : route === "/signup" ? "Create account" : route === "/dashboard" ? "Dashboard" : "Info";
   document.title = route === "/" ? "Bloom Productions | Official Website" : `Bloom Productions | ${title || fallbackTitle}`;
   document.body.classList.toggle("dashboard-page", dashboardMode);
+  document.body.classList.toggle("auth-page", authMode);
   root.innerHTML = `
-    ${dashboardMode ? "" : renderHeader(route)}
+    ${dashboardMode || authMode ? "" : renderHeader(route)}
     <main>${renderRoute(route)}</main>
-    ${dashboardMode ? "" : renderFooter()}
+    ${dashboardMode || authMode ? "" : renderFooter()}
     ${renderOwnerPanel()}
   `;
 
@@ -1541,12 +1741,14 @@ function mount(isRouteChange = false, skipAnimations = false): void {
 
       const originalText = button.textContent || "Support Bloom";
       button.disabled = true;
+      button.classList.add("is-loading");
       button.textContent = "Loading...";
       try {
         const checkoutUrl = await createSupportCheckout(optionSlug);
         window.location.href = checkoutUrl;
       } catch (error) {
         button.disabled = false;
+        button.classList.remove("is-loading");
         button.textContent = originalText;
         const message = error instanceof Error ? error.message : "Could not start support checkout.";
         const panel = root.querySelector<HTMLElement>(".support-options");
@@ -1579,12 +1781,14 @@ function mount(isRouteChange = false, skipAnimations = false): void {
 
     const originalText = button.textContent || "Support Bloom";
     button.disabled = true;
+    button.classList.add("is-loading");
     button.textContent = "Loading...";
     try {
       const checkoutUrl = await createSupportCheckout(undefined, amount);
       window.location.href = checkoutUrl;
     } catch (error) {
       button.disabled = false;
+      button.classList.remove("is-loading");
       button.textContent = originalText;
       const message = error instanceof Error ? error.message : "Could not start support checkout.";
       if (messageTarget) {
@@ -1604,6 +1808,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     const button = form.querySelector<HTMLButtonElement>("button");
     if (!supabase || !button) return;
     button.disabled = true;
+    button.classList.add("is-loading");
     message!.textContent = "Signing in...";
     const formData = new FormData(form);
     const { error } = await supabase.auth.signInWithPassword({
@@ -1614,6 +1819,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       message!.textContent = error.message;
       message!.classList.add("error");
       button.disabled = false;
+      button.classList.remove("is-loading");
       return;
     }
     await loadAuthState();
@@ -1638,6 +1844,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       return;
     }
     button.disabled = true;
+    button.classList.add("is-loading");
     message!.textContent = "Creating account...";
     const { error } = await supabase.auth.signUp({
       email: String(formData.get("email") || ""),
@@ -1653,6 +1860,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       message!.textContent = error.message;
       message!.classList.add("error");
       button.disabled = false;
+      button.classList.remove("is-loading");
       return;
     }
     await loadAuthState();
@@ -1686,6 +1894,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     const button = form.querySelector<HTMLButtonElement>("button");
     if (!supabase || !user || !button) return;
     button.disabled = true;
+    button.classList.add("is-loading");
     message!.textContent = "Saving...";
     try {
       const formData = new FormData(form);
@@ -1717,6 +1926,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       message!.textContent = error instanceof Error ? error.message : "Could not save profile.";
       message!.classList.add("error");
       button.disabled = false;
+      button.classList.remove("is-loading");
     }
   });
 
@@ -1724,6 +1934,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     button.addEventListener("click", async () => {
       const plan = button.dataset.budCheckout === "monthly" ? "monthly" : "lifetime";
       button.disabled = true;
+      button.classList.add("is-loading");
       const original = button.textContent || "Checkout";
       button.textContent = "Loading...";
       try {
@@ -1733,6 +1944,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       } finally {
         window.setTimeout(() => {
           button.disabled = false;
+          button.classList.remove("is-loading");
           button.textContent = original;
         }, 2400);
       }
@@ -1742,6 +1954,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
   root.querySelector<HTMLButtonElement>("[data-claim-bud-key]")?.addEventListener("click", async (event) => {
     const button = event.currentTarget as HTMLButtonElement;
     button.disabled = true;
+    button.classList.add("is-loading");
     button.textContent = "Checking...";
     try {
       await claimBudKey();
@@ -1751,6 +1964,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       button.textContent = error instanceof Error ? error.message : "Could not show key.";
       window.setTimeout(() => {
         button.disabled = false;
+        button.classList.remove("is-loading");
         button.textContent = "Show new license key";
       }, 2600);
     }
@@ -1774,6 +1988,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       const userId = button.dataset.ownerFreeLicense || "";
       if (!userId) return;
       button.disabled = true;
+      button.classList.add("is-loading");
       button.textContent = "Saving...";
       try {
         await grantFreeBudLicense(userId);
@@ -1801,10 +2016,9 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     { once: true }
   );
 
-  initAmbientLayer();
-  initParticles();
+  initDitherWaveBackground();
   if (skipAnimations) {
-    document.querySelectorAll<HTMLElement>(".site-backdrop, .page-ambient").forEach((layer) => {
+    document.querySelectorAll<HTMLElement>(".site-backdrop, .page-ambient, .dither-wave-canvas").forEach((layer) => {
       layer.style.opacity = "1";
       layer.style.filter = "blur(0px)";
     });
