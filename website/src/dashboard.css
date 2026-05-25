@@ -930,6 +930,231 @@ body.dashboard-page main {
   font-weight: 750;
 }
 
+/* Minimal course index + course-page layout */
+.course-dashboard-shell {
+  width: min(100%, 860px);
+  display: block;
+  margin: 0 auto;
+}
+
+.course-hub-hero {
+  justify-items: start;
+  margin-bottom: 42px;
+  text-align: left;
+}
+
+.course-hub-hero .dash-section-heading {
+  margin-bottom: 22px;
+}
+
+.course-hub-hero .dash-section-heading h1 {
+  font-size: clamp(46px, 7vw, 82px);
+}
+
+.course-hub-hero .dash-section-heading p {
+  max-width: 520px;
+}
+
+.course-progress-row {
+  width: min(100%, 620px);
+}
+
+.course-bundle-card {
+  width: 100%;
+  margin: 0 0 22px;
+  border-color: rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  padding: 18px 0;
+  background: transparent;
+  box-shadow: none;
+  border-width: 1px 0;
+}
+
+.course-bundle-card h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.course-bundle-action {
+  min-width: 150px;
+}
+
+.course-bundle-action strong {
+  font-size: 20px;
+}
+
+.course-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.11);
+}
+
+.course-card {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 0;
+  padding: 22px 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.course-card.locked {
+  opacity: 1;
+}
+
+.course-card-head {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  color: inherit;
+  text-decoration: none;
+}
+
+.course-card-head:hover h2 {
+  color: #ffffff;
+}
+
+.course-card-number {
+  color: var(--dim);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.course-card-head h2 {
+  margin: 0 0 7px;
+  color: rgba(244, 244, 241, 0.88);
+  font-size: 19px;
+  line-height: 1.2;
+}
+
+.course-card-head p {
+  max-width: 520px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.course-card-status {
+  min-width: 94px;
+  padding: 0;
+  background: transparent;
+  color: var(--dim);
+  font-size: 12px;
+  text-align: right;
+}
+
+.course-row-action {
+  min-width: 116px;
+  text-align: center;
+}
+
+.course-open-link {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.course-page {
+  width: min(100%, 820px);
+  margin: 0 auto;
+}
+
+.course-back-link {
+  display: inline-flex;
+  margin-bottom: 46px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.course-back-link:hover {
+  color: var(--text);
+}
+
+.course-page-head {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 44px;
+}
+
+.course-page-head span {
+  color: var(--dim);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.course-page-head h1 {
+  max-width: 760px;
+  margin: 0;
+  font-family: "Newsreader", Georgia, serif;
+  font-size: clamp(48px, 8vw, 88px);
+  font-weight: 600;
+  line-height: 0.94;
+  letter-spacing: -0.05em;
+}
+
+.course-page-head p {
+  max-width: 620px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.course-page-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: center;
+  color: var(--muted);
+}
+
+.course-page-meta strong {
+  color: var(--text);
+  font-size: 18px;
+}
+
+.course-page-meta em {
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.course-page-lessons {
+  display: grid;
+  gap: 28px;
+}
+
+.course-page .course-lesson {
+  gap: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.11);
+  padding: 28px 0 0;
+}
+
+.course-page .course-lesson h3 {
+  font-size: 24px;
+}
+
+.course-locked-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .course-protection-note {
   margin: 18px 0 0;
   color: var(--dim);
