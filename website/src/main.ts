@@ -1136,6 +1136,14 @@ function formatDuration(seconds?: number | null): string {
 function renderEditingCourseCard(course: EditingCourse): string {
   const locked = !course.owned;
   const detailsOpen = course.owned && !course.collapsed_default ? "open" : "";
+  const completeLabel = course.owned ? `${course.lessons.length}/${course.lessons.length} unlocked` : `0/${course.lessons.length} unlocked`;
+  const initials = course.title
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase();
   const lessons = course.lessons.length
     ? course.lessons
         .map(
@@ -1163,15 +1171,16 @@ function renderEditingCourseCard(course: EditingCourse): string {
     : `<p class="dash-empty">Lessons are being prepared.</p>`;
 
   return `
-    <article class="course-card ${locked ? "locked" : "unlocked"}">
+    <article class="course-card ${locked ? "locked" : "unlocked"}" id="course-${escapeHtml(course.slug)}">
       <div class="course-card-head">
+        <span class="course-card-icon">${escapeHtml(initials || "EC")}</span>
         <div>
-          <span class="dash-price-label">${locked ? "Locked" : "Unlocked"}</span>
           <h2>${escapeHtml(course.title)}</h2>
-          <p>${escapeHtml(course.description || "Course details coming soon.")}</p>
+          <p>${escapeHtml(course.lessons.length ? `${course.lessons.length} lessons - ${completeLabel}` : "Lessons coming soon")}</p>
         </div>
-        <strong>${escapeHtml(formatMoney(course.price_cents, course.currency))}</strong>
+        <span class="course-card-status">${locked ? escapeHtml(formatMoney(course.price_cents, course.currency)) : "Open"}</span>
       </div>
+      <p class="course-card-description">${escapeHtml(course.description || "Course details coming soon.")}</p>
       ${
         locked
           ? `<button class="dash-price-button" type="button" data-course-checkout="${escapeHtml(course.id)}">Buy course</button>`
@@ -1187,32 +1196,65 @@ function renderEditingCourseCard(course: EditingCourse): string {
 function renderEditingCourseTab(): string {
   const bundle = state.editingCourses.find((course) => course.is_bundle);
   const courses = state.editingCourses.filter((course) => !course.is_bundle);
+  const unlockedCount = courses.filter((course) => course.owned).length;
+  const totalCount = courses.length || 1;
+  const progressPercent = Math.round((unlockedCount / totalCount) * 100);
   return `
     <section class="dash-view dash-course-view course-protected-area">
       <div class="course-privacy-overlay">Course hidden while the tab or window is inactive.</div>
-      <div class="dash-section-heading">
-        <span>Editing Course</span>
-        <h1>Video editing lessons</h1>
-        <p>Paid lessons are tied to your Bloom account. Recording, screenshots, redistribution, and screen sharing are not allowed.</p>
-      </div>
-      ${state.editingCourseError ? `<p class="auth-message error">${escapeHtml(state.editingCourseError)}</p>` : ""}
-      ${
-        bundle
-          ? `<article class="course-bundle-card ${bundle.owned ? "unlocked" : "locked"}">
-              <div>
-                <span class="dash-price-label">${bundle.owned ? "Bundle owned" : "Best value"}</span>
-                <h2>${escapeHtml(bundle.title)}</h2>
-                <p>${escapeHtml(bundle.description || "Unlock every active editing course.")}</p>
-              </div>
-              <div class="course-bundle-action">
-                <strong>${escapeHtml(formatMoney(bundle.price_cents, bundle.currency))}</strong>
-                <button class="dash-price-button" type="button" data-course-checkout="${escapeHtml(bundle.id)}" ${bundle.owned ? "disabled" : ""}>${bundle.owned ? "Unlocked" : "Buy bundle"}</button>
-              </div>
-            </article>`
-          : ""
-      }
-      <div class="course-grid">
-        ${courses.length ? courses.map(renderEditingCourseCard).join("") : `<p class="dash-empty">No courses are available yet.</p>`}
+      <div class="course-dashboard-shell">
+        <aside class="course-module-rail" aria-label="Editing course modules">
+          <span class="course-rail-title">Editing Courses</span>
+          ${
+            courses.length
+              ? courses
+                  .map(
+                    (course, index) => `
+                      <a href="#course-${escapeHtml(course.slug)}">
+                        <span>${escapeHtml(String(index + 1).padStart(2, "0"))}</span>
+                        <strong>${escapeHtml(course.title)}</strong>
+                        <em>${course.owned ? `${course.lessons.length}/${course.lessons.length}` : `0/${course.lessons.length}`}</em>
+                      </a>
+                    `
+                  )
+                  .join("")
+              : `<p>No courses yet.</p>`
+          }
+        </aside>
+        <div class="course-hub">
+          <div class="course-hub-hero">
+            <span class="course-hub-mark" aria-hidden="true"></span>
+            <div class="dash-section-heading">
+              <span>Editing Course</span>
+              <h1>Video editing lessons</h1>
+              <p>Go from clean basics to commission-ready edits. Paid lessons are tied to your Bloom account and watermarked while watching.</p>
+            </div>
+            <div class="course-progress-row">
+              <span class="course-progress-bar"><span style="width: ${progressPercent}%"></span></span>
+              <strong>${unlockedCount} / ${courses.length} courses unlocked</strong>
+            </div>
+          </div>
+          ${state.editingCourseError ? `<p class="auth-message error">${escapeHtml(state.editingCourseError)}</p>` : ""}
+          ${
+            bundle
+              ? `<article class="course-bundle-card ${bundle.owned ? "unlocked" : "locked"}">
+                  <div>
+                    <span class="dash-price-label">${bundle.owned ? "Bundle owned" : "Best value"}</span>
+                    <h2>${escapeHtml(bundle.title)}</h2>
+                    <p>${escapeHtml(bundle.description || "Unlock every active editing course.")}</p>
+                  </div>
+                  <div class="course-bundle-action">
+                    <strong>${escapeHtml(formatMoney(bundle.price_cents, bundle.currency))}</strong>
+                    <button class="dash-price-button" type="button" data-course-checkout="${escapeHtml(bundle.id)}" ${bundle.owned ? "disabled" : ""}>${bundle.owned ? "Unlocked" : "Buy bundle"}</button>
+                  </div>
+                </article>`
+              : ""
+          }
+          <div class="course-grid">
+            ${courses.length ? courses.map(renderEditingCourseCard).join("") : `<p class="dash-empty">No courses are available yet.</p>`}
+          </div>
+          <p class="course-protection-note">Recording, screenshots, redistribution, and screen sharing are not allowed.</p>
+        </div>
       </div>
     </section>
   `;
