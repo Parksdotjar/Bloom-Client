@@ -1390,6 +1390,7 @@ function renderDashboard(): string {
 
   const params = new URLSearchParams(window.location.search);
   const requestedTab = params.get("tab") || "profile";
+  const requestedCourse = params.get("course");
   const canSeeCourseOwner = isOwnerProfile() || state.editingCourseIsOwner;
   const tab = requestedTab === "course-owner" && !canSeeCourseOwner ? "editing-course" : requestedTab;
   const latestPurchase = state.budPurchases[0];
@@ -1530,6 +1531,10 @@ function renderDashboard(): string {
     ...(canSeeCourseOwner ? [{ id: "course-owner", label: "Course Owner", href: "/dashboard?tab=course-owner" }] : [])
   ];
   const dashboardEmail = currentUser()?.email || state.profile?.email || "No email";
+  const dashboardBackHref = tab === "editing-course" && requestedCourse ? "/dashboard?tab=editing-course" : "/";
+  const dashboardBackLabel = tab === "editing-course" && requestedCourse ? "Back to courses" : "Back to home";
+  const dashboardTitle = dashboardTabs.find((item) => item.id === tab)?.label || "Dashboard";
+  const dashboardContext = tab === "editing-course" && requestedCourse ? "Course page" : "Bloom account";
   const currentTab =
     tab === "bud"
       ? budTab
@@ -1543,7 +1548,7 @@ function renderDashboard(): string {
 
   return `
     <section class="dash-app" aria-label="Bloom account dashboard">
-      <a class="dash-home-back" href="/" data-route="/" aria-label="Back to home">
+      <a class="dash-home-back" href="${dashboardBackHref}" data-route="${dashboardBackHref}" aria-label="${dashboardBackLabel}">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M15 18l-6-6 6-6" />
         </svg>
@@ -1568,7 +1573,16 @@ function renderDashboard(): string {
         <p class="dash-side-email">${escapeHtml(dashboardEmail)}</p>
       </aside>
       <main class="dash-main">
-        ${currentTab}
+        <header class="dash-topbar">
+          <div>
+            <span>Dashboard</span>
+            <strong>${escapeHtml(dashboardTitle)}</strong>
+          </div>
+          <p>${escapeHtml(dashboardContext)}</p>
+        </header>
+        <section class="dash-content-panel">
+          ${currentTab}
+        </section>
       </main>
     </section>
   `;
