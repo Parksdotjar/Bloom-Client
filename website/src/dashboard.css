@@ -591,6 +591,272 @@ body.dashboard-page main {
   gap: 4px;
 }
 
+.dash-course-view,
+.dash-course-owner-view {
+  position: relative;
+  max-width: 1120px;
+  user-select: none;
+}
+
+.course-bundle-card,
+.course-card,
+.owner-course-form,
+.owner-course-panel,
+.owner-lesson-form {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 82% 12%, rgba(255, 255, 255, 0.06), transparent 22%),
+    rgba(5, 5, 5, 0.94);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+}
+
+.course-bundle-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 22px;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 20px;
+  border-color: rgba(95, 225, 154, 0.34);
+}
+
+.course-bundle-card h2,
+.course-card h2,
+.owner-course-form h2,
+.owner-lesson-form h3 {
+  margin: 10px 0 8px;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+
+.course-bundle-card p,
+.course-card p,
+.course-lesson p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.course-bundle-action {
+  min-width: 180px;
+  display: grid;
+  gap: 10px;
+}
+
+.course-bundle-action strong,
+.course-card-head > strong {
+  font-size: 24px;
+}
+
+.course-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.course-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.course-card.locked {
+  opacity: 0.84;
+}
+
+.course-card-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+}
+
+.course-lessons {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.course-lessons summary,
+.owner-course-panel summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 850;
+}
+
+.course-lesson {
+  display: grid;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.course-lesson-copy span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--dim);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.course-lesson h3 {
+  margin: 0 0 6px;
+  font-size: 17px;
+}
+
+.course-video-shell {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #020202;
+  aspect-ratio: 16 / 9;
+}
+
+.course-video-shell video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+.course-watermark {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  max-width: calc(100% - 24px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 7px;
+  padding: 5px 7px;
+  background: rgba(0, 0, 0, 0.58);
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.course-video-empty {
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.course-privacy-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: none;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.94);
+  color: var(--text);
+  font-size: clamp(18px, 3vw, 34px);
+  font-weight: 850;
+  text-align: center;
+}
+
+body.course-screen-hidden .course-protected-area > :not(.course-privacy-overlay) {
+  filter: blur(18px);
+  opacity: 0.08;
+}
+
+body.course-screen-hidden .course-privacy-overlay {
+  display: grid;
+}
+
+.owner-course-form,
+.owner-lesson-form {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.owner-course-form.new {
+  margin-bottom: 18px;
+}
+
+.owner-course-panel {
+  margin-bottom: 12px;
+  padding: 16px;
+}
+
+.owner-course-panel > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 4px 0 14px;
+}
+
+.owner-course-list,
+.owner-lessons {
+  display: grid;
+  gap: 12px;
+}
+
+.owner-inline-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.owner-course-form label,
+.owner-lesson-form label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.owner-course-form input,
+.owner-course-form textarea,
+.owner-lesson-form input,
+.owner-lesson-form textarea {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+
+.owner-course-form textarea,
+.owner-lesson-form textarea {
+  min-height: 74px;
+  resize: vertical;
+}
+
+.owner-check-row,
+.owner-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.owner-check {
+  width: fit-content;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.owner-check input {
+  min-height: auto;
+}
+
 @keyframes dashLicenseFlow {
   0% {
     background-position: 0% 50%;
@@ -677,7 +943,11 @@ body.dashboard-page main {
   .dash-license-strip,
   .dash-pricing,
   .dash-key-row,
-  .dash-billing-row {
+  .dash-billing-row,
+  .course-bundle-card,
+  .course-grid,
+  .course-card-head,
+  .owner-inline-grid {
     grid-template-columns: 1fr;
   }
 }

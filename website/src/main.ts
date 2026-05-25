@@ -88,6 +88,35 @@ type BudLicense = {
   created_at?: string;
 };
 
+type EditingCourseLesson = {
+  id: string;
+  course_id: string;
+  title: string;
+  description?: string | null;
+  storage_path?: string | null;
+  signed_video_url?: string | null;
+  duration_seconds?: number | null;
+  metadata?: Record<string, unknown>;
+  sort_order: number;
+  is_active: boolean;
+  has_video?: boolean;
+};
+
+type EditingCourse = {
+  id: string;
+  slug: string;
+  title: string;
+  description?: string | null;
+  price_cents: number;
+  currency: string;
+  sort_order: number;
+  is_active: boolean;
+  collapsed_default: boolean;
+  is_bundle: boolean;
+  owned: boolean;
+  lessons: EditingCourseLesson[];
+};
+
 type AppState = {
   release?: Release;
   releaseError?: string;
@@ -112,6 +141,13 @@ type AppState = {
   ownerPanelOpen: boolean;
   ownerUsers: CommerceProfile[];
   ownerError?: string;
+  editingCourses: EditingCourse[];
+  editingCourseOwnerCourses: EditingCourse[];
+  editingCourseIsOwner: boolean;
+  editingCourseOwnsBundle: boolean;
+  editingCourseError?: string;
+  editingCourseOwnerError?: string;
+  editingCourseMessage?: string;
 };
 
 type Route = "/" | "/downloads" | "/news" | "/staff" | "/support" | "/about" | "/faq" | "/login" | "/signup" | "/dashboard";
@@ -159,7 +195,11 @@ const state: AppState = {
   budMonthlyAvailable: false,
   revealedBudKey: null,
   ownerPanelOpen: false,
-  ownerUsers: []
+  ownerUsers: [],
+  editingCourses: [],
+  editingCourseOwnerCourses: [],
+  editingCourseIsOwner: false,
+  editingCourseOwnsBundle: false
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -550,6 +590,140 @@ async function grantFreeBudLicense(userId: string): Promise<void> {
   });
 }
 
+function resolveEditingCourseEdgeBase(): string {
+  const explicit = import.meta.env.VITE_SUPABASE_EDITING_COURSE_FUNCTION_URL;
+  if (explicit) return String(explicit).replace(/\/+$/, "");
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  if (!supabaseUrl) return "";
+
+  try {
+    return `${new URL(supabaseUrl).origin.replace(/\/+$/, "")}/functions/v1/editing-course`;
+  } catch {
+    return `${String(supabaseUrl).replace(/\/+$/, "")}/functions/v1/editing-course`;
+  }
+}
+
+async function courseFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const edgeBase = resolveEditingCourseEdgeBase();
+  const token = state.session?.access_token;
+  if (!edgeBase) throw new Error("Editing course services are not configured yet.");
+  if (!token) throw new Error("Sign in first.");
+
+  const headers = new Headers(init.headers || {});
+  headers.set("Authorization", `Bearer ${token}`);
+  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+
+  const response = await fetch(`${edgeBase}${path}`, { ...init, headers, cache: "no-store" });
+  const payload = (await response.json().catch(() => ({}))) as T & { message?: string; error?: string };
+  if (!response.ok) throw new Error(payload.message || payload.error || `Request failed (${response.status}).`);
+  return payload;
+}
+
+async function loadEditingCourseCatalog(): Promise<void> {
+  if (!state.session) {
+    state.editingCourses = [];
+    state.editingCourseOwnerCourses = [];
+    state.editingCourseIsOwner = false;
+    state.editingCourseOwnsBundle = false;
+    return;
+  }
+
+  try {
+    const payload = await courseFetch<{
+      courses?: EditingCourse[];
+      is_owner?: boolean;
+      owns_bundle?: boolean;
+    }>("/catalog");
+    state.editingCourses = payload.courses ?? [];
+    state.editingCourseIsOwner = Boolean(payload.is_owner);
+    state.editingCourseOwnsBundle = Boolean(payload.owns_bundle);
+    state.editingCourseError = undefined;
+  } catch (error) {
+    state.editingCourseError = error instanceof Error ? error.message : "Could not load editing courses.";
+  }
+
+  if (!isOwnerProfile() && !state.editingCourseIsOwner) {
+    state.editingCourseOwnerCourses = [];
+    return;
+  }
+
+  try {
+    const ownerPayload = await courseFetch<{ courses?: EditingCourse[]; is_owner?: boolean }>("/owner/catalog");
+    state.editingCourseOwnerCourses = ownerPayload.courses ?? [];
+    state.editingCourseIsOwner = Boolean(ownerPayload.is_owner);
+    state.editingCourseOwnerError = undefined;
+  } catch (error) {
+    state.editingCourseOwnerError = error instanceof Error ? error.message : "Could not load owner course tools.";
+  }
+}
+
+async function startEditingCourseCheckout(courseId: string): Promise<string> {
+  const payload = await courseFetch<{ checkout_url?: string }>("/checkout", {
+    method: "POST",
+    body: JSON.stringify({ course_id: courseId, return_origin: window.location.origin })
+  });
+  if (!payload.checkout_url) throw new Error("Checkout did not return a URL.");
+  return payload.checkout_url;
+}
+
+function cleanStorageFileName(fileName: string): string {
+  const fallback = `lesson-${Date.now()}.mp4`;
+  const cleaned = fileName.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return cleaned.endsWith(".mp4") ? cleaned : fallback;
+}
+
+function courseWatermark(): string {
+  const user = currentUser();
+  return user?.email || user?.id || "Bloom account";
+}
+
+function coursePayloadFromForm(form: HTMLFormElement, course?: EditingCourse): Record<string, unknown> {
+  const formData = new FormData(form);
+  const id = form.dataset.courseId;
+  return {
+    ...(id ? { id } : {}),
+    title: String(formData.get("title") || course?.title || "Untitled Course"),
+    description: String(formData.get("description") || ""),
+    price_cents: Number.parseInt(String(formData.get("price_cents") || course?.price_cents || 0), 10),
+    sort_order: Number.parseInt(String(formData.get("sort_order") || course?.sort_order || 0), 10),
+    is_active: formData.has("is_active"),
+    collapsed_default: formData.has("collapsed_default"),
+    is_bundle: formData.has("is_bundle")
+  };
+}
+
+function lessonPayloadFromForm(form: HTMLFormElement, storagePath?: string): Record<string, unknown> {
+  const formData = new FormData(form);
+  const lessonId = form.dataset.lessonId;
+  const payload: Record<string, unknown> = {
+    ...(lessonId ? { id: lessonId } : {}),
+    course_id: form.dataset.courseId || "",
+    title: String(formData.get("title") || "Untitled Lesson"),
+    description: String(formData.get("description") || ""),
+    duration_seconds: Number.parseInt(String(formData.get("duration_seconds") || 0), 10),
+    sort_order: Number.parseInt(String(formData.get("sort_order") || 0), 10),
+    is_active: formData.has("is_active")
+  };
+  if (storagePath) payload.storage_path = storagePath;
+  return payload;
+}
+
+async function uploadCourseVideo(file: File, courseId: string, lessonId?: string): Promise<string> {
+  const supabase = getSiteSupabase();
+  const user = currentUser();
+  if (!supabase || !user) throw new Error("Sign in first.");
+  if (file.type !== "video/mp4" && !file.name.toLowerCase().endsWith(".mp4")) throw new Error("Upload an MP4 file.");
+  const path = `courses/${courseId}/${lessonId || "new"}/${Date.now()}-${cleanStorageFileName(file.name)}`;
+  const { error } = await supabase.storage.from("editing-course-videos").upload(path, file, {
+    cacheControl: "3600",
+    contentType: "video/mp4",
+    upsert: true
+  });
+  if (error) throw error;
+  return path;
+}
+
 async function loadSupportOptions(): Promise<void> {
   const edgeBase = resolveEdgeBase();
   if (!edgeBase) {
@@ -928,6 +1102,202 @@ function renderAuth(mode: "login" | "signup"): string {
   `;
 }
 
+function formatDuration(seconds?: number | null): string {
+  if (!seconds || seconds < 1) return "Duration not set";
+  const minutes = Math.floor(seconds / 60);
+  const remaining = seconds % 60;
+  return `${minutes}:${String(remaining).padStart(2, "0")}`;
+}
+
+function renderEditingCourseCard(course: EditingCourse): string {
+  const locked = !course.owned;
+  const detailsOpen = course.owned && !course.collapsed_default ? "open" : "";
+  const lessons = course.lessons.length
+    ? course.lessons
+        .map(
+          (lesson, index) => `
+            <article class="course-lesson">
+              <div class="course-lesson-copy">
+                <span>Lesson ${index + 1} - ${escapeHtml(formatDuration(lesson.duration_seconds))}</span>
+                <h3>${escapeHtml(lesson.title)}</h3>
+                <p>${escapeHtml(lesson.description || "Video lesson.")}</p>
+              </div>
+              ${
+                lesson.signed_video_url
+                  ? `<div class="course-video-shell">
+                      <video controls controlsList="nodownload noplaybackrate" disablepictureinpicture preload="metadata" oncontextmenu="return false">
+                        <source src="${escapeHtml(lesson.signed_video_url)}" type="video/mp4" />
+                      </video>
+                      <span class="course-watermark">${escapeHtml(courseWatermark())}</span>
+                    </div>`
+                  : `<div class="course-video-empty">Video is being prepared.</div>`
+              }
+            </article>
+          `
+        )
+        .join("")
+    : `<p class="dash-empty">Lessons are being prepared.</p>`;
+
+  return `
+    <article class="course-card ${locked ? "locked" : "unlocked"}">
+      <div class="course-card-head">
+        <div>
+          <span class="dash-price-label">${locked ? "Locked" : "Unlocked"}</span>
+          <h2>${escapeHtml(course.title)}</h2>
+          <p>${escapeHtml(course.description || "Course details coming soon.")}</p>
+        </div>
+        <strong>${escapeHtml(formatMoney(course.price_cents, course.currency))}</strong>
+      </div>
+      ${
+        locked
+          ? `<button class="dash-price-button" type="button" data-course-checkout="${escapeHtml(course.id)}">Buy course</button>`
+          : `<details class="course-lessons" ${detailsOpen}>
+              <summary>Course lessons</summary>
+              ${lessons}
+            </details>`
+      }
+    </article>
+  `;
+}
+
+function renderEditingCourseTab(): string {
+  const bundle = state.editingCourses.find((course) => course.is_bundle);
+  const courses = state.editingCourses.filter((course) => !course.is_bundle);
+  return `
+    <section class="dash-view dash-course-view course-protected-area">
+      <div class="course-privacy-overlay">Course hidden while the tab or window is inactive.</div>
+      <div class="dash-section-heading">
+        <span>Editing Course</span>
+        <h1>Video editing lessons</h1>
+        <p>Paid lessons are tied to your Bloom account. Recording, screenshots, redistribution, and screen sharing are not allowed.</p>
+      </div>
+      ${state.editingCourseError ? `<p class="auth-message error">${escapeHtml(state.editingCourseError)}</p>` : ""}
+      ${
+        bundle
+          ? `<article class="course-bundle-card ${bundle.owned ? "unlocked" : "locked"}">
+              <div>
+                <span class="dash-price-label">${bundle.owned ? "Bundle owned" : "Best value"}</span>
+                <h2>${escapeHtml(bundle.title)}</h2>
+                <p>${escapeHtml(bundle.description || "Unlock every active editing course.")}</p>
+              </div>
+              <div class="course-bundle-action">
+                <strong>${escapeHtml(formatMoney(bundle.price_cents, bundle.currency))}</strong>
+                <button class="dash-price-button" type="button" data-course-checkout="${escapeHtml(bundle.id)}" ${bundle.owned ? "disabled" : ""}>${bundle.owned ? "Unlocked" : "Buy bundle"}</button>
+              </div>
+            </article>`
+          : ""
+      }
+      <div class="course-grid">
+        ${courses.length ? courses.map(renderEditingCourseCard).join("") : `<p class="dash-empty">No courses are available yet.</p>`}
+      </div>
+    </section>
+  `;
+}
+
+function renderOwnerCourseForm(course: EditingCourse): string {
+  const lessons = course.lessons
+    .map(
+      (lesson) => `
+        <form class="owner-lesson-form" data-owner-lesson-form data-lesson-id="${escapeHtml(lesson.id)}" data-course-id="${escapeHtml(course.id)}">
+          <div class="owner-inline-grid">
+            <label><span>Lesson title</span><input name="title" value="${escapeHtml(lesson.title)}" required /></label>
+            <label><span>Order</span><input name="sort_order" type="number" value="${escapeHtml(String(lesson.sort_order))}" /></label>
+            <label><span>Duration seconds</span><input name="duration_seconds" type="number" min="0" value="${escapeHtml(String(lesson.duration_seconds || 0))}" /></label>
+          </div>
+          <label><span>Description</span><textarea name="description">${escapeHtml(lesson.description || "")}</textarea></label>
+          <label><span>MP4 upload</span><input name="video" type="file" accept="video/mp4" /></label>
+          <p class="dash-muted-line">Storage: ${escapeHtml(lesson.storage_path || "No video uploaded")}</p>
+          <label class="owner-check"><input name="is_active" type="checkbox" ${lesson.is_active ? "checked" : ""} /> Active lesson</label>
+          <div class="owner-action-row">
+            <button class="dash-ghost-button" type="button" data-lesson-move="${escapeHtml(lesson.id)}" data-course-id="${escapeHtml(course.id)}" data-direction="-1">Move up</button>
+            <button class="dash-ghost-button" type="button" data-lesson-move="${escapeHtml(lesson.id)}" data-course-id="${escapeHtml(course.id)}" data-direction="1">Move down</button>
+            <button class="dash-primary-button" type="submit">Save lesson</button>
+          </div>
+        </form>
+      `
+    )
+    .join("");
+
+  return `
+    <details class="owner-course-panel" ${course.collapsed_default ? "" : "open"}>
+      <summary>
+        <span>${escapeHtml(course.title)}</span>
+        <strong>${escapeHtml(formatMoney(course.price_cents, course.currency))}</strong>
+      </summary>
+      <form class="owner-course-form" data-owner-course-form data-course-id="${escapeHtml(course.id)}">
+        <div class="owner-inline-grid">
+          <label><span>Title</span><input name="title" value="${escapeHtml(course.title)}" required /></label>
+          <label><span>Price cents</span><input name="price_cents" type="number" min="0" step="100" value="${escapeHtml(String(course.price_cents))}" /></label>
+          <label><span>Order</span><input name="sort_order" type="number" value="${escapeHtml(String(course.sort_order))}" /></label>
+        </div>
+        <label><span>Description</span><textarea name="description">${escapeHtml(course.description || "")}</textarea></label>
+        <div class="owner-check-row">
+          <label class="owner-check"><input name="is_active" type="checkbox" ${course.is_active ? "checked" : ""} /> Active</label>
+          <label class="owner-check"><input name="collapsed_default" type="checkbox" ${course.collapsed_default ? "checked" : ""} /> Collapsed by default</label>
+          <label class="owner-check"><input name="is_bundle" type="checkbox" ${course.is_bundle ? "checked" : ""} /> Bundle</label>
+        </div>
+        <div class="owner-action-row">
+          <button class="dash-ghost-button" type="button" data-course-move="${escapeHtml(course.id)}" data-direction="-1">Move up</button>
+          <button class="dash-ghost-button" type="button" data-course-move="${escapeHtml(course.id)}" data-direction="1">Move down</button>
+          <button class="dash-primary-button" type="submit">Save course</button>
+        </div>
+      </form>
+      ${course.is_bundle ? "" : `<div class="owner-lessons">${lessons || `<p class="dash-empty">No lessons yet.</p>`}</div>`}
+      ${
+        course.is_bundle
+          ? ""
+          : `<form class="owner-lesson-form new" data-owner-lesson-form data-course-id="${escapeHtml(course.id)}">
+              <h3>Add lesson</h3>
+              <div class="owner-inline-grid">
+                <label><span>Lesson title</span><input name="title" placeholder="Lesson title" required /></label>
+                <label><span>Order</span><input name="sort_order" type="number" value="${course.lessons.length * 10 + 10}" /></label>
+                <label><span>Duration seconds</span><input name="duration_seconds" type="number" min="0" value="0" /></label>
+              </div>
+              <label><span>Description</span><textarea name="description"></textarea></label>
+              <label><span>MP4 upload</span><input name="video" type="file" accept="video/mp4" /></label>
+              <label class="owner-check"><input name="is_active" type="checkbox" checked /> Active lesson</label>
+              <button class="dash-primary-button" type="submit">Add lesson</button>
+            </form>`
+      }
+    </details>
+  `;
+}
+
+function renderCourseOwnerTab(): string {
+  if (!isOwnerProfile() && !state.editingCourseIsOwner) {
+    return `<section class="dash-view"><p class="dash-empty">Owner tools are not available for this account.</p></section>`;
+  }
+  return `
+    <section class="dash-view dash-course-owner-view">
+      <div class="dash-section-heading">
+        <span>Course Owner</span>
+        <h1>Course controls</h1>
+        <p>Create courses, change prices, reorder lessons, and replace MP4 videos. Checkout always uses the current saved price.</p>
+      </div>
+      ${state.editingCourseOwnerError ? `<p class="auth-message error">${escapeHtml(state.editingCourseOwnerError)}</p>` : ""}
+      ${state.editingCourseMessage ? `<p class="auth-message">${escapeHtml(state.editingCourseMessage)}</p>` : ""}
+      <form class="owner-course-form new" data-owner-course-form>
+        <h2>Add course</h2>
+        <div class="owner-inline-grid">
+          <label><span>Title</span><input name="title" placeholder="New course" required /></label>
+          <label><span>Price cents</span><input name="price_cents" type="number" min="0" step="100" value="500" /></label>
+          <label><span>Order</span><input name="sort_order" type="number" value="${state.editingCourseOwnerCourses.length * 10 + 10}" /></label>
+        </div>
+        <label><span>Description</span><textarea name="description"></textarea></label>
+        <div class="owner-check-row">
+          <label class="owner-check"><input name="is_active" type="checkbox" checked /> Active</label>
+          <label class="owner-check"><input name="collapsed_default" type="checkbox" checked /> Collapsed by default</label>
+          <label class="owner-check"><input name="is_bundle" type="checkbox" /> Bundle</label>
+        </div>
+        <button class="dash-primary-button" type="submit">Add course</button>
+      </form>
+      <div class="owner-course-list">
+        ${state.editingCourseOwnerCourses.length ? state.editingCourseOwnerCourses.map(renderOwnerCourseForm).join("") : `<p class="dash-empty">No courses yet.</p>`}
+      </div>
+    </section>
+  `;
+}
+
 function renderDashboard(): string {
   if (!state.session) {
     return `
@@ -941,7 +1311,9 @@ function renderDashboard(): string {
   }
 
   const params = new URLSearchParams(window.location.search);
-  const tab = params.get("tab") || "profile";
+  const requestedTab = params.get("tab") || "profile";
+  const canSeeCourseOwner = isOwnerProfile() || state.editingCourseIsOwner;
+  const tab = requestedTab === "course-owner" && !canSeeCourseOwner ? "editing-course" : requestedTab;
   const latestPurchase = state.budPurchases[0];
   const activeLicense = state.budLicenses.find((license) => !license.revoked) || state.budLicenses[0];
   const keyReveal = state.revealedBudKey
@@ -1074,10 +1446,22 @@ function renderDashboard(): string {
 
   const dashboardTabs = [
     { id: "profile", label: "Profile", href: "/dashboard?tab=profile" },
+    { id: "editing-course", label: "Editing Course", href: "/dashboard?tab=editing-course" },
     { id: "bud", label: "BUD License", href: "/dashboard?tab=bud" },
-    { id: "billing", label: "Billing", href: "/dashboard?tab=billing" }
+    { id: "billing", label: "Billing", href: "/dashboard?tab=billing" },
+    ...(canSeeCourseOwner ? [{ id: "course-owner", label: "Course Owner", href: "/dashboard?tab=course-owner" }] : [])
   ];
   const dashboardEmail = currentUser()?.email || state.profile?.email || "No email";
+  const currentTab =
+    tab === "bud"
+      ? budTab
+      : tab === "billing"
+        ? billingTab
+        : tab === "editing-course"
+          ? renderEditingCourseTab()
+          : tab === "course-owner"
+            ? renderCourseOwnerTab()
+            : profileTab;
 
   return `
     <section class="dash-app" aria-label="Bloom account dashboard">
@@ -1106,7 +1490,7 @@ function renderDashboard(): string {
         <p class="dash-side-email">${escapeHtml(dashboardEmail)}</p>
       </aside>
       <main class="dash-main">
-        ${tab === "bud" ? budTab : tab === "billing" ? billingTab : profileTab}
+        ${currentTab}
       </main>
     </section>
   `;
@@ -1644,31 +2028,87 @@ function animatedPageSelector(): string {
 }
 
 function fadeCurrentPageOut(): Promise<void> {
-  return Promise.resolve();
+  if (routeFromPath() !== "/") return Promise.resolve();
+
+  const elements = root.querySelectorAll<HTMLElement>(".hero-copy > *, .site-header > *");
+  if (!elements.length) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    animeAnimate(elements, {
+      opacity: 0,
+      translateY: -12,
+      duration: 260,
+      ease: "inCubic",
+      complete: resolve
+    });
+  });
 }
 
 function runPageAnimations(isRouteChange = false): void {
-  if (!motionQuery.matches) return;
+  const isHome = routeFromPath() === "/";
+  const heroElements = [...root.querySelectorAll<HTMLElement>(".hero-copy > *")];
+  const navElements = [...root.querySelectorAll<HTMLElement>(".site-header > *")];
+  const wave = document.querySelector<HTMLElement>(".dither-wave-canvas");
 
-  document.querySelectorAll<HTMLElement>(".site-backdrop, .page-ambient").forEach((layer) => {
-    layer.style.opacity = "1";
-    layer.style.filter = "blur(0px)";
+  if (!isHome || !heroElements.length) return;
+
+  if (wave) {
+    wave.style.opacity = "0";
+    wave.style.setProperty("--wave-reveal", "0%");
+    animeAnimate(wave, {
+      opacity: 1,
+      duration: 1700,
+      delay: isRouteChange ? 20 : 80,
+      ease: "outCubic"
+    });
+    animeAnimate(wave, {
+      "--wave-reveal": "100%",
+      duration: 2200,
+      delay: isRouteChange ? 20 : 80,
+      ease: "outCubic"
+    } as any);
+  }
+
+  navElements.forEach((element) => {
+    element.style.opacity = "0";
+    element.style.transform = "translateY(-22px)";
   });
-  root.querySelectorAll<HTMLElement>(animatedPageSelector()).forEach((element) => {
-    element.style.opacity = "1";
-    element.style.transform = "none";
+
+  animeAnimate(navElements, {
+    opacity: 1,
+    translateY: 0,
+    duration: 1050,
+    delay: (_element: HTMLElement, index: number) => (isRouteChange ? 30 : 90) + index * 95,
+    ease: "outCubic"
+  });
+
+  heroElements.forEach((element) => {
+    element.style.opacity = "0";
+    element.style.transform = "translateY(34px)";
+  });
+
+  animeAnimate(heroElements, {
+    opacity: 1,
+    translateY: 0,
+    duration: 1350,
+    delay: (_element: HTMLElement, index: number) => (isRouteChange ? 160 : 330) + index * 135,
+    ease: "outCubic"
   });
 }
 
 function mount(isRouteChange = false, skipAnimations = false): void {
   const route = routeFromPath();
   const dashboardMode = route === "/dashboard";
+  const dashboardTab = new URLSearchParams(window.location.search).get("tab") || "profile";
   const authMode = route === "/login" || route === "/signup";
   const title = [...navItems, ...infoItems].find((item) => item.path === route)?.label;
   const fallbackTitle = route === "/support" ? "Support" : route === "/login" ? "Login" : route === "/signup" ? "Create account" : route === "/dashboard" ? "Dashboard" : "Info";
   document.title = route === "/" ? "Bloom Productions | Official Website" : `Bloom Productions | ${title || fallbackTitle}`;
   document.body.classList.toggle("dashboard-page", dashboardMode);
   document.body.classList.toggle("auth-page", authMode);
+  document.body.classList.toggle("home-page", route === "/");
+  document.body.classList.toggle("course-protection-page", dashboardMode && dashboardTab === "editing-course");
+  updateCoursePrivacyState();
   root.innerHTML = `
     ${dashboardMode || authMode ? "" : renderHeader(route)}
     <main>${renderRoute(route)}</main>
@@ -1824,6 +2264,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     }
     await loadAuthState();
     await loadBudSummary();
+    await loadEditingCourseCatalog();
     window.history.pushState({}, "", "/dashboard");
     mount(true);
   });
@@ -1865,6 +2306,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     }
     await loadAuthState();
     await loadBudSummary();
+    await loadEditingCourseCatalog();
     message!.textContent = state.session ? "Account created." : "Check your email to confirm your account.";
     if (state.session) {
       window.history.pushState({}, "", "/dashboard");
@@ -1878,6 +2320,10 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     state.profile = null;
     state.budPurchases = [];
     state.budLicenses = [];
+    state.editingCourses = [];
+    state.editingCourseOwnerCourses = [];
+    state.editingCourseIsOwner = false;
+    state.editingCourseOwnsBundle = false;
     state.revealedBudKey = null;
     state.ownerPanelOpen = false;
     state.ownerUsers = [];
@@ -1920,6 +2366,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       });
       if (error) throw error;
       await loadBudSummary();
+      await loadEditingCourseCatalog();
       message!.textContent = "Profile saved.";
       mount(true, true);
     } catch (error) {
@@ -1975,6 +2422,134 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     const key = button.dataset.copyBudKey || "";
     await navigator.clipboard.writeText(key);
     button.textContent = "Copied";
+  });
+
+  root.querySelectorAll<HTMLButtonElement>("[data-course-checkout]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const courseId = button.dataset.courseCheckout || "";
+      if (!courseId || button.disabled) return;
+      const original = button.textContent || "Checkout";
+      button.disabled = true;
+      button.classList.add("is-loading");
+      button.textContent = "Loading...";
+      try {
+        window.location.href = await startEditingCourseCheckout(courseId);
+      } catch (error) {
+        button.textContent = error instanceof Error ? error.message : "Checkout failed.";
+        window.setTimeout(() => {
+          button.disabled = false;
+          button.classList.remove("is-loading");
+          button.textContent = original;
+        }, 2600);
+      }
+    });
+  });
+
+  root.querySelectorAll<HTMLFormElement>("[data-owner-course-form]").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+      const existing = state.editingCourseOwnerCourses.find((course) => course.id === form.dataset.courseId);
+      if (!button) return;
+      button.disabled = true;
+      button.classList.add("is-loading");
+      try {
+        await courseFetch("/owner/course", {
+          method: "POST",
+          body: JSON.stringify(coursePayloadFromForm(form, existing))
+        });
+        state.editingCourseMessage = "Course saved.";
+        await loadEditingCourseCatalog();
+        mount(true, true);
+      } catch (error) {
+        state.editingCourseOwnerError = error instanceof Error ? error.message : "Could not save course.";
+        mount(true, true);
+      }
+    });
+  });
+
+  root.querySelectorAll<HTMLFormElement>("[data-owner-lesson-form]").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+      const video = form.querySelector<HTMLInputElement>('input[name="video"]')?.files?.[0];
+      if (!button) return;
+      button.disabled = true;
+      button.classList.add("is-loading");
+      try {
+        const storagePath = video ? await uploadCourseVideo(video, form.dataset.courseId || "", form.dataset.lessonId) : undefined;
+        await courseFetch("/owner/lesson", {
+          method: "POST",
+          body: JSON.stringify(lessonPayloadFromForm(form, storagePath))
+        });
+        state.editingCourseMessage = "Lesson saved.";
+        await loadEditingCourseCatalog();
+        mount(true, true);
+      } catch (error) {
+        state.editingCourseOwnerError = error instanceof Error ? error.message : "Could not save lesson.";
+        mount(true, true);
+      }
+    });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>("[data-course-move]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const courseId = button.dataset.courseMove || "";
+      const direction = Number.parseInt(button.dataset.direction || "0", 10);
+      const courses = [...state.editingCourseOwnerCourses].sort((a, b) => a.sort_order - b.sort_order);
+      const index = courses.findIndex((course) => course.id === courseId);
+      const target = courses[index + direction];
+      const current = courses[index];
+      if (!current || !target) return;
+      const currentOrder = current.sort_order;
+      current.sort_order = target.sort_order;
+      target.sort_order = currentOrder;
+      try {
+        await Promise.all([
+          courseFetch("/owner/course", { method: "POST", body: JSON.stringify(current) }),
+          courseFetch("/owner/course", { method: "POST", body: JSON.stringify(target) })
+        ]);
+        await loadEditingCourseCatalog();
+        mount(true, true);
+      } catch (error) {
+        state.editingCourseOwnerError = error instanceof Error ? error.message : "Could not reorder courses.";
+        mount(true, true);
+      }
+    });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>("[data-lesson-move]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const lessonId = button.dataset.lessonMove || "";
+      const courseId = button.dataset.courseId || "";
+      const direction = Number.parseInt(button.dataset.direction || "0", 10);
+      const course = state.editingCourseOwnerCourses.find((item) => item.id === courseId);
+      const lessons = [...(course?.lessons || [])].sort((a, b) => a.sort_order - b.sort_order);
+      const index = lessons.findIndex((lesson) => lesson.id === lessonId);
+      const target = lessons[index + direction];
+      const current = lessons[index];
+      if (!current || !target) return;
+      const currentOrder = current.sort_order;
+      current.sort_order = target.sort_order;
+      target.sort_order = currentOrder;
+      try {
+        await Promise.all([
+          courseFetch("/owner/lesson", { method: "POST", body: JSON.stringify(current) }),
+          courseFetch("/owner/lesson", { method: "POST", body: JSON.stringify(target) })
+        ]);
+        await loadEditingCourseCatalog();
+        mount(true, true);
+      } catch (error) {
+        state.editingCourseOwnerError = error instanceof Error ? error.message : "Could not reorder lessons.";
+        mount(true, true);
+      }
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>(".course-protected-area").forEach((area) => {
+    ["contextmenu", "copy", "cut", "dragstart"].forEach((eventName) => {
+      area.addEventListener(eventName, (event) => event.preventDefault());
+    });
   });
 
   root.querySelector<HTMLButtonElement>("[data-owner-panel-toggle]")?.addEventListener("click", async () => {
@@ -2036,17 +2611,34 @@ function mount(isRouteChange = false, skipAnimations = false): void {
   hasMounted = true;
 }
 
+function updateCoursePrivacyState(forceHidden = false): void {
+  const protectedPage = document.body.classList.contains("course-protection-page");
+  const hidden = protectedPage && (forceHidden || document.hidden || !document.hasFocus());
+  document.body.classList.toggle("course-screen-hidden", hidden);
+}
+
+window.addEventListener("blur", () => updateCoursePrivacyState(true));
+window.addEventListener("focus", () => updateCoursePrivacyState());
+document.addEventListener("visibilitychange", () => updateCoursePrivacyState());
+window.addEventListener("beforeprint", (event) => {
+  if (!document.body.classList.contains("course-protection-page")) return;
+  event.preventDefault();
+  updateCoursePrivacyState(true);
+});
+
 window.addEventListener("popstate", () => mount(true, !transitionsEnabled));
 
 void (async () => {
   await Promise.all([loadRelease(), loadSksRelease(), loadNews(), loadSupportOptions(), loadAuthState()]);
   await loadBudSummary();
+  await loadEditingCourseCatalog();
   getSiteSupabase()?.auth.onAuthStateChange(async (_event: string, session: SiteSession | null) => {
     const currentToken = state.session?.access_token ?? null;
     const nextToken = session?.access_token ?? null;
     if (currentToken === nextToken) return;
     state.session = session;
     await loadBudSummary();
+    await loadEditingCourseCatalog();
     mount(true, true);
   });
   mount();
