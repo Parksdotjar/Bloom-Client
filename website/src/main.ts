@@ -830,6 +830,30 @@ function validatePassword(password: string): string[] {
   return messages;
 }
 
+function normalizeUsernameInput(value: FormDataEntryValue | null): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+function validateUsername(username: string): string | null {
+  if (username.length < 3) return "Username needs at least 3 characters.";
+  if (username.length > 32) return "Username must be 32 characters or less.";
+  if (!/^[a-z0-9_-]+$/.test(username)) return "Use only letters, numbers, underscores, or dashes.";
+  return null;
+}
+
+function isUsernameTakenError(error: unknown): boolean {
+  const details = String((error as { code?: string; message?: string; details?: string })?.code || "")
+    + " "
+    + String((error as { message?: string })?.message || "")
+    + " "
+    + String((error as { details?: string })?.details || "");
+  return /23505|duplicate key|commerce_profiles_username_unique_lower_idx|username/i.test(details);
+}
+
+function usernameTakenMessage(error: unknown): string {
+  return isUsernameTakenError(error) ? "That username is already taken." : error instanceof Error ? error.message : "Could not save profile.";
+}
+
 function downloadCard(appName: string, eyebrow: string, release?: Release, error?: string): string {
   const version = release?.version ? `v${escapeHtml(release.version)}` : "Unavailable";
   const detail = error ? "Download info is not available right now." : "The latest Windows build is ready.";
@@ -1077,7 +1101,7 @@ function renderAuth(mode: "login" | "signup"): string {
             <form class="auth-card auth-card-single" data-auth-form="${isSignup ? "signup" : "login"}">
               ${
                 isSignup
-                  ? `<label>Username<input name="username" type="text" autocomplete="username" minlength="3" maxlength="32" placeholder="parks" required /></label>`
+                  ? `<label>Username<input name="username" type="text" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_-]+" placeholder="parks" required /></label>`
                   : ""
               }
               <label>Email<input name="email" type="email" autocomplete="email" required /></label>
@@ -1343,7 +1367,7 @@ function renderDashboard(): string {
       <form class="dash-form" data-profile-form>
         <label>
           <span>Username</span>
-          <input name="username" type="text" value="${escapeHtml(profileName())}" minlength="3" maxlength="32" required />
+          <input name="username" type="text" value="${escapeHtml(profileName())}" minlength="3" maxlength="32" pattern="[A-Za-z0-9_-]+" required />
         </label>
         <label>
           <span>Email</span>
@@ -2277,6 +2301,13 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     const button = form.querySelector<HTMLButtonElement>("button");
     if (!supabase || !button) return;
     const formData = new FormData(form);
+    const username = normalizeUsernameInput(formData.get("username"));
+    const usernameIssue = validateUsername(username);
+    if (usernameIssue) {
+      message!.textContent = usernameIssue;
+      message!.classList.add("error");
+      return;
+    }
     const password = String(formData.get("password") || "");
     const passwordIssues = validatePassword(password);
     if (passwordIssues.length) {
@@ -2293,18 +2324,33 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       options: {
         emailRedirectTo: authRedirectUrl,
         data: {
-          username: String(formData.get("username") || "").trim()
+          username
         }
       }
     });
     if (error) {
-      message!.textContent = error.message;
+      message!.textContent = usernameTakenMessage(error);
       message!.classList.add("error");
       button.disabled = false;
       button.classList.remove("is-loading");
       return;
     }
     await loadAuthState();
+    if (state.session) {
+      const { error: profileError } = await supabase.from("commerce_profiles").upsert({
+        user_id: state.session.user.id,
+        username,
+        display_name: username,
+        email: state.session.user.email
+      });
+      if (profileError) {
+        message!.textContent = usernameTakenMessage(profileError);
+        message!.classList.add("error");
+        button.disabled = false;
+        button.classList.remove("is-loading");
+        return;
+      }
+    }
     await loadBudSummary();
     await loadEditingCourseCatalog();
     message!.textContent = state.session ? "Account created." : "Check your email to confirm your account.";
@@ -2344,7 +2390,9 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     message!.textContent = "Saving...";
     try {
       const formData = new FormData(form);
-      const username = String(formData.get("username") || "").trim();
+      const username = normalizeUsernameInput(formData.get("username"));
+      const usernameIssue = validateUsername(username);
+      if (usernameIssue) throw new Error(usernameIssue);
       let profileImageUrl = state.profile?.profile_image_url;
       const file = formData.get("avatar");
       if (file instanceof File && file.size > 0) {
@@ -2361,6 +2409,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       const { error } = await supabase.from("commerce_profiles").upsert({
         user_id: user.id,
         username,
+        display_name: username,
         email: user.email,
         profile_image_url: profileImageUrl
       });
@@ -2370,7 +2419,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       message!.textContent = "Profile saved.";
       mount(true, true);
     } catch (error) {
-      message!.textContent = error instanceof Error ? error.message : "Could not save profile.";
+      message!.textContent = usernameTakenMessage(error);
       message!.classList.add("error");
       button.disabled = false;
       button.classList.remove("is-loading");
