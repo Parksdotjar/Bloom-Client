@@ -208,6 +208,7 @@ const root = app;
 const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 let hasMounted = false;
 let isTransitioning = false;
+let dashboardEntryAnimationPending = false;
 const transitionStorageKey = "bloom-site-transitions";
 let transitionsEnabled = localStorage.getItem(transitionStorageKey) !== "off";
 let siteSupabase: any;
@@ -2120,19 +2121,55 @@ function animatedPageSelector(): string {
 }
 
 function fadeCurrentPageOut(): Promise<void> {
-  if (routeFromPath() !== "/") return Promise.resolve();
+  if (routeFromPath() === "/dashboard") return Promise.resolve();
 
-  const elements = root.querySelectorAll<HTMLElement>(".hero-copy > *, .site-header > *");
+  const elements = root.querySelectorAll<HTMLElement>(animatedPageSelector());
   if (!elements.length) return Promise.resolve();
 
   return new Promise((resolve) => {
     animeAnimate(elements, {
       opacity: 0,
-      translateY: -12,
-      duration: 260,
+      translateY: -10,
+      duration: 240,
       ease: "inCubic",
       complete: resolve
     });
+  });
+}
+
+function runDashboardEntryAnimation(): void {
+  const shell = root.querySelector<HTMLElement>(".dash-app");
+  const sidebarItems = [...root.querySelectorAll<HTMLElement>(".dash-account-chip, .dash-side-tabs a, .dash-side-email")];
+  const mainItems = [...root.querySelectorAll<HTMLElement>(".dash-home-back, .dash-topbar, .dash-content-panel")];
+
+  if (shell) {
+    shell.style.opacity = "0";
+    animeAnimate(shell, {
+      opacity: 1,
+      duration: 320,
+      ease: "outCubic"
+    });
+  }
+
+  [...sidebarItems, ...mainItems].forEach((element) => {
+    element.style.opacity = "0";
+    element.style.transform = "translateY(14px)";
+  });
+
+  animeAnimate(sidebarItems, {
+    opacity: 1,
+    translateY: 0,
+    duration: 520,
+    delay: (_element: HTMLElement, index: number) => 60 + index * 28,
+    ease: "outCubic"
+  });
+
+  animeAnimate(mainItems, {
+    opacity: 1,
+    translateY: 0,
+    duration: 620,
+    delay: (_element: HTMLElement, index: number) => 120 + index * 70,
+    ease: "outCubic"
   });
 }
 
@@ -2218,8 +2255,11 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       const href = link.getAttribute("href");
       if (!href) return;
       event.preventDefault();
-      if (href === window.location.pathname) return;
+      if (href === `${window.location.pathname}${window.location.search}` || href === window.location.pathname) return;
       if (isTransitioning) return;
+      const currentRoute = routeFromPath();
+      const nextRoute = routeFromPath(new URL(href, window.location.origin).pathname);
+      const enteringDashboard = currentRoute !== "/dashboard" && nextRoute === "/dashboard";
 
       if (!transitionsEnabled) {
         window.history.pushState({}, "", href);
@@ -2231,6 +2271,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       isTransitioning = true;
       void fadeCurrentPageOut().then(() => {
         window.history.pushState({}, "", href);
+        dashboardEntryAnimationPending = enteringDashboard;
         mount(true);
         window.scrollTo({ top: 0, behavior: "smooth" });
         isTransitioning = false;
@@ -2723,7 +2764,12 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       element.style.transform = "translateY(0)";
     });
   } else {
-    runPageAnimations(isRouteChange || hasMounted);
+    if (dashboardMode && dashboardEntryAnimationPending) {
+      runDashboardEntryAnimation();
+      dashboardEntryAnimationPending = false;
+    } else {
+      runPageAnimations(isRouteChange || hasMounted);
+    }
   }
   hasMounted = true;
 }
