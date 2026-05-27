@@ -88,6 +88,15 @@ type BudLicense = {
   created_at?: string;
 };
 
+type ProductionDoc = {
+  id: string;
+  title: string;
+  content_html: string;
+  sort_order: number;
+  updated_at?: string;
+  updated_by?: string | null;
+};
+
 type EditingCourseLesson = {
   id: string;
   course_id: string;
@@ -141,6 +150,11 @@ type AppState = {
   ownerPanelOpen: boolean;
   ownerUsers: CommerceProfile[];
   ownerError?: string;
+  productionDocs: ProductionDoc[];
+  activeProductionDocId?: string;
+  productionError?: string;
+  productionSaveState?: string;
+  productionSubscription?: any;
   editingCourses: EditingCourse[];
   editingCourseOwnerCourses: EditingCourse[];
   editingCourseIsOwner: boolean;
@@ -150,7 +164,7 @@ type AppState = {
   editingCourseMessage?: string;
 };
 
-type Route = "/" | "/downloads" | "/news" | "/staff" | "/support" | "/about" | "/faq" | "/login" | "/signup" | "/dashboard";
+type Route = "/" | "/downloads" | "/news" | "/staff" | "/support" | "/about" | "/faq" | "/login" | "/signup" | "/dashboard" | "/productionhub";
 
 const updatesJsonUrl = import.meta.env.VITE_UPDATES_JSON_URL || "/latest.json";
 const sksUpdatesJsonUrl = import.meta.env.VITE_SKS_UPDATES_JSON_URL || "/sks-latest.json";
@@ -196,6 +210,7 @@ const state: AppState = {
   revealedBudKey: null,
   ownerPanelOpen: false,
   ownerUsers: [],
+  productionDocs: [],
   editingCourses: [],
   editingCourseOwnerCourses: [],
   editingCourseIsOwner: false,
@@ -209,6 +224,7 @@ const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 let hasMounted = false;
 let isTransitioning = false;
 let dashboardEntryAnimationPending = false;
+let productionSaveTimer: number | undefined;
 const transitionStorageKey = "bloom-site-transitions";
 let transitionsEnabled = localStorage.getItem(transitionStorageKey) !== "off";
 let siteSupabase: any;
@@ -323,6 +339,7 @@ function routeFromPath(pathname = window.location.pathname): Route {
   if (pathname === "/login") return "/login";
   if (pathname === "/signup") return "/signup";
   if (pathname === "/dashboard") return "/dashboard";
+  if (pathname === "/productionhub") return "/productionhub";
   return "/";
 }
 
@@ -573,6 +590,10 @@ function isOwnerProfile(): boolean {
   );
 }
 
+function hasProductionAccess(): boolean {
+  return state.profile?.role === "production" || isOwnerProfile();
+}
+
 async function loadOwnerUsers(): Promise<void> {
   if (!isOwnerProfile()) return;
   try {
@@ -588,6 +609,13 @@ async function grantFreeBudLicense(userId: string): Promise<void> {
   await budFetch<{ ok?: boolean }>("/owner/free-license", {
     method: "POST",
     body: JSON.stringify({ user_id: userId })
+  });
+}
+
+async function setOwnerUserRole(userId: string, role: string): Promise<void> {
+  await budFetch<{ ok?: boolean }>("/owner/set-role", {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, role })
   });
 }
 
@@ -677,6 +705,134 @@ function cleanStorageFileName(fileName: string): string {
 function courseWatermark(): string {
   const user = currentUser();
   return user?.email || user?.id || "Bloom account";
+}
+
+function sanitizeProductionHtml(input: string): string {
+  const allowedTags = new Set(["P", "BR", "DIV", "SPAN", "STRONG", "B", "EM", "I", "U", "S", "H1", "H2", "H3", "UL", "OL", "LI", "BLOCKQUOTE", "A"]);
+  const allowedStyles = new Set(["color", "background-color", "font-size", "font-family", "text-align"]);
+  const template = document.createElement("template");
+  template.innerHTML = input;
+
+  template.content.querySelectorAll("*").forEach((element) => {
+    if (!allowedTags.has(element.tagName)) {
+      element.replaceWith(document.createTextNode(element.textContent || ""));
+      return;
+    }
+    [...element.attributes].forEach((attribute) => {
+      const name = attribute.name.toLowerCase();
+      if (name === "href" && element.tagName === "A") {
+        try {
+          const url = new URL(attribute.value, window.location.origin);
+          if (!["http:", "https:", "mailto:"].includes(url.protocol)) element.removeAttribute(attribute.name);
+        } catch {
+          element.removeAttribute(attribute.name);
+        }
+        return;
+      }
+      if (name === "style") {
+        const kept: string[] = [];
+        attribute.value.split(";").forEach((part) => {
+          const [rawProp, rawValue] = part.split(":");
+          const prop = rawProp?.trim().toLowerCase();
+          const value = rawValue?.trim();
+          if (prop && value && allowedStyles.has(prop) && !/url|expression|javascript/i.test(value)) kept.push(`${prop}: ${value}`);
+        });
+        if (kept.length) element.setAttribute("style", kept.join("; "));
+        else element.removeAttribute("style");
+        return;
+      }
+      if (!["class"].includes(name)) element.removeAttribute(attribute.name);
+    });
+  });
+
+  return template.innerHTML || "<p></p>";
+}
+
+async function loadProductionDocs(): Promise<void> {
+  if (!state.session || !hasProductionAccess()) {
+    state.productionDocs = [];
+    return;
+  }
+  const supabase = getSiteSupabase();
+  if (!supabase) return;
+  const { data, error } = await supabase
+    .from("production_hub_documents")
+    .select("id,title,content_html,sort_order,updated_at,updated_by")
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) {
+    state.productionError = error.message;
+    return;
+  }
+  state.productionDocs = data ?? [];
+  state.activeProductionDocId = state.activeProductionDocId || state.productionDocs[0]?.id;
+  state.productionError = undefined;
+}
+
+async function createProductionDoc(): Promise<void> {
+  const supabase = getSiteSupabase();
+  const user = currentUser();
+  if (!supabase || !user) throw new Error("Sign in first.");
+  const { data, error } = await supabase
+    .from("production_hub_documents")
+    .insert({
+      title: `New Doc ${state.productionDocs.length + 1}`,
+      content_html: "<h1>Untitled</h1><p>Start writing...</p>",
+      sort_order: state.productionDocs.length * 10 + 10,
+      created_by: user.id,
+      updated_by: user.id
+    })
+    .select("id,title,content_html,sort_order,updated_at,updated_by")
+    .single();
+  if (error) throw error;
+  state.productionDocs = [...state.productionDocs, data];
+  state.activeProductionDocId = data.id;
+}
+
+async function saveProductionDoc(docId: string, updates: Partial<ProductionDoc>): Promise<void> {
+  const supabase = getSiteSupabase();
+  if (!supabase) throw new Error("Production Hub is not configured.");
+  state.productionSaveState = "Saving...";
+  const { error } = await supabase
+    .from("production_hub_documents")
+    .update(updates)
+    .eq("id", docId);
+  if (error) throw error;
+  state.productionSaveState = "Saved";
+}
+
+function subscribeProductionDocs(): void {
+  const supabase = getSiteSupabase();
+  if (!supabase || state.productionSubscription || !hasProductionAccess()) return;
+  state.productionSubscription = supabase
+    .channel("production-hub-documents")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "production_hub_documents" },
+      (payload: { eventType?: string; new?: ProductionDoc; old?: ProductionDoc }) => {
+        const row = payload.new || payload.old;
+        if (!row?.id) return;
+        if (payload.eventType === "DELETE") {
+          state.productionDocs = state.productionDocs.filter((doc) => doc.id !== row.id);
+          if (state.activeProductionDocId === row.id) state.activeProductionDocId = state.productionDocs[0]?.id;
+        } else {
+          const incoming = payload.new as ProductionDoc;
+          const index = state.productionDocs.findIndex((doc) => doc.id === incoming.id);
+          if (index >= 0) state.productionDocs[index] = incoming;
+          else state.productionDocs.push(incoming);
+          state.productionDocs.sort((a, b) => (a.sort_order - b.sort_order) || a.title.localeCompare(b.title));
+        }
+        if (document.activeElement?.matches("[data-production-editor], [data-production-title]")) return;
+        mount(true, true);
+      }
+    )
+    .subscribe();
+}
+
+function unsubscribeProductionDocs(): void {
+  const supabase = getSiteSupabase();
+  if (supabase && state.productionSubscription) supabase.removeChannel(state.productionSubscription);
+  state.productionSubscription = undefined;
 }
 
 function coursePayloadFromForm(form: HTMLFormElement, course?: EditingCourse): Record<string, unknown> {
@@ -1377,6 +1533,101 @@ function renderCourseOwnerTab(): string {
   `;
 }
 
+function productionHubMarkup(embedded = false): string {
+  if (!state.session) {
+    return `
+      <section class="${embedded ? "dash-view" : "page-hero compact"}">
+        <p class="eyebrow">Production Hub</p>
+        <h1>Sign in required.</h1>
+        <p>Login to use Bloom Production Hub.</p>
+        <a class="btn primary" href="/login" data-route="/login">Login</a>
+      </section>
+    `;
+  }
+
+  if (!hasProductionAccess()) {
+    return `
+      <section class="${embedded ? "dash-view" : "page-hero compact"}">
+        <p class="eyebrow">Production Hub</p>
+        <h1>Access needed.</h1>
+        <p>This workspace is only for accounts with the production role.</p>
+      </section>
+    `;
+  }
+
+  const docs = state.productionDocs;
+  const activeDoc = docs.find((doc) => doc.id === state.activeProductionDocId) || docs[0];
+  return `
+    <section class="production-hub ${embedded ? "dash-view" : "production-page"}">
+      <aside class="production-docs">
+        <div class="production-docs-head">
+          <span>Production Hub</span>
+          <button class="dash-ghost-button" type="button" data-production-new-doc>New tab</button>
+        </div>
+        <div class="production-doc-list">
+          ${
+            docs.length
+              ? docs
+                  .map(
+                    (doc) => `
+                      <button class="${activeDoc?.id === doc.id ? "active" : ""}" type="button" data-production-doc="${escapeHtml(doc.id)}">
+                        <strong>${escapeHtml(doc.title || "Untitled")}</strong>
+                        <span>${escapeHtml(formatDate(doc.updated_at))}</span>
+                      </button>
+                    `
+                  )
+                  .join("")
+              : `<p class="dash-empty">No documents yet.</p>`
+          }
+        </div>
+      </aside>
+      <main class="production-editor-shell">
+        ${
+          activeDoc
+            ? `
+              <div class="production-toolbar" aria-label="Document formatting">
+                <button type="button" data-production-command="bold">B</button>
+                <button type="button" data-production-command="italic">I</button>
+                <button type="button" data-production-command="underline">U</button>
+                <select data-production-block>
+                  <option value="p">Paragraph</option>
+                  <option value="h1">Heading 1</option>
+                  <option value="h2">Heading 2</option>
+                  <option value="h3">Heading 3</option>
+                  <option value="blockquote">Quote</option>
+                </select>
+                <select data-production-font>
+                  <option value="Inter, system-ui, sans-serif">Inter</option>
+                  <option value="Arial, sans-serif">Arial</option>
+                  <option value="Georgia, serif">Georgia</option>
+                  <option value='\"JetBrains Mono\", monospace'>Mono</option>
+                </select>
+                <input type="color" value="#f4f4f1" data-production-color title="Text color" />
+                <input type="color" value="#151515" data-production-bg title="Highlight color" />
+                <button type="button" data-production-command="insertUnorderedList">List</button>
+                <button type="button" data-production-command="insertOrderedList">1. List</button>
+                <button type="button" data-production-align="left">Left</button>
+                <button type="button" data-production-align="center">Center</button>
+                <button type="button" data-production-align="right">Right</button>
+                <span>${escapeHtml(state.productionSaveState || "Live")}</span>
+              </div>
+              <input class="production-title-input" value="${escapeHtml(activeDoc.title)}" data-production-title="${escapeHtml(activeDoc.id)}" />
+              <article class="production-editor" contenteditable="true" data-production-editor="${escapeHtml(activeDoc.id)}" spellcheck="true">
+                ${sanitizeProductionHtml(activeDoc.content_html || "<p></p>")}
+              </article>
+            `
+            : `<section class="production-empty"><h1>No document selected.</h1><p>Create a tab to start writing.</p></section>`
+        }
+        ${state.productionError ? `<p class="auth-message error">${escapeHtml(state.productionError)}</p>` : ""}
+      </main>
+    </section>
+  `;
+}
+
+function renderProductionHub(): string {
+  return productionHubMarkup(false);
+}
+
 function renderDashboard(): string {
   if (!state.session) {
     return `
@@ -1527,6 +1778,7 @@ function renderDashboard(): string {
   const dashboardTabs = [
     { id: "profile", label: "Profile", href: "/dashboard?tab=profile" },
     { id: "editing-course", label: "Editing Course", href: "/dashboard?tab=editing-course" },
+    ...(hasProductionAccess() ? [{ id: "production", label: "Production Hub", href: "/dashboard?tab=production" }] : []),
     { id: "bud", label: "BUD License", href: "/dashboard?tab=bud" },
     { id: "billing", label: "Billing", href: "/dashboard?tab=billing" },
     ...(canSeeCourseOwner ? [{ id: "course-owner", label: "Course Owner", href: "/dashboard?tab=course-owner" }] : [])
@@ -1543,6 +1795,8 @@ function renderDashboard(): string {
         ? billingTab
         : tab === "editing-course"
           ? renderEditingCourseTab()
+          : tab === "production"
+            ? productionHubMarkup(true)
           : tab === "course-owner"
             ? renderCourseOwnerTab()
             : profileTab;
@@ -1656,6 +1910,7 @@ function renderRoute(route: Route): string {
   if (route === "/login") return renderAuth("login");
   if (route === "/signup") return renderAuth("signup");
   if (route === "/dashboard") return renderDashboard();
+  if (route === "/productionhub") return renderProductionHub();
   if (route === "/about") return renderAbout();
   if (route === "/faq") return renderFaq();
   return renderHome();
@@ -1717,6 +1972,7 @@ function renderOwnerPanel(): string {
           const name = user.username || user.display_name || user.email || "Unnamed user";
           const plan = user.bud_plan || "none";
           const status = user.bud_license_status || "none";
+          const role = user.role || "user";
           const isFree = plan === "free" && status === "active";
           return `
             <article class="owner-user-row">
@@ -1724,9 +1980,17 @@ function renderOwnerPanel(): string {
                 <strong>${escapeHtml(name)}</strong>
                 <span>${escapeHtml(plan)} · ${escapeHtml(status)}</span>
               </div>
-              <button class="btn secondary" type="button" data-owner-free-license="${escapeHtml(user.user_id)}" ${isFree ? "disabled" : ""}>
-                ${isFree ? "Free active" : "Give free"}
-              </button>
+              <div class="owner-user-actions">
+                <select data-owner-role="${escapeHtml(user.user_id)}" ${role === "owner" ? "disabled" : ""}>
+                  <option value="user" ${role === "user" ? "selected" : ""}>User</option>
+                  <option value="partner" ${role === "partner" ? "selected" : ""}>Partner</option>
+                  <option value="production" ${role === "production" ? "selected" : ""}>Production</option>
+                  <option value="owner" ${role === "owner" ? "selected" : ""}>Owner</option>
+                </select>
+                <button class="btn secondary" type="button" data-owner-free-license="${escapeHtml(user.user_id)}" ${isFree ? "disabled" : ""}>
+                  ${isFree ? "Free active" : "Give free"}
+                </button>
+              </div>
             </article>
           `;
         })
@@ -2231,7 +2495,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
   const dashboardTab = new URLSearchParams(window.location.search).get("tab") || "profile";
   const authMode = route === "/login" || route === "/signup";
   const title = [...navItems, ...infoItems].find((item) => item.path === route)?.label;
-  const fallbackTitle = route === "/support" ? "Support" : route === "/login" ? "Login" : route === "/signup" ? "Create account" : route === "/dashboard" ? "Dashboard" : "Info";
+  const fallbackTitle = route === "/support" ? "Support" : route === "/login" ? "Login" : route === "/signup" ? "Create account" : route === "/dashboard" ? "Dashboard" : route === "/productionhub" ? "Production Hub" : "Info";
   document.title = route === "/" ? "Bloom Productions | Official Website" : `Bloom Productions | ${title || fallbackTitle}`;
   document.body.classList.toggle("dashboard-page", dashboardMode);
   document.body.classList.toggle("auth-page", authMode);
@@ -2397,6 +2661,8 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     }
     await loadAuthState();
     await loadBudSummary();
+    await loadProductionDocs();
+    subscribeProductionDocs();
     await loadEditingCourseCatalog();
     window.history.pushState({}, "", "/dashboard");
     mount(true);
@@ -2461,6 +2727,8 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       }
     }
     await loadBudSummary();
+    await loadProductionDocs();
+    subscribeProductionDocs();
     await loadEditingCourseCatalog();
     message!.textContent = state.session ? "Account created." : "Check your email to confirm your account.";
     if (state.session) {
@@ -2479,6 +2747,9 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     state.editingCourseOwnerCourses = [];
     state.editingCourseIsOwner = false;
     state.editingCourseOwnsBundle = false;
+    state.productionDocs = [];
+    state.activeProductionDocId = undefined;
+    unsubscribeProductionDocs();
     state.revealedBudKey = null;
     state.ownerPanelOpen = false;
     state.ownerUsers = [];
@@ -2524,6 +2795,7 @@ function mount(isRouteChange = false, skipAnimations = false): void {
       });
       if (error) throw error;
       await loadBudSummary();
+      await loadProductionDocs();
       await loadEditingCourseCatalog();
       message!.textContent = "Profile saved.";
       mount(true, true);
@@ -2580,6 +2852,89 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     const key = button.dataset.copyBudKey || "";
     await navigator.clipboard.writeText(key);
     button.textContent = "Copied";
+  });
+
+  root.querySelector<HTMLButtonElement>("[data-production-new-doc]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true;
+    try {
+      await createProductionDoc();
+      mount(true, true);
+    } catch (error) {
+      state.productionError = error instanceof Error ? error.message : "Could not create document.";
+      mount(true, true);
+    }
+  });
+
+  root.querySelectorAll<HTMLButtonElement>("[data-production-doc]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeProductionDocId = button.dataset.productionDoc;
+      mount(true, true);
+    });
+  });
+
+  root.querySelector<HTMLInputElement>("[data-production-title]")?.addEventListener("input", (event) => {
+    const input = event.currentTarget as HTMLInputElement;
+    const docId = input.dataset.productionTitle || "";
+    const doc = state.productionDocs.find((item) => item.id === docId);
+    if (doc) doc.title = input.value;
+    window.clearTimeout(productionSaveTimer);
+    productionSaveTimer = window.setTimeout(() => {
+      void saveProductionDoc(docId, { title: input.value.trim() || "Untitled" }).catch((error) => {
+        state.productionError = error instanceof Error ? error.message : "Could not save title.";
+        mount(true, true);
+      });
+    }, 500);
+  });
+
+  const productionEditor = root.querySelector<HTMLElement>("[data-production-editor]");
+  productionEditor?.addEventListener("input", () => {
+    const docId = productionEditor.dataset.productionEditor || "";
+    const html = sanitizeProductionHtml(productionEditor.innerHTML);
+    const doc = state.productionDocs.find((item) => item.id === docId);
+    if (doc) doc.content_html = html;
+    window.clearTimeout(productionSaveTimer);
+    productionSaveTimer = window.setTimeout(() => {
+      void saveProductionDoc(docId, { content_html: html }).catch((error) => {
+        state.productionError = error instanceof Error ? error.message : "Could not save document.";
+        mount(true, true);
+      });
+    }, 650);
+  });
+
+  root.querySelectorAll<HTMLButtonElement>("[data-production-command]").forEach((button) => {
+    button.addEventListener("click", () => {
+      productionEditor?.focus();
+      document.execCommand(button.dataset.productionCommand || "", false);
+    });
+  });
+
+  root.querySelector<HTMLSelectElement>("[data-production-block]")?.addEventListener("change", (event) => {
+    productionEditor?.focus();
+    document.execCommand("formatBlock", false, (event.currentTarget as HTMLSelectElement).value);
+  });
+
+  root.querySelector<HTMLSelectElement>("[data-production-font]")?.addEventListener("change", (event) => {
+    productionEditor?.focus();
+    document.execCommand("fontName", false, (event.currentTarget as HTMLSelectElement).value);
+  });
+
+  root.querySelector<HTMLInputElement>("[data-production-color]")?.addEventListener("input", (event) => {
+    productionEditor?.focus();
+    document.execCommand("foreColor", false, (event.currentTarget as HTMLInputElement).value);
+  });
+
+  root.querySelector<HTMLInputElement>("[data-production-bg]")?.addEventListener("input", (event) => {
+    productionEditor?.focus();
+    document.execCommand("hiliteColor", false, (event.currentTarget as HTMLInputElement).value);
+  });
+
+  root.querySelectorAll<HTMLButtonElement>("[data-production-align]").forEach((button) => {
+    button.addEventListener("click", () => {
+      productionEditor?.focus();
+      const align = button.dataset.productionAlign || "left";
+      document.execCommand(`justify${align[0].toUpperCase()}${align.slice(1)}`, false);
+    });
   });
 
   root.querySelectorAll<HTMLButtonElement>("[data-course-checkout]").forEach((button) => {
@@ -2734,6 +3089,24 @@ function mount(isRouteChange = false, skipAnimations = false): void {
     });
   });
 
+  root.querySelectorAll<HTMLSelectElement>("[data-owner-role]").forEach((select) => {
+    select.addEventListener("change", async () => {
+      const userId = select.dataset.ownerRole || "";
+      const role = select.value;
+      if (!userId) return;
+      select.disabled = true;
+      try {
+        await setOwnerUserRole(userId, role);
+        await Promise.all([loadOwnerUsers(), loadBudSummary()]);
+        await loadProductionDocs();
+        mount(true, true);
+      } catch (error) {
+        state.ownerError = error instanceof Error ? error.message : "Could not update role.";
+        mount(true, true);
+      }
+    });
+  });
+
   document.addEventListener(
     "click",
     () => {
@@ -2794,6 +3167,8 @@ window.addEventListener("popstate", () => mount(true, !transitionsEnabled));
 void (async () => {
   await Promise.all([loadRelease(), loadSksRelease(), loadNews(), loadSupportOptions(), loadAuthState()]);
   await loadBudSummary();
+  await loadProductionDocs();
+  subscribeProductionDocs();
   await loadEditingCourseCatalog();
   getSiteSupabase()?.auth.onAuthStateChange(async (_event: string, session: SiteSession | null) => {
     const currentToken = state.session?.access_token ?? null;
@@ -2801,6 +3176,9 @@ void (async () => {
     if (currentToken === nextToken) return;
     state.session = session;
     await loadBudSummary();
+    await loadProductionDocs();
+    if (hasProductionAccess()) subscribeProductionDocs();
+    else unsubscribeProductionDocs();
     await loadEditingCourseCatalog();
     mount(true, true);
   });
