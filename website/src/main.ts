@@ -1835,7 +1835,7 @@ function renderDashboard(): string {
           </div>
           <p>${escapeHtml(dashboardContext)}</p>
         </header>
-        <section class="dash-content-panel">
+        <section class="dash-content-panel ${tab === "production" ? "production-content-panel" : ""}">
           ${currentTab}
         </section>
       </main>
