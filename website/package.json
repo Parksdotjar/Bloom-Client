@@ -9,8 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.99.3",
-    "animejs": "^4.4.1"
+    "@supabase/supabase-js": "^2.99.3"
   },
   "devDependencies": {
     "typescript": "^5.8.3",
