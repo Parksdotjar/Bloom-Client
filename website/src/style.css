@@ -1,8 +1,8 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Inter:wght@400;500;600&family=Playfair+Display:ital,wght@1,500&display=swap");
 
 :root {
-  color: #f7f9ff;
-  background: #030407;
+  color: #171717;
+  background: #f4f3ef;
   font-family: "Inter", system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -12,188 +12,327 @@
   box-sizing: border-box;
 }
 
-html {
+html,
+body,
+#app {
   min-width: 320px;
   min-height: 100%;
-  background: #030407;
+  margin: 0;
 }
 
 body {
-  min-width: 320px;
   min-height: 100vh;
-  margin: 0;
-  overflow: hidden;
 }
 
-button,
 a {
-  font: inherit;
+  color: inherit;
 }
 
 .maintenance-page {
-  position: relative;
   display: grid;
   min-height: 100vh;
-  place-items: center;
+  grid-template-columns: minmax(0, 62fr) minmax(430px, 38fr);
+  background: #f4f3ef;
+}
+
+.visual-panel {
+  position: relative;
+  min-height: 100vh;
   overflow: hidden;
-  padding: 32px 20px;
+  color: #fff;
+  background: #071014 url("/minecraft-maintenance.webp") center / cover no-repeat;
   isolation: isolate;
-  background:
-    radial-gradient(circle at 50% 42%, rgba(81, 126, 255, 0.11), transparent 30%),
-    radial-gradient(circle at 14% 18%, rgba(96, 74, 255, 0.08), transparent 25%),
-    linear-gradient(160deg, #070910 0%, #030407 58%, #05060a 100%);
 }
 
-.maintenance-page::before {
-  position: absolute;
-  z-index: -1;
-  width: min(720px, 82vw);
-  height: min(720px, 82vw);
-  border: 1px solid rgba(126, 153, 255, 0.08);
-  border-radius: 50%;
-  content: "";
-  box-shadow:
-    0 0 100px rgba(68, 107, 255, 0.05),
-    inset 0 0 100px rgba(68, 107, 255, 0.03);
-}
-
-.star-field,
-.star-field::before,
-.star-field::after {
+.visual-panel::before {
   position: absolute;
   inset: 0;
-  z-index: -2;
+  z-index: -1;
   content: "";
-  background-image:
-    radial-gradient(circle, rgba(255, 255, 255, 0.8) 0 1px, transparent 1.4px),
-    radial-gradient(circle, rgba(132, 162, 255, 0.7) 0 1px, transparent 1.5px);
-  background-position: 0 0, 47px 71px;
-  background-size: 137px 137px, 191px 191px;
-  opacity: 0.28;
+  background: inherit;
+  filter: saturate(0.55) contrast(1.06) brightness(0.72);
+  transform: scale(1.012);
 }
 
-.star-field::before {
-  transform: scale(1.25) rotate(4deg);
-  opacity: 0.16;
+.visual-shade {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.5), transparent 42%, rgba(0, 0, 0, 0.16)),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.48), transparent 28%, transparent 62%, rgba(0, 0, 0, 0.74)),
+    radial-gradient(circle at 58% 42%, transparent 12%, rgba(0, 0, 0, 0.42) 100%);
 }
 
-.star-field::after {
-  transform: scale(1.6) rotate(-5deg);
-  opacity: 0.1;
-}
-
-.maintenance-card {
-  width: min(500px, 100%);
-  padding: 48px 44px 42px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 26px;
-  text-align: center;
-  background: linear-gradient(145deg, rgba(20, 23, 32, 0.8), rgba(8, 10, 15, 0.72));
-  box-shadow:
-    0 32px 90px rgba(0, 0, 0, 0.5),
-    inset 0 1px rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(22px);
-  animation: card-in 700ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-.logo-wrap {
-  display: grid;
-  width: 82px;
-  height: 82px;
-  margin: 0 auto 26px;
-  place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 23px;
-  background: rgba(255, 255, 255, 0.035);
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.32);
-}
-
-.logo-wrap img {
-  display: block;
-  width: 60px;
-  height: 60px;
-  object-fit: contain;
-}
-
-.eyebrow {
-  margin: 0 0 14px;
-  color: #9cadde;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.2em;
+.brand {
+  position: absolute;
+  top: 28px;
+  left: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: "DM Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-decoration: none;
   text-transform: uppercase;
 }
 
+.brand img {
+  width: 25px;
+  height: 25px;
+  object-fit: contain;
+}
+
+.visual-caption {
+  position: absolute;
+  right: 32px;
+  bottom: 28px;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: "DM Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.content-panel {
+  display: flex;
+  min-height: 100vh;
+  align-items: center;
+  padding: 70px clamp(42px, 5vw, 94px);
+  background:
+    linear-gradient(rgba(244, 243, 239, 0.96), rgba(244, 243, 239, 0.96)),
+    repeating-linear-gradient(0deg, transparent 0 27px, rgba(0, 0, 0, 0.035) 28px);
+}
+
+.content-inner {
+  width: min(100%, 520px);
+}
+
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin: 0 0 26px;
+  color: #9a9a96;
+  font-family: "DM Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.25em;
+}
+
+.status-line span {
+  width: 8px;
+  height: 8px;
+  background: #2f5fff;
+  box-shadow: 0 0 0 4px rgba(47, 95, 255, 0.08);
+}
+
 h1 {
-  max-width: 390px;
-  margin: 0 auto;
-  font-size: clamp(2rem, 6vw, 3.1rem);
-  font-weight: 750;
+  margin: 0;
+  color: #1c4fdb;
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: clamp(3rem, 4.5vw, 5.5rem);
+  font-style: italic;
+  font-weight: 500;
   letter-spacing: -0.055em;
-  line-height: 1.02;
+  line-height: 0.94;
 }
 
 .maintenance-copy {
-  margin: 18px 0 0;
-  color: #a9afbd;
-  font-size: 1rem;
-  line-height: 1.65;
+  max-width: 480px;
+  margin: 48px 0 0;
+  color: #62625f;
+  font-family: "DM Mono", monospace;
+  font-size: 0.78rem;
+  font-weight: 300;
+  line-height: 1.8;
 }
 
-.status {
-  display: inline-flex;
+.discord-block {
+  margin-top: 54px;
+}
+
+.discord-block > p {
+  margin: 0 0 12px;
+  color: #a4a4a0;
+  font-family: "DM Mono", monospace;
+  font-size: 0.61rem;
+  letter-spacing: 0.14em;
+}
+
+.remind-button {
+  display: flex;
+  min-height: 68px;
   align-items: center;
-  gap: 9px;
-  margin-top: 30px;
-  padding: 9px 13px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 999px;
-  color: #c6cbd7;
-  background: rgba(255, 255, 255, 0.035);
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  justify-content: space-between;
+  padding: 0 27px;
+  color: #fff;
+  background: #1d4fd7;
+  box-shadow: 0 18px 36px rgba(29, 79, 215, 0.16);
+  font-family: "DM Mono", monospace;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-decoration: none;
+  transition:
+    background-color 180ms ease,
+    transform 180ms ease,
+    box-shadow 180ms ease;
 }
 
-.status span {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #82a1ff;
-  box-shadow: 0 0 12px rgba(130, 161, 255, 0.9);
-  animation: pulse 2.2s ease-in-out infinite;
+.remind-button:hover,
+.remind-button:focus-visible {
+  background: #123bad;
+  box-shadow: 0 22px 42px rgba(29, 79, 215, 0.25);
+  outline: none;
+  transform: translateY(-2px);
 }
 
-@keyframes card-in {
-  from {
-    opacity: 0;
-    transform: translateY(14px) scale(0.985);
+.remind-button .arrow {
+  font-size: 1.3rem;
+  transition: transform 180ms ease;
+}
+
+.remind-button:hover .arrow,
+.remind-button:focus-visible .arrow {
+  transform: translateX(6px);
+}
+
+.discord-block small {
+  display: block;
+  margin-top: 14px;
+  color: #aaa9a4;
+  font-family: "DM Mono", monospace;
+  font-size: 0.57rem;
+  font-weight: 300;
+  line-height: 1.6;
+}
+
+.hover-card {
+  position: relative;
+  max-width: 470px;
+  min-height: 92px;
+  margin-top: 54px;
+  color: #292927;
+  cursor: help;
+  outline: none;
+}
+
+.hover-trigger {
+  display: flex;
+  width: 128px;
+  align-items: center;
+  justify-content: space-between;
+  font-family: "DM Mono", monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.17em;
+}
+
+.hover-trigger span:last-child {
+  color: #969692;
+  font-size: 1rem;
+  transition: transform 220ms ease;
+}
+
+.hover-reveal {
+  position: absolute;
+  top: 30px;
+  left: 24px;
+  width: min(420px, calc(100vw - 110px));
+  color: #73736f;
+  font-family: "DM Mono", monospace;
+  font-size: 0.68rem;
+  font-weight: 300;
+  line-height: 1.75;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(9px, 7px);
+  transition:
+    opacity 260ms ease,
+    transform 320ms ease;
+}
+
+.hover-card:hover .hover-reveal,
+.hover-card:focus .hover-reveal,
+.hover-card:focus-within .hover-reveal {
+  opacity: 1;
+  transform: translate(0, 0);
+}
+
+.hover-card:hover .hover-trigger span:last-child,
+.hover-card:focus .hover-trigger span:last-child {
+  transform: translateX(7px);
+}
+
+@media (max-width: 960px) {
+  .maintenance-page {
+    grid-template-columns: 1fr;
   }
-}
 
-@keyframes pulse {
-  50% {
-    opacity: 0.48;
-    transform: scale(0.82);
+  .visual-panel {
+    min-height: 38vh;
+    background-position: center 42%;
+  }
+
+  .content-panel {
+    min-height: 62vh;
+    padding: 56px 28px 64px;
+  }
+
+  .content-inner {
+    width: min(100%, 620px);
+    margin: 0 auto;
+  }
+
+  .maintenance-copy {
+    margin-top: 34px;
+  }
+
+  .discord-block,
+  .hover-card {
+    margin-top: 38px;
   }
 }
 
 @media (max-width: 560px) {
-  .maintenance-card {
-    padding: 38px 24px 34px;
-    border-radius: 22px;
+  .visual-panel {
+    min-height: 31vh;
   }
 
-  .logo-wrap {
-    width: 72px;
-    height: 72px;
-    margin-bottom: 24px;
-    border-radius: 20px;
+  .brand {
+    top: 20px;
+    left: 20px;
   }
 
-  .logo-wrap img {
-    width: 52px;
-    height: 52px;
+  .visual-caption {
+    right: 20px;
+    bottom: 18px;
+  }
+
+  .content-panel {
+    min-height: 69vh;
+    align-items: flex-start;
+    padding: 44px 22px 52px;
+  }
+
+  .status-line {
+    margin-bottom: 20px;
+    font-size: 0.56rem;
+    letter-spacing: 0.18em;
+  }
+
+  h1 {
+    font-size: clamp(2.65rem, 13vw, 4rem);
+  }
+
+  .maintenance-copy {
+    font-size: 0.7rem;
+  }
+
+  .remind-button {
+    min-height: 62px;
   }
 }
 
@@ -202,7 +341,6 @@ h1 {
   *::before,
   *::after {
     scroll-behavior: auto !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
